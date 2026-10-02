@@ -74,7 +74,7 @@ class PgVectorStore:
                     file_hash   text NOT NULL,
                     embedding   vector({self.dim}) NOT NULL,
                     tsv tsvector GENERATED ALWAYS AS (
-                        to_tsvector('simple', regexp_replace(path || ' ' || content, '[_./-]', ' ', 'g'))
+                        to_tsvector('english', regexp_replace(path || ' ' || content, '[_./-]', ' ', 'g'))
                     ) STORED,
                     PRIMARY KEY (repo, path, chunk_index)
                 )"""
@@ -136,7 +136,7 @@ class PgVectorStore:
                 await c.execute(
                     f"""SELECT path, chunk_index, content, start_line, end_line, kind,
                               ts_rank_cd(tsv, q) AS score
-                       FROM {self.table}, to_tsquery('simple', %s) q
+                       FROM {self.table}, to_tsquery('english', %s) q
                        WHERE repo = %s AND tsv @@ q AND (%s::text IS NULL OR kind = %s)
                        ORDER BY score DESC LIMIT %s""",
                     (terms, repo, kind, kind, k),
@@ -149,10 +149,18 @@ def _hit(r: Any) -> Hit:
     return Hit(r["path"], r["chunk_index"], r["content"], r["start_line"], r["end_line"], r["kind"], float(r["score"]))
 
 
+def _stem(token: str) -> str:
+    for suffix in ("ing", "ed", "es", "s"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            return token[: -len(suffix)]
+    return token
+
+
 def _tokens(text: str) -> list[str]:
-    """Identifier-aware tokens: split snake_case, camelCase, paths."""
+    """Identifier-aware tokens: split snake_case, camelCase and paths, then stem lightly
+    so "passwords hashed" meets `password_hash`."""
     text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    return [t.lower() for t in re.findall(r"[A-Za-z0-9]+", text) if len(t) > 1]
+    return [_stem(t.lower()) for t in re.findall(r"[A-Za-z0-9]+", text) if len(t) > 1]
 
 
 class InMemoryStore:

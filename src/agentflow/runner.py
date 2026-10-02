@@ -63,6 +63,7 @@ class RunSnapshot:
     status: str
     interrupt: dict[str, Any] | None
     values: dict[str, Any]
+    checkpoint_id: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         v = self.values
@@ -99,7 +100,8 @@ async def snapshot(graph: CompiledStateGraph, thread_id: str) -> RunSnapshot:
     interrupts = [i.value for task in st.tasks for i in task.interrupts]
     values = st.values or {}
     status = "awaiting_approval" if interrupts else values.get("status", "unknown")
-    return RunSnapshot(thread_id, status, interrupts[0] if interrupts else None, values)
+    checkpoint_id = (st.config or {}).get("configurable", {}).get("checkpoint_id")
+    return RunSnapshot(thread_id, status, interrupts[0] if interrupts else None, values, checkpoint_id)
 
 
 async def start_run(

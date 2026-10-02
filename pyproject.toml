@@ -42,6 +42,7 @@ dev = [
 
 [project.scripts]
 agentflow = "agentflow.cli:app"
+agentflow-mcp = "agentflow.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
