@@ -36,7 +36,7 @@ export function Failures() {
       id="what-broke"
       kicker="4 · Reality check"
       title="What broke the first time it ran for real"
-      intro={`Every offline test was green. Then the first live runs found 7 bugs, and building this guide from their data found ${BUGS.length - 7} more. Each one is fixed and has a test. Where the failing run is still in the database, you see its actual steps.`}
+      intro={`Every offline test was green. Then the first live runs found 7 bugs; building this guide and switching to test-first found ${BUGS.length - 7} more. Each one is fixed and has a test. Where the failing run is still in the database, you see its actual steps.`}
     >
       <div className="grid gap-4 md:grid-cols-2">
         {BUGS.map((b, n) => {
@@ -54,9 +54,13 @@ export function Failures() {
               </dl>
               {r && r.steps.length > 0 && <RunStrip steps={r.steps} />}
               <p className="mt-3 rounded-lg bg-accent-soft p-3 text-[13px] text-accent">{b.lesson}</p>
-              <a className="mt-2 inline-block font-mono text-[12px] text-muted hover:text-accent" href={`https://github.com/gavrilovdm/agentflow/commit/${b.commit}`} target="_blank" rel="noreferrer">
-                commit {b.commit}
-              </a>
+              {/^[0-9a-f]{7}$/.test(b.commit) ? (
+                <a className="mt-2 inline-block font-mono text-[12px] text-muted hover:text-accent" href={`https://github.com/gavrilovdm/agentflow/commit/${b.commit}`} target="_blank" rel="noreferrer">
+                  commit {b.commit}
+                </a>
+              ) : (
+                <span className="mt-2 inline-block font-mono text-[12px] text-muted">{b.commit}</span>
+              )}
             </Card>
           )
         })}

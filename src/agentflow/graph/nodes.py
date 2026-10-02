@@ -19,7 +19,7 @@ from agentflow.agents import coder, orchestrator, reviewer, test_generator
 from agentflow.config import get_settings
 from agentflow.gate import Gate, detect_gate
 from agentflow.graph.context import Deps
-from agentflow.graph.routing import dependents_of, next_runnable
+from agentflow.graph.routing import dependents_of, next_runnable, next_stall
 from agentflow.graph.state import WorkflowState, replace_task, task_by_id
 from agentflow.integrations import github, telegram
 from agentflow.integrations import workspace as ws
@@ -187,16 +187,51 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
 
 
 async def generate_task_test(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
+    """Write the task's acceptance test.
+
+    test_first (default): before any code, from the task's interface and Definition of Done.
+    The test must then fail (red): a test that passes before the code exists asserts nothing
+    the task adds, so it is regenerated once with that feedback.
+    test_after: after the code, using it only for names and imports.
+    """
     task_id = state["current_task_id"]
     assert task_id
     if state.get("tests", {}).get(task_id):
         return {}  # keep the target stable across the coder→gate→review retry loop
-    task, spec = task_by_id(state, task_id), state["spec"]
+    task, spec, root, gate = task_by_id(state, task_id), state["spec"], _ws(state), _gate(state)
     assert spec
-    written = state["task_results"][task_id].written_files
-    rel = await test_generator.generate_test(task, spec, _gate(state), _ws(state), written)
-    progress(runtime, f"acceptance test written: {rel}", task=task_id)
+    test_first = runtime.context.config.test_strategy == "test_first"
+    result = state.get("task_results", {}).get(task_id)
+    written = {} if test_first or result is None else result.written_files
+
+    # Before the code exists the generator must still see the code the task modifies: a
+    # test-first draft once asserted that an untouched insert() returns a dict instead of
+    # its id, and coder and reviewer then ping-ponged over it until the budget ran out.
+    existing = {p: _read(root / p) for p in task.target_files if (root / p).is_file()} if test_first else None
+    rel = await test_generator.generate_test(task, spec, gate, root, written, existing_files=existing)
+    if test_first and await _passes(gate, root, rel):
+        progress(runtime, f"{rel} passes before any code exists — regenerating", task=task_id)
+        rel = await test_generator.generate_test(
+            task,
+            spec,
+            gate,
+            root,
+            written,
+            previous_test=_read(root / rel),
+            ruling="This test already passes although the task is not implemented yet, so it verifies nothing "
+            "the task adds. Assert the new behaviour from the Definition of Done.",
+            existing_files=existing,
+        )
+        if await _passes(gate, root, rel):
+            # Can be legitimate (e.g. a pure refactor); keep it rather than loop.
+            progress(runtime, f"{rel} still green before implementation — keeping it", task=task_id)
+    progress(runtime, f"acceptance test written: {rel}", task=task_id, red=test_first)
     return {"tests": {task_id: rel}}
+
+
+async def _passes(gate: Gate, root: Path, test_rel: str) -> bool:
+    """Red check: run only this test; lint is irrelevant before code exists."""
+    return (await gate.run(root, [test_rel], enable_lint=False)).passed
 
 
 async def run_review(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
@@ -236,8 +271,8 @@ async def run_review(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     # An attempt failing exactly like the previous one is not converging; track it so
     # the budget isn't spent on a loop that has already shown it repeats itself.
     signature = " ".join(cycle.comments.split())[:300]
-    prior = state.get("stalls", {}).get(task_id)
-    repeats = prior.repeats + 1 if prior and prior.signature == signature and not approved else 0
+    stall = next_stall(state.get("stalls", {}).get(task_id), signature, approved)
+    repeats = stall.repeats
 
     budget = (
         f"gate {task.gate_failures + 1}/{cfg.max_gate_failures}"
@@ -255,7 +290,7 @@ async def run_review(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         "review_results": {task_id: ReviewResult(task_id=task_id, approved=approved, cycles=[cycle])},
         "review_history": {task_id: [cycle]},
         "tasks": tasks,
-        "stalls": {task_id: Stall(signature=signature, repeats=repeats)},
+        "stalls": {task_id: stall},
     }
 
 
@@ -271,7 +306,10 @@ async def adjudicate(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     test_rel = state["tests"][task_id]
     test_content = _read(root / test_rel)
     try:
-        ruling = await reviewer.adjudicate(task, spec, test_content, state["stalls"][task_id].signature)
+        # Every distinct recent failure, so an oscillation (test fails ↔ reviewer rejects the
+        # change that made it pass) is visible to the referee as the contradiction it is.
+        recent = list(dict.fromkeys(state["stalls"][task_id].history))
+        ruling = await reviewer.adjudicate(task, spec, test_content, "\n\n---\n\n".join(recent))
     except Exception as exc:  # noqa: BLE001 — referee unavailable: the failure stands
         progress(runtime, f"referee unavailable: {exc}", task=task_id)
         return {"adjudicated": {task_id: True}}

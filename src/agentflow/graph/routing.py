@@ -6,9 +6,24 @@ from langgraph.graph import END
 
 from agentflow.config import WorkflowConfig
 from agentflow.graph.state import WorkflowState, task_by_id
-from agentflow.schemas import Task
+from agentflow.schemas import Stall, Task
 
-STALL_REPEATS = 2  # three identical failures in a row
+STALL_REPEATS = 2  # the same failure for the third time within the window
+STALL_WINDOW = 6
+
+
+def next_stall(prior: Stall | None, signature: str, approved: bool) -> Stall:
+    """Track recurring failures over a window, not only consecutive ones.
+
+    A live run oscillated: the test failed (A), the coder changed an API to satisfy it, the
+    reviewer rejected that change (B), the coder reverted (A again)… A, B, A, B never repeats
+    back-to-back, so a consecutive-only check never sent the task to the referee and the
+    budgets ran out. Counting occurrences in a window catches both shapes.
+    """
+    if approved:
+        return Stall()
+    history = [*(prior.history if prior else []), signature][-STALL_WINDOW:]
+    return Stall(signature=signature, repeats=history[:-1].count(signature), history=history)
 
 
 def after_spec_approval(state: WorkflowState) -> str:
@@ -19,18 +34,26 @@ def after_task_approval(state: WorkflowState) -> str:
     return "select_next_task" if state.get("tasks_approved") else "generate_tasks"
 
 
-def after_task_selection(state: WorkflowState) -> str:
-    return "run_coder" if state.get("current_task_id") else "create_pr"
+def after_task_selection(state: WorkflowState, config: WorkflowConfig) -> str:
+    """test_first: the acceptance test is written before any code for the task."""
+    if not state.get("current_task_id"):
+        return "create_pr"
+    return "generate_task_test" if config.test_strategy == "test_first" else "run_coder"
+
+
+def after_test(state: WorkflowState, config: WorkflowConfig) -> str:
+    return "run_coder" if config.test_strategy == "test_first" else "run_review"
 
 
 def after_coder(state: WorkflowState, config: WorkflowConfig) -> str:
-    """Code first, then the test that judges it (a no-op on retries, where the test
-    already exists and must stay fixed while the coder works against it)."""
+    """test_first: the test already exists, go straight to the gate.
+    test_after: code first, then the test that judges it. On retries the test exists and
+    stays fixed while the coder works against it."""
     task_id = state["current_task_id"]
     assert task_id
     result = state.get("task_results", {}).get(task_id)
     if result and result.success:
-        return "generate_task_test"
+        return "run_review" if config.test_strategy == "test_first" else "generate_task_test"
     if task_by_id(state, task_id).coder_fix_attempts >= config.max_coder_fix_attempts:
         return "handle_failure"
     return "run_coder"

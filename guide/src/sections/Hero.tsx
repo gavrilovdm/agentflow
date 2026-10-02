@@ -8,7 +8,7 @@ const toolRuns = calls.filter((c) => c.type === 'tool').length
 const PIPE = [
   { k: 'Ask', d: 'one sentence, an issue, or a chat message' },
   { k: 'Spec + plan', d: 'Opus writes them; you approve' },
-  { k: 'Code', d: 'DeepSeek writes it with tools' },
+  { k: 'Test → code', d: 'a failing test first, then DeepSeek makes it pass' },
   { k: 'Check', d: 'tests & lint, then an AI reviewer' },
   { k: 'PR', d: 'commits, verification, pull request' },
 ]

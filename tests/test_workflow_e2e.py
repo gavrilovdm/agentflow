@@ -71,6 +71,7 @@ def fakes(monkeypatch):
 
     async def fake_coder(ctx, retriever, feedback=None):
         calls["coder"].append((ctx.task.id, feedback))
+        calls.setdefault("saw_test", []).append(bool(ctx.test_content))
         if ctx.task.id == "task-add":
             # First attempt is buggy; the gate failure must reach the retry as feedback.
             op = "-" if feedback is None else "+"
@@ -81,7 +82,8 @@ def fakes(monkeypatch):
         (ctx.workspace / "calc/mul.py").write_text(body)
         return CoderResult(task_id=ctx.task.id, success=True, written_files={"calc/mul.py": body})
 
-    async def fake_test(task, spec, gate, workspace, written, previous_test=None, ruling=None):
+    async def fake_test(task, spec, gate, workspace, written, previous_test=None, ruling=None, existing_files=None):
+        calls.setdefault("test_context", []).append(existing_files)
         name = task.id.replace("-", "_")
         fn, expr = ("add", "add(2, 3) == 5") if task.id == "task-add" else ("mul", "mul(2, 3) == 6")
         mod = "ops" if fn == "add" else "mul"
@@ -103,8 +105,9 @@ def fakes(monkeypatch):
     return calls
 
 
-async def test_full_run_in_place(repo: Path, fakes):
-    cfg = WorkflowConfig(local_path=str(repo), enable_lint=True)
+@pytest.mark.parametrize("strategy", ["test_first", "test_after"])
+async def test_full_run_in_place(repo: Path, fakes, strategy):
+    cfg = WorkflowConfig(local_path=str(repo), enable_lint=True, test_strategy=strategy)
     events: list[dict] = []
 
     async def on_event(e):
@@ -133,6 +136,12 @@ async def test_full_run_in_place(repo: Path, fakes):
     assert log[:2] == ["feat(task-mul): mul()", "feat(task-add): add()"]
     assert "tests/acceptance/test_task_add.py" in Repo(repo).git.ls_files()
     assert any("indexed" in e.get("message", "") for e in events)
+    # test_first: the coder saw its acceptance test on every attempt, including the first.
+    # test_after: the first attempt of each task was blind.
+    if strategy == "test_first":
+        assert all(fakes["saw_test"])
+    else:
+        assert fakes["saw_test"][0] is False
 
 
 async def test_gate_budget_exhaustion_skips_dependents(repo: Path, fakes, monkeypatch):
@@ -196,3 +205,28 @@ async def test_node_crash_marks_run_failed(repo: Path, fakes, monkeypatch):
         snap = await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id="t4")
     assert snap.status == "failed"
     assert snap.values["error"].startswith("Run crashed: ValueError: provider exploded")
+
+
+async def test_vacuous_test_is_regenerated_once(repo: Path, fakes, monkeypatch):
+    """Red check: a test that passes before any code exists asserts nothing; regenerate it."""
+    written: list[str] = []
+    real_fake = test_generator.generate_test
+
+    async def vacuous_then_real(
+        task, spec, gate, workspace, written_files, previous_test=None, ruling=None, existing_files=None
+    ):
+        written.append(task.id)
+        if task.id == "task-add" and ruling is None:
+            rel = "tests/acceptance/test_task_add.py"
+            (workspace / rel).parent.mkdir(parents=True, exist_ok=True)
+            (workspace / rel).write_text("def test_nothing():\n    assert True\n")
+            return rel
+        return await real_fake(task, spec, gate, workspace, written_files, previous_test, ruling, existing_files)
+
+    monkeypatch.setattr(test_generator, "generate_test", vacuous_then_real)
+    async with open_persistence(in_memory=True) as p:
+        await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id="t5")
+        await resume_run(p, "t5", approved=True)
+        snap = await resume_run(p, "t5", approved=True)
+    assert snap.status == "completed"
+    assert written.count("task-add") == 2  # vacuous first draft, then the real one

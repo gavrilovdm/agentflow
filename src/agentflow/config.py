@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +40,9 @@ class WorkflowConfig(BaseModel):
     # Reviewer outages are not the task's fault, so they don't consume review cycles —
     # but uncapped, an outage (or an exhausted API balance) loops coder→reviewer forever.
     max_reviewer_malfunctions: int = 3
+    # test_first: acceptance test is written from the task's interface + Definition of Done
+    # before the code, and must fail first (red). test_after: written after the code, seeing it.
+    test_strategy: Literal["test_first", "test_after"] = "test_first"
     enable_lint: bool = True
     # None = in-place mode: operate on a local directory, no clone, no PR.
     target_repo: TargetRepo | None = None

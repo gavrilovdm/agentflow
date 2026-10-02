@@ -1,6 +1,6 @@
 # agentflow
 
-A multi-agent coding workflow built on **LangGraph**. You give it a feature request (CLI, REST, MCP, or a labelled GitHub issue). It writes a spec and a task plan and waits for a human to approve both. Then it implements each task: a coder agent writes the code, acceptance tests are generated, a deterministic gate runs, and a reviewer agent checks the result. Finally it opens a pull request. Every agent uses **RAG over the target repository**: code-aware chunks, Voyage embeddings, and hybrid pgvector + full-text search.
+A multi-agent coding workflow built on **LangGraph**. You give it a feature request (CLI, REST, MCP, or a labelled GitHub issue). It writes a spec and a task plan and waits for a human to approve both. Then it implements each task test-first: an acceptance test is written from the task's interface and Definition of Done and must fail first, a coder agent makes it pass, a deterministic gate runs, and a reviewer agent checks the result. Finally it opens a pull request. Every agent uses **RAG over the target repository**: code-aware chunks, Voyage embeddings, and hybrid pgvector + full-text search.
 
 It runs a whole workflow end to end: it calls tools, recovers from failures, pauses for people, and ships a PR. It is not a chat wrapper.
 
@@ -14,11 +14,11 @@ flowchart TD
     plan --> hitl2{{human approval}}
     hitl2 -- reject + feedback --> plan
     hitl2 -- approve --> select[select_next_task]
-    select -- task --> coder[run_coder<br/>tool-using agent + RAG + lessons]
-    coder -- wrote code --> tests[generate_task_test]
+    select -- task --> tests[generate_task_test<br/>from interface + DoD · must fail first]
+    tests --> coder[run_coder<br/>tool-using agent + RAG + lessons<br/>makes the test pass]
+    coder -- wrote code --> review[run_review<br/>gate: types · tests · lint<br/>then reviewer agent]
     coder -- error, budget left --> coder
     coder -- budget spent --> fail
-    tests --> review[run_review<br/>gate: types · tests · lint<br/>then reviewer agent]
     review -- approved --> done[complete_task<br/>commit · re-index · store lessons]
     review -- rejected --> coder
     review -- same failure x3 --> referee[adjudicate<br/>is the test wrong?]
@@ -92,6 +92,10 @@ You can also wire up these triggers:
 - The gate owns its own vitest config, because the coder kept narrowing `include` until no tests ran.
 - A malformed reviewer response does not count against the task.
 - A test that contradicts its own task is detected and rewritten instead of burning the whole budget.
+
+**Contract-first TDD.** Every task in the plan carries a binding `interface`: module path, signatures, exceptions. Its acceptance test is written *before* the code, from that interface and the Definition of Done, and must fail first (red check). A test that already passes asserts nothing, so it is regenerated once. The coder then sees an executable target from its first attempt.
+
+The original TypeScript version wrote tests first too, but without a fixed interface the test generator invented names (`addNote` where the spec said `add`) and deadlocked the coder. That led to a test-after mode, where the generator sees the code first. Test-after avoids the deadlock but biases tests toward whatever the code already does. Fixing names in the plan removes the deadlock without giving up independent tests. Both modes remain available via `WorkflowConfig.test_strategy`, so they can be compared with `evals/e2e_eval.py`. The referee still catches a test that contradicts its task.
 
 **Gate per language.** `gate/` detects the target repo's language: Python gets pytest + ruff + mypy (or compileall); TypeScript gets tsc + vitest + eslint. Each gate reports the reason a check failed, not just the test name. It also never fails on conditions the coder can't fix, such as a scaffolding task with no sources yet.
 

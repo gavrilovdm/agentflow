@@ -71,8 +71,13 @@
   },
   {
    "source": "generate_task_test",
+   "target": "run_coder",
+   "conditional": true
+  },
+  {
+   "source": "generate_task_test",
    "target": "run_review",
-   "conditional": false
+   "conditional": true
   },
   {
    "source": "generate_tasks",
@@ -115,6 +120,11 @@
    "conditional": true
   },
   {
+   "source": "run_coder",
+   "target": "run_review",
+   "conditional": true
+  },
+  {
    "source": "run_review",
    "target": "adjudicate",
    "conditional": true
@@ -137,6 +147,11 @@
   {
    "source": "select_next_task",
    "target": "create_pr",
+   "conditional": true
+  },
+  {
+   "source": "select_next_task",
+   "target": "generate_task_test",
    "conditional": true
   },
   {

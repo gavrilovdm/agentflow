@@ -104,7 +104,7 @@ export function Concepts() {
               judgement, a reviewer crash says nothing about the code.
             </p>
             <p>
-              If the exact same failure repeats three times, retrying is pointless; a referee agent decides whether the{' '}
+              If the same failure comes back a third time within the last few attempts — in a row or alternating with another one — retrying is pointless; a referee agent decides whether the{' '}
               <i>test</i> is the problem. A task that finally fails only takes down tasks that depend on it.
             </p>
           </>
@@ -461,7 +461,7 @@ function RoutingWidget() {
         <Slider label="gate failures (tests/lint red)" value={gate} max={b.maxGateFailures} onChange={setGate} />
         <Slider label="review rejections" value={rev} max={b.maxReviewCycles} onChange={setRev} />
         <Slider label="reviewer malfunctions" value={mal} max={b.maxReviewerMalfunctions} onChange={setMal} />
-        <Slider label="same failure repeated" value={rep} max={3} onChange={setRep} />
+        <Slider label="same failure seen before (recent attempts)" value={rep} max={3} onChange={setRep} />
       </div>
       <label className="mt-2 flex items-center gap-2 text-[13px]">
         <input type="checkbox" checked={adj} onChange={(e) => setAdj(e.target.checked)} /> the referee already ruled on this task

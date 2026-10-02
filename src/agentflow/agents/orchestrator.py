@@ -37,6 +37,11 @@ Rules:
 - target_files lists the exact files to create or modify, consistent with the repository layout
 - definition_of_done is specific: "function X returns Y given Z", not "feature works"
 - Foundational types/interfaces come before their consumers
+- interface is mandatory and binding: the exact module path, function/class signatures with types,
+  return values and exceptions this task exposes. Tests are written against it BEFORE the code,
+  so reuse names from the spec and the repository and never leave a name for the coder to choose
+- Do not create separate "write tests" tasks: every task automatically gets its own acceptance test,
+  written before its code. Tests belong to the task whose behaviour they check
 - ID format: task-<slug>, e.g. task-add-auth-middleware"""
 
 
