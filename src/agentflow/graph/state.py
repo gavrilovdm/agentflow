@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, TypedDict
 
-from agentflow.schemas import CoderResult, PullRequest, ReviewCycle, ReviewResult, Spec, Stall, Task
+from agentflow.schemas import CoderResult, FailureDecision, PullRequest, ReviewCycle, ReviewResult, Spec, Stall, Task
 
 Status = Literal[
     "speccing", "spec_review", "planning", "task_review", "coding", "pr", "notifying", "completed", "failed"
@@ -52,6 +52,12 @@ class WorkflowState(TypedDict, total=False):
     stalls: Annotated[dict[str, Stall], merge]
     adjudicated: Annotated[dict[str, bool], merge]  # at most one referee ruling per task
     failed_tasks: Annotated[dict[str, str], merge]  # task_id → reason (for PR body + notification)
+
+    # escalation (human decisions when a task runs out of budget)
+    failure_decisions: Annotated[dict[str, FailureDecision], merge]  # task_id → latest decision
+    escalations: Annotated[dict[str, int], merge]  # task_id → times escalated
+    hints: Annotated[dict[str, str], merge]  # task_id → human guidance for the coder
+    replans: int
 
     # output
     pull_request: PullRequest | None

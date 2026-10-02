@@ -12,6 +12,8 @@
   "run_review",
   "adjudicate",
   "complete_task",
+  "escalate",
+  "replan",
   "handle_failure",
   "create_pr",
   "notify",
@@ -26,7 +28,7 @@
   },
   {
    "source": "adjudicate",
-   "target": "handle_failure",
+   "target": "escalate",
    "conditional": true
   },
   {
@@ -65,6 +67,21 @@
    "conditional": false
   },
   {
+   "source": "escalate",
+   "target": "handle_failure",
+   "conditional": true
+  },
+  {
+   "source": "escalate",
+   "target": "replan",
+   "conditional": true
+  },
+  {
+   "source": "escalate",
+   "target": "run_coder",
+   "conditional": true
+  },
+  {
    "source": "generate_spec",
    "target": "await_spec_approval",
    "conditional": false
@@ -72,12 +89,7 @@
   {
    "source": "generate_task_test",
    "target": "run_coder",
-   "conditional": true
-  },
-  {
-   "source": "generate_task_test",
-   "target": "run_review",
-   "conditional": true
+   "conditional": false
   },
   {
    "source": "generate_tasks",
@@ -105,13 +117,13 @@
    "conditional": false
   },
   {
-   "source": "run_coder",
-   "target": "generate_task_test",
-   "conditional": true
+   "source": "replan",
+   "target": "select_next_task",
+   "conditional": false
   },
   {
    "source": "run_coder",
-   "target": "handle_failure",
+   "target": "escalate",
    "conditional": true
   },
   {
@@ -136,7 +148,7 @@
   },
   {
    "source": "run_review",
-   "target": "handle_failure",
+   "target": "escalate",
    "conditional": true
   },
   {
@@ -152,11 +164,6 @@
   {
    "source": "select_next_task",
    "target": "generate_task_test",
-   "conditional": true
-  },
-  {
-   "source": "select_next_task",
-   "target": "run_coder",
    "conditional": true
   },
   {

@@ -30,6 +30,7 @@ SERDE = JsonPlusSerializer(
             "PullRequest",
             "Stall",
             "GateResult",
+            "FailureDecision",
         )
     ]
 )
@@ -56,6 +57,8 @@ def build_graph(
     g.add_node("run_review", nodes.run_review, retry_policy=LLM_RETRY, timeout=1800)
     g.add_node("adjudicate", nodes.adjudicate, timeout=600)
     g.add_node("complete_task", nodes.complete_task, retry_policy=LLM_RETRY)
+    g.add_node("escalate", nodes.escalate)
+    g.add_node("replan", nodes.replan, retry_policy=LLM_RETRY, timeout=600)
     g.add_node("handle_failure", nodes.handle_failure)
     g.add_node("create_pr", nodes.create_pr, retry_policy=LLM_RETRY, timeout=1800)
     g.add_node("notify", nodes.notify)
@@ -67,21 +70,17 @@ def build_graph(
     g.add_conditional_edges("await_spec_approval", routing.after_spec_approval, ["generate_tasks", "generate_spec"])
     g.add_edge("generate_tasks", "await_task_approval")
     g.add_conditional_edges("await_task_approval", routing.after_task_approval, ["select_next_task", "generate_tasks"])
-    g.add_conditional_edges(
-        "select_next_task", _with_config(routing.after_task_selection), ["generate_task_test", "run_coder", "create_pr"]
-    )
-    g.add_conditional_edges(
-        "run_coder",
-        _with_config(routing.after_coder),
-        ["run_review", "generate_task_test", "run_coder", "handle_failure"],
-    )
-    g.add_conditional_edges("generate_task_test", _with_config(routing.after_test), ["run_coder", "run_review"])
+    g.add_conditional_edges("select_next_task", routing.after_task_selection, ["generate_task_test", "create_pr"])
+    g.add_edge("generate_task_test", "run_coder")
+    g.add_conditional_edges("run_coder", _with_config(routing.after_coder), ["run_review", "run_coder", "escalate"])
     g.add_conditional_edges(
         "run_review",
         _with_config(routing.after_review),
-        ["complete_task", "run_coder", "handle_failure", "adjudicate"],
+        ["complete_task", "run_coder", "escalate", "adjudicate"],
     )
-    g.add_conditional_edges("adjudicate", routing.after_adjudication, ["run_coder", "handle_failure"])
+    g.add_conditional_edges("adjudicate", routing.after_adjudication, ["run_coder", "escalate"])
+    g.add_conditional_edges("escalate", routing.after_escalation, ["run_coder", "replan", "handle_failure"])
+    g.add_edge("replan", "select_next_task")
     g.add_edge("complete_task", "select_next_task")
     g.add_conditional_edges("handle_failure", routing.after_failure, ["select_next_task", END])
     g.add_edge("create_pr", "notify")

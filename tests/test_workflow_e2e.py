@@ -82,7 +82,9 @@ def fakes(monkeypatch):
         (ctx.workspace / "calc/mul.py").write_text(body)
         return CoderResult(task_id=ctx.task.id, success=True, written_files={"calc/mul.py": body})
 
-    async def fake_test(task, spec, gate, workspace, written, previous_test=None, ruling=None, existing_files=None):
+    async def fake_test(
+        task, spec, gate, workspace, *, existing_files=None, previous_test=None, ruling=None, attempted_code=None
+    ):
         calls.setdefault("test_context", []).append(existing_files)
         name = task.id.replace("-", "_")
         fn, expr = ("add", "add(2, 3) == 5") if task.id == "task-add" else ("mul", "mul(2, 3) == 6")
@@ -105,9 +107,8 @@ def fakes(monkeypatch):
     return calls
 
 
-@pytest.mark.parametrize("strategy", ["test_first", "test_after"])
-async def test_full_run_in_place(repo: Path, fakes, strategy):
-    cfg = WorkflowConfig(local_path=str(repo), enable_lint=True, test_strategy=strategy)
+async def test_full_run_in_place(repo: Path, fakes):
+    cfg = WorkflowConfig(local_path=str(repo), enable_lint=True)
     events: list[dict] = []
 
     async def on_event(e):
@@ -136,12 +137,8 @@ async def test_full_run_in_place(repo: Path, fakes, strategy):
     assert log[:2] == ["feat(task-mul): mul()", "feat(task-add): add()"]
     assert "tests/acceptance/test_task_add.py" in Repo(repo).git.ls_files()
     assert any("indexed" in e.get("message", "") for e in events)
-    # test_first: the coder saw its acceptance test on every attempt, including the first.
-    # test_after: the first attempt of each task was blind.
-    if strategy == "test_first":
-        assert all(fakes["saw_test"])
-    else:
-        assert fakes["saw_test"][0] is False
+    # Tests come first: the coder saw its acceptance test on every attempt, including the first.
+    assert all(fakes["saw_test"])
 
 
 async def test_gate_budget_exhaustion_skips_dependents(repo: Path, fakes, monkeypatch):
@@ -157,7 +154,7 @@ async def test_gate_budget_exhaustion_skips_dependents(repo: Path, fakes, monkey
 
     monkeypatch.setattr(coder, "run_coder", always_buggy)
     monkeypatch.setattr(reviewer, "adjudicate", no_referee)
-    cfg = WorkflowConfig(local_path=str(repo), max_gate_failures=5)
+    cfg = WorkflowConfig(local_path=str(repo), max_gate_failures=5, on_task_failure="skip")
     async with open_persistence(in_memory=True) as p:
         await start_run(p, "calc", cfg, thread_id="t2")
         await resume_run(p, "t2", approved=True)
@@ -213,7 +210,7 @@ async def test_vacuous_test_is_regenerated_once(repo: Path, fakes, monkeypatch):
     real_fake = test_generator.generate_test
 
     async def vacuous_then_real(
-        task, spec, gate, workspace, written_files, previous_test=None, ruling=None, existing_files=None
+        task, spec, gate, workspace, *, existing_files=None, previous_test=None, ruling=None, attempted_code=None
     ):
         written.append(task.id)
         if task.id == "task-add" and ruling is None:
@@ -221,7 +218,9 @@ async def test_vacuous_test_is_regenerated_once(repo: Path, fakes, monkeypatch):
             (workspace / rel).parent.mkdir(parents=True, exist_ok=True)
             (workspace / rel).write_text("def test_nothing():\n    assert True\n")
             return rel
-        return await real_fake(task, spec, gate, workspace, written_files, previous_test, ruling, existing_files)
+        return await real_fake(
+            task, spec, gate, workspace, existing_files=existing_files, previous_test=previous_test, ruling=ruling
+        )
 
     monkeypatch.setattr(test_generator, "generate_test", vacuous_then_real)
     async with open_persistence(in_memory=True) as p:
@@ -230,3 +229,108 @@ async def test_vacuous_test_is_regenerated_once(repo: Path, fakes, monkeypatch):
         snap = await resume_run(p, "t5", approved=True)
     assert snap.status == "completed"
     assert written.count("task-add") == 2  # vacuous first draft, then the real one
+
+
+# ─── Escalation ─────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def stubborn(fakes, monkeypatch):
+    """task-add fails the gate until a human hint arrives; the referee blames the code."""
+    seen: dict[str, list] = {"hints": []}
+
+    async def coder_needing_hint(ctx, retriever, feedback=None):
+        seen["hints"].append(ctx.human_hint)
+        if "mul" in ctx.task.id:
+            body = "def mul(a: int, b: int) -> int:\n    return a * b\n"
+            (ctx.workspace / "calc/mul.py").write_text(body)
+            return CoderResult(task_id=ctx.task.id, success=True, written_files={"calc/mul.py": body})
+        op = "+" if ctx.human_hint else "-"
+        body = f"def add(a: int, b: int) -> int:\n    return a {op} b\n"
+        (ctx.workspace / "calc/ops.py").write_text(body)
+        return CoderResult(task_id=ctx.task.id, success=True, written_files={"calc/ops.py": body})
+
+    async def referee_blames_code(*a, **k):
+        from agentflow.schemas import FailureRuling
+
+        return FailureRuling(culprit="code", reasoning="returns a - b")
+
+    monkeypatch.setattr(coder, "run_coder", coder_needing_hint)
+    monkeypatch.setattr(reviewer, "adjudicate", referee_blames_code)
+    return seen
+
+
+async def _until_task_failed(p, thread: str, repo: Path):
+    await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id=thread)
+    await resume_run(p, thread, approved=True)
+    return await resume_run(p, thread, approved=True)
+
+
+async def test_exhausted_task_pauses_with_dossier_then_retry_with_hint(repo: Path, stubborn):
+    async with open_persistence(in_memory=True) as p:
+        snap = await _until_task_failed(p, "e1", repo)
+        assert snap.status == "awaiting_approval"
+        q = snap.interrupt
+        assert q["type"] == "task_failed" and q["task_id"] == "task-add"
+        assert set(q["options"]) == {"retry", "replan", "skip", "abort"}
+        d = q["dossier"]
+        assert d["attempts"]["referee_consulted"] is True
+        assert d["dependents"] == ["task-mul"] and d["files_written"] == ["calc/ops.py"]
+        assert any("assert" in f for f in d["recent_failures"])
+
+        with pytest.raises(ValueError):  # an approval is not an answer to this question
+            await resume_run(p, "e1", approved=True)
+
+        snap = await resume_run(p, "e1", {"action": "retry", "hint": "use + not -"})
+        assert snap.status == "completed", snap.to_json()
+        assert stubborn["hints"][-2] == "use + not -"  # task-add's retry carried the hint
+        task_add = next(t for t in snap.values["tasks"] if t.id == "task-add")
+        assert task_add.status == "completed" and snap.values["escalations"] == {"task-add": 1}
+
+
+async def test_replan_replaces_failed_and_pending_tasks(repo: Path, stubborn, monkeypatch):
+    from agentflow.schemas import Task as T
+
+    async def replanner(spec, completed, failed, remaining, dossier, hint, context):
+        assert failed.id == "task-add" and [t.id for t in remaining] == ["task-mul"] and hint == "split it"
+        return [
+            T(
+                id="task-mul",
+                title="mul()",
+                description="",
+                target_files=["calc/mul.py"],
+                definition_of_done="mul works",
+                interface="calc.mul.mul(a, b) -> int",
+            ),
+        ]
+
+    monkeypatch.setattr(orchestrator, "replan_tasks", replanner)
+    async with open_persistence(in_memory=True) as p:
+        await _until_task_failed(p, "e2", repo)
+        snap = await resume_run(p, "e2", {"action": "replan", "hint": "split it"})
+    assert snap.status == "completed", snap.to_json()
+    ids = [t.id for t in snap.values["tasks"]]
+    assert ids == ["task-mul-r"]  # reused id renamed so no stale per-task state leaks in
+    assert snap.values["replans"] == 1
+    assert "Replaced by re-plan" in snap.values["failed_tasks"]["task-add"]
+
+
+async def test_abort_stops_the_run(repo: Path, stubborn):
+    async with open_persistence(in_memory=True) as p:
+        await _until_task_failed(p, "e3", repo)
+        snap = await resume_run(p, "e3", {"action": "abort"})
+    assert snap.status == "failed"
+    assert snap.values["failed_tasks"]["task-mul"].startswith("Not started")
+    assert snap.values["error"].startswith("Stopped by a human")
+
+
+async def test_escalation_cap_falls_back_to_skip(repo: Path, stubborn):
+    cfg = WorkflowConfig(local_path=str(repo), max_escalations_per_task=1)
+    async with open_persistence(in_memory=True) as p:
+        await start_run(p, "calc", cfg, thread_id="e4")
+        await resume_run(p, "e4", approved=True)
+        snap = await resume_run(p, "e4", approved=True)
+        # A retry without a hint fails the same way; the cap means no second question.
+        snap = await resume_run(p, "e4", {"action": "retry"})
+    assert snap.status == "failed"
+    assert snap.values["failure_decisions"]["task-add"].auto is True

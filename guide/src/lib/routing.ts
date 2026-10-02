@@ -31,7 +31,7 @@ export interface ReviewState {
   adjudicated: boolean
 }
 
-export type AfterReview = 'complete_task' | 'run_coder' | 'handle_failure' | 'adjudicate'
+export type AfterReview = 'complete_task' | 'run_coder' | 'escalate' | 'adjudicate'
 
 export interface Decision<T extends string> {
   next: T
@@ -41,31 +41,27 @@ export interface Decision<T extends string> {
 export function afterReview(task: TaskCounters, review: ReviewState, b: Budgets): Decision<AfterReview> {
   if (review.approved) return { next: 'complete_task', reason: 'Reviewer approved the change.' }
   if (task.reviewCycles >= b.maxReviewCycles)
-    return { next: 'handle_failure', reason: `Review budget spent (${task.reviewCycles}/${b.maxReviewCycles}).` }
+    return { next: 'escalate', reason: `Review budget spent (${task.reviewCycles}/${b.maxReviewCycles}) — ask a human.` }
   if (task.gateFailures >= b.maxGateFailures)
-    return { next: 'handle_failure', reason: `Gate budget spent (${task.gateFailures}/${b.maxGateFailures}).` }
+    return { next: 'escalate', reason: `Gate budget spent (${task.gateFailures}/${b.maxGateFailures}) — ask a human.` }
   if (task.reviewerMalfunctions >= b.maxReviewerMalfunctions)
     return {
-      next: 'handle_failure',
+      next: 'escalate',
       reason: `The reviewer itself kept failing (${task.reviewerMalfunctions}/${b.maxReviewerMalfunctions}) — e.g. an API outage.`,
     }
   if (review.stallRepeats >= STALL_REPEATS)
     return review.adjudicated
-      ? { next: 'handle_failure', reason: 'Same failure 3× in a row and the referee already ruled once.' }
-      : { next: 'adjudicate', reason: 'Same failure 3× in a row — ask a referee whether the test itself is wrong.' }
+      ? { next: 'escalate', reason: 'Same failure a 3rd time and the referee already ruled — ask a human.' }
+      : { next: 'adjudicate', reason: 'Same failure a 3rd time within recent attempts — ask a referee whether the test itself is wrong.' }
   return { next: 'run_coder', reason: 'Budget left — send the feedback back to the coder for another attempt.' }
 }
 
-export type TestStrategy = 'test_first' | 'test_after'
-export type AfterCoder = 'run_review' | 'generate_task_test' | 'run_coder' | 'handle_failure'
+export type AfterCoder = 'run_review' | 'run_coder' | 'escalate'
 
-export function afterCoder(success: boolean, task: TaskCounters, b: Budgets, strategy: TestStrategy = 'test_first'): Decision<AfterCoder> {
-  if (success)
-    return strategy === 'test_first'
-      ? { next: 'run_review', reason: 'Code written against the existing test — run the gate.' }
-      : { next: 'generate_task_test', reason: 'Code written — now write the test that judges it.' }
+export function afterCoder(success: boolean, task: TaskCounters, b: Budgets): Decision<AfterCoder> {
+  if (success) return { next: 'run_review', reason: 'Code written against the existing test — run the gate.' }
   if (task.coderFixAttempts >= b.maxCoderFixAttempts)
-    return { next: 'handle_failure', reason: `Coder crashed ${task.coderFixAttempts}× — out of attempts.` }
+    return { next: 'escalate', reason: `Coder crashed ${task.coderFixAttempts}× — out of attempts, ask a human.` }
   return { next: 'run_coder', reason: 'Coder crashed; retry with the error as feedback.' }
 }
 
@@ -75,17 +71,26 @@ export interface PlanTask {
   status: 'pending' | 'coding' | 'completed' | 'failed'
 }
 
-export function afterTaskSelection(hasTask: boolean, strategy: TestStrategy = 'test_first'): Decision<string> {
-  if (!hasTask) return { next: 'create_pr', reason: 'No runnable tasks left.' }
-  return strategy === 'test_first'
+export function afterTaskSelection(hasTask: boolean): Decision<string> {
+  return hasTask
     ? { next: 'generate_task_test', reason: 'Write the failing acceptance test before any code.' }
-    : { next: 'run_coder', reason: 'Code first; the test is written afterwards.' }
+    : { next: 'create_pr', reason: 'No runnable tasks left.' }
 }
 
-export function afterTest(strategy: TestStrategy = 'test_first'): Decision<string> {
-  return strategy === 'test_first'
-    ? { next: 'run_coder', reason: 'Test is red — now make it green.' }
-    : { next: 'run_review', reason: 'Test written for existing code — run the gate.' }
+export type FailureAction = 'retry' | 'replan' | 'skip' | 'abort'
+
+/** Port of after_escalation: what each human decision does. */
+export function afterEscalation(action: FailureAction | undefined): Decision<string> {
+  switch (action) {
+    case 'retry':
+      return { next: 'run_coder', reason: 'Fresh budget; the hint goes into the coder prompt as top priority.' }
+    case 'replan':
+      return { next: 'replan', reason: 'Rewrite the not-yet-done tasks around the failure; completed work stays.' }
+    case 'abort':
+      return { next: 'handle_failure', reason: 'Stop the run: remaining tasks are marked not started.' }
+    default:
+      return { next: 'handle_failure', reason: 'Skip this task and only the tasks that depend on it.' }
+  }
 }
 
 /** Every open task that needs `taskId`, directly or transitively (port of dependents_of). */

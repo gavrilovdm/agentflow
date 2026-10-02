@@ -40,9 +40,12 @@ class WorkflowConfig(BaseModel):
     # Reviewer outages are not the task's fault, so they don't consume review cycles —
     # but uncapped, an outage (or an exhausted API balance) loops coder→reviewer forever.
     max_reviewer_malfunctions: int = 3
-    # test_first: acceptance test is written from the task's interface + Definition of Done
-    # before the code, and must fail first (red). test_after: written after the code, seeing it.
-    test_strategy: Literal["test_first", "test_after"] = "test_first"
+    # When a task exhausts a budget: "ask" pauses the run and asks a human (retry with a
+    # hint / replan / skip / abort); "skip" is the unattended behaviour — fail the task and
+    # skip only the tasks that depend on it.
+    on_task_failure: Literal["ask", "skip"] = "ask"
+    max_escalations_per_task: int = 2  # beyond this a task is skipped without asking again
+    max_replans: int = 2
     enable_lint: bool = True
     # None = in-place mode: operate on a local directory, no clone, no PR.
     target_repo: TargetRepo | None = None

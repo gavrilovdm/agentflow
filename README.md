@@ -18,13 +18,16 @@ flowchart TD
     tests --> coder[run_coder<br/>tool-using agent + RAG + lessons<br/>makes the test pass]
     coder -- wrote code --> review[run_review<br/>gate: types · tests · lint<br/>then reviewer agent]
     coder -- error, budget left --> coder
-    coder -- budget spent --> fail
+    coder -- budget spent --> esc
     review -- approved --> done[complete_task<br/>commit · re-index · store lessons]
     review -- rejected --> coder
-    review -- same failure x3 --> referee[adjudicate<br/>is the test wrong?]
+    review -- same failure 3x in window --> referee[adjudicate<br/>is the test wrong?]
     referee -- test wrong: regenerate --> coder
-    referee -- code wrong --> fail[handle_failure<br/>skip dependent subtree]
-    review -- budget spent --> fail
+    referee -- code wrong --> esc{{escalate<br/>dossier → human}}
+    review -- budget spent --> esc
+    esc -- retry + hint --> coder
+    esc -- replan --> replan[replan<br/>rewrite remaining tasks] --> select
+    esc -- skip / abort --> fail[handle_failure<br/>skip dependent subtree · or stop]
     done --> select
     fail --> select
     select -- none left --> pr[create_pr<br/>full-suite verification]
@@ -37,15 +40,15 @@ flowchart TD
 |---|---|
 | **Python backend** | FastAPI (`api/app.py`), arq worker (`worker.py`), Pydantic everywhere, mypy-clean |
 | **LLM APIs, agentic systems** | Anthropic (Opus/Sonnet) and DeepSeek via LangChain; `create_agent` coder and reviewer (`agents/`) |
-| **LangGraph / LangChain** | 15-node `StateGraph` with typed reducers and runtime-context DI (`graph/`) |
+| **LangGraph / LangChain** | 17-node `StateGraph` with typed reducers and runtime-context DI (`graph/`) |
 | **Tool calling, structured outputs** | Coder tools (write/read/list/search) and Pydantic outputs for spec, plan, review and referee (`schemas.py`) |
 | **RAG, embeddings, vector search** | `rag/`: language-aware chunking, incremental re-embedding by file hash, pgvector HNSW + Postgres FTS fused with RRF, token-budgeted context packing |
 | **Context management** | Retrieval instead of whole-repo dumps; `pack_context` merges adjacent chunks under a token budget; agents can query more through tools |
 | **State, memory** | Postgres checkpointer (per-run state, resumable), LangGraph Store with a semantic index (cross-run lessons, `memory/lessons.py`) |
 | **Routing, retries, fallback** | Conditional edges (`graph/routing.py`); node `RetryPolicy` + timeouts; `.with_fallbacks()` on structured calls; `ModelFallbackMiddleware`, `ModelRetryMiddleware` and `ModelCallLimitMiddleware` on agents |
-| **Recovery from failure** | Separate gate and review budgets, stall detection, a referee that can rewrite an unsatisfiable test, and failure that skips only the dependent subtree |
+| **Recovery from failure** | Separate budgets, windowed stall detection (catches A↔B oscillation), a referee that can rewrite an unsatisfiable test, then escalation: a human picks retry-with-hint, re-plan, skip or abort |
 | **API integrations, event-driven** | GitHub webhook (issue labelled → run → PR that closes it), Telegram inline buttons resume paused runs, Redis job queue |
-| **Human-in-the-loop** | `interrupt()` at spec and plan; approval through Telegram, REST or MCP; resumes deduplicated by checkpoint id |
+| **Human-in-the-loop** | `interrupt()` at spec, plan, and whenever a task exhausts its budget (with an evidence dossier); answered via Telegram, REST, MCP or CLI; resumes deduplicated by checkpoint id |
 | **MCP** | `mcp_server.py`: `start_run`, `get_run`, `review_checkpoint`, `search_codebase` |
 | **Evaluation** | `evals/`: retrieval ablation (CI-gated), spec LLM-as-judge, e2e agent runs; all logged to LangSmith |
 | **Tracing, monitoring** | LangSmith traces tagged by role and task; Prometheus metrics (`/metrics`, worker `:9100`); JSON logs |
@@ -78,7 +81,8 @@ curl -X POST localhost:8010/runs/<thread_id>/approval \
 You can also wire up these triggers:
 
 - **GitHub webhook** → `POST /webhooks/github` (event: issues). Labelling an issue `agentflow` starts a run; the PR body says `Closes #N`.
-- **Telegram webhook** → `POST /webhooks/telegram`. The worker posts the spec or plan with ✅/❌ buttons. `/reject <thread> <feedback>` rejects with feedback.
+- **Telegram webhook** → `POST /webhooks/telegram`. The worker posts the spec or plan with ✅/❌ buttons, and `/reject <thread> <feedback>` rejects with feedback. When a task runs out of budget, it posts the dossier with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop buttons; `/hint <thread> <guidance>` retries with guidance.
+- **Failed task via REST** → `POST /runs/<thread_id>/decision` with `{"action": "retry" | "replan" | "skip" | "abort", "hint": "..."}`.
 - **MCP**: `uv run agentflow-mcp` (stdio) or `--http`. Add it to Claude Desktop or Claude Code to start and approve runs from chat.
 
 ## Design notes
@@ -95,7 +99,27 @@ You can also wire up these triggers:
 
 **Contract-first TDD.** Every task in the plan carries a binding `interface`: module path, signatures, exceptions. Its acceptance test is written *before* the code, from that interface and the Definition of Done, and must fail first (red check). A test that already passes asserts nothing, so it is regenerated once. The coder then sees an executable target from its first attempt.
 
-The original TypeScript version wrote tests first too, but without a fixed interface the test generator invented names (`addNote` where the spec said `add`) and deadlocked the coder. That led to a test-after mode, where the generator sees the code first. Test-after avoids the deadlock but biases tests toward whatever the code already does. Fixing names in the plan removes the deadlock without giving up independent tests. Both modes remain available via `WorkflowConfig.test_strategy`, so they can be compared with `evals/e2e_eval.py`. The referee still catches a test that contradicts its task.
+The original TypeScript version wrote tests first too, but without a fixed interface the test generator invented names (`addNote` where the spec said `add`) and deadlocked the coder. That led to a test-after mode, where the generator sees the code first. Test-after avoids the deadlock but biases tests toward whatever the code already does. Fixing names in the plan removes the deadlock without giving up independent tests, so test-after was removed. The referee still catches a test that contradicts its task.
+
+**Escalation, not silent skipping.** When a task runs out of budget, the run pauses with an `interrupt()`. Previously it marked the task failed and quietly skipped everything that depended on it. Now a human gets a dossier:
+
+- the attempts per budget;
+- the distinct recent failures;
+- the open reviewer requests;
+- the files written so far;
+- what would be blocked;
+- the branch holding the partial work.
+
+The human then chooses one of four actions:
+
+- **retry**: budgets reset, and the hint goes into the coder's prompt as top-priority guidance;
+- **re-plan**: a replanner rewrites only the not-yet-done tasks around the failure and gives them fresh ids, so no per-task state leaks in; completed work is untouched;
+- **skip**: the old behaviour; the task's dependents are skipped too;
+- **abort**: the run stops.
+
+Unattended runs keep the old behaviour with `on_task_failure="skip"`. Each task can escalate at most `max_escalations_per_task` times, and a run can re-plan at most `max_replans` times.
+
+This follows how production harnesses treat budget exhaustion: stop and escalate with the evidence, rather than "try harder" or drop work silently. Stall detection counts a failure's repeats over a window rather than only back-to-back, the way OpenHands' stuck detector also catches alternating patterns. The first live test-first run failed exactly that way: the test failed, the reviewer rejected the fix, and the cycle repeated.
 
 **Gate per language.** `gate/` detects the target repo's language: Python gets pytest + ruff + mypy (or compileall); TypeScript gets tsc + vitest + eslint. Each gate reports the reason a check failed, not just the test name. It also never fails on conditions the coder can't fix, such as a scaffolding task with no sources yet.
 

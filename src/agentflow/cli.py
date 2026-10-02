@@ -18,6 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agentflow.config import TargetRepo, WorkflowConfig
+from agentflow.graph.escalation import OPTIONS, dossier_text
 from agentflow.observability import setup_logging
 from agentflow.runner import RunSnapshot, open_persistence, resume_run, snapshot, start_run
 
@@ -49,12 +50,31 @@ def _show_interrupt(snap: RunSnapshot) -> None:
         console.print(table)
 
 
+def _ask_failure(snap: RunSnapshot) -> dict[str, Any]:
+    """A task ran out of budget: show the dossier and ask what to do."""
+    assert snap.interrupt
+    console.print(Panel(dossier_text(snap.interrupt["dossier"]), title="A task needs you", border_style="red"))
+    options = snap.interrupt["options"]
+    for key in options:
+        console.print(f"  [bold]{key}[/bold] — {OPTIONS[key]}")
+    action = typer.prompt("Decision", default="retry" if "retry" in options else options[0])
+    while action not in options:
+        action = typer.prompt(f"Choose one of {', '.join(options)}")
+    hint = typer.prompt("Guidance (optional)", default="") if action in ("retry", "replan") else ""
+    return {"action": action, "hint": hint or None}
+
+
 async def _loop(p, snap: RunSnapshot) -> RunSnapshot:
     while snap.interrupt:
+        if snap.interrupt["type"] == "task_failed":
+            snap = await resume_run(p, snap.thread_id, _ask_failure(snap), on_event=_print_event)
+            continue
         _show_interrupt(snap)
         answer = typer.prompt("Approve? [y / feedback text]", default="y")
         approved = answer.strip().lower() in ("y", "yes")
-        snap = await resume_run(p, snap.thread_id, approved, None if approved else answer, on_event=_print_event)
+        snap = await resume_run(
+            p, snap.thread_id, approved=approved, feedback=None if approved else answer, on_event=_print_event
+        )
     return snap
 
 

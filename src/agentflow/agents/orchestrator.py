@@ -113,6 +113,48 @@ async def generate_tasks(
     return validate_plan([Task(**t.model_dump()) for t in plan.tasks])
 
 
+REPLAN_SYSTEM = """You are a senior software architect revising a plan after a task failed.
+
+You get the spec, the tasks already completed (their code is committed and must not be redone),
+the task that failed with the evidence of why, any human guidance, and the tasks still pending.
+Return ONLY the tasks still to do — a replacement for the failed and pending tasks.
+
+Rules:
+- Address the cause of the failure: split the failed task, change its approach or interface, add a
+  missing prerequisite, or drop it if the spec can be met without it. Follow the human guidance.
+- Every task follows the same rules as the original plan: small, independently testable, binding
+  interface, specific definition_of_done, no separate "write tests" tasks.
+- depends_on may reference completed task ids and ids in your new list only.
+- Use fresh ids (task-<slug>) — never reuse the id of the failed task."""
+
+
+async def replan_tasks(
+    spec: Spec,
+    completed: list[Task],
+    failed: Task,
+    remaining: list[Task],
+    dossier: dict,
+    hint: str | None,
+    repo_context: str,
+) -> list[Task]:
+    messages = [
+        SystemMessage(REPLAN_SYSTEM),
+        HumanMessage(
+            f"## Specification\n```json\n{spec.model_dump_json(indent=2)}\n```\n\n"
+            f"## Completed tasks\n```json\n{json.dumps([t.model_dump() for t in completed], indent=2)}\n```\n\n"
+            f"## Failed task\n```json\n{failed.model_dump_json(indent=2)}\n```\n\n"
+            f"## Why it failed\n```json\n{json.dumps(dossier, indent=2, default=str)}\n```\n\n"
+            f"## Still pending\n```json\n{json.dumps([t.model_dump() for t in remaining], indent=2)}\n```\n\n"
+            + (f"## Human guidance\n{hint}\n\n" if hint else "")
+            + (f"## Repository context\n{repo_context}" if repo_context else "")
+        ),
+    ]
+    plan: TaskPlan = await structured(get_settings().orchestrator_model, TaskPlan).ainvoke(
+        messages, config={"tags": ["orchestrator", "replan"]}
+    )
+    return [Task(**t.model_dump()) for t in plan.tasks]
+
+
 def validate_plan(tasks: list[Task]) -> list[Task]:
     """Drop dangling dependencies and break cycles, so the scheduler can never deadlock
     on a plan the model got slightly wrong. Cycles are broken by dropping the in-cycle
