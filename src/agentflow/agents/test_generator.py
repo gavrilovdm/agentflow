@@ -65,7 +65,7 @@ async def generate_test(
         )
     )
     messages = [SystemMessage(SYSTEM.format(rules=gate.test_prompt_rules())), HumanMessage(body)]
-    runnable = structured(get_settings().test_generator_model, GeneratedTest, tool_name="write_test_file")
+    runnable = structured(get_settings().test_generator_model, GeneratedTest)
 
     last_error: Exception | None = None
     for attempt in range(1, ATTEMPTS + 1):

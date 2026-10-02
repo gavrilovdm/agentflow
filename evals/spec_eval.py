@@ -59,7 +59,7 @@ async def main() -> None:
         spec = await generate_spec(inputs["prompt"], context)
         return {"spec": spec.model_dump(), "context": context}
 
-    judge = structured(get_settings().reviewer_model, Judgement, tool_name="grade_spec")
+    judge = structured(get_settings().reviewer_model, Judgement)
 
     async def rubric(inputs: dict, outputs: dict) -> list[dict]:
         j: Judgement = await judge.ainvoke(

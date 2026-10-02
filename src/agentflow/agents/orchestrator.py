@@ -58,7 +58,7 @@ async def generate_spec(
     if previous and feedback:
         messages.append(_revision_message("spec", previous.model_dump(), feedback))
     s = get_settings()
-    draft: SpecDraft = await structured(s.orchestrator_model, SpecDraft, tool_name="create_spec").ainvoke(
+    draft: SpecDraft = await structured(s.orchestrator_model, SpecDraft).ainvoke(
         messages, config={"tags": ["orchestrator", "spec"]}
     )
     return Spec(
@@ -81,7 +81,7 @@ async def generate_tasks(
     if previous and feedback:
         messages.append(_revision_message("task list", [t.model_dump() for t in previous], feedback))
     s = get_settings()
-    plan: TaskPlan = await structured(s.orchestrator_model, TaskPlan, tool_name="create_task_list").ainvoke(
+    plan: TaskPlan = await structured(s.orchestrator_model, TaskPlan).ainvoke(
         messages, config={"tags": ["orchestrator", "tasks"]}
     )
     return validate_plan([Task(**t.model_dump()) for t in plan.tasks])

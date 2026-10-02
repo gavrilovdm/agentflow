@@ -93,7 +93,7 @@ async def review_diff(
 
 
 async def adjudicate(task: Task, spec: Spec, test_content: str, failure: str) -> FailureRuling:
-    runnable = structured(get_settings().reviewer_model, FailureRuling, tool_name="rule_on_failure")
+    runnable = structured(get_settings().reviewer_model, FailureRuling)
     return await runnable.ainvoke(
         [
             SystemMessage(REFEREE_SYSTEM),

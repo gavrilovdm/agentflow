@@ -33,6 +33,8 @@ def chat_model(
     s = get_settings()
     if name.startswith("claude-"):
         kwargs: dict[str, Any] = {"model": name, "max_tokens": max_tokens, "max_retries": 3}
+        if s.anthropic_api_key:  # from .env via pydantic-settings; the SDK itself only reads os.environ
+            kwargs["api_key"] = s.anthropic_api_key
         if temperature is not None and "opus" not in name:  # opus thinking rejects temperature
             kwargs["temperature"] = temperature
         return ChatAnthropic(**kwargs)
@@ -58,7 +60,7 @@ def _fallback_name(primary: str, fallback: str | None) -> str | None:
     return fb if fb and fb != primary else None
 
 
-def structured(name: str, schema: type, *, fallback: str | None = None, tool_name: str | None = None) -> Runnable:
+def structured(name: str, schema: type, *, fallback: str | None = None) -> Runnable:
     """Structured-output runnable: primary model, then fallback model on error.
 
     Fallbacks are attached *after* with_structured_output — a RunnableWithFallbacks
@@ -67,10 +69,9 @@ def structured(name: str, schema: type, *, fallback: str | None = None, tool_nam
 
     def make(model_name: str) -> Runnable:
         model = chat_model(model_name, forces_tool_choice=True)
-        kwargs: dict[str, Any] = {"method": "function_calling"}
-        if tool_name:
-            kwargs["name"] = tool_name
-        return model.with_structured_output(schema, **kwargs)
+        # No custom tool `name`: ChatOpenAI forwards unknown kwargs to create(), which
+        # rejects them. The tool is named after the Pydantic class on every provider.
+        return model.with_structured_output(schema, method="function_calling")
 
     primary = make(name)
     fb = _fallback_name(name, fallback)

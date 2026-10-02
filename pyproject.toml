@@ -68,8 +68,8 @@ check_untyped_defs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = ["integration: needs Postgres/API keys"]
-addopts = "-m 'not integration'"
+markers = ["integration: needs Postgres", "live: calls real LLM APIs (costs money)"]
+addopts = "-m 'not integration and not live'"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
