@@ -31,8 +31,8 @@ jobs:
       - name: Integration tests (pgvector)
         run: uv run pytest -q -m integration
       - name: Retrieval eval gate
-        # Offline embeddings make the dense side noise, so this gates the lexical half of
-        # hybrid search; with VOYAGE_API_KEY set it gates the real thing.
+        # Without VOYAGE_API_KEY the dense half is hash noise, so the eval gates the lexical
+        # half; with the key set it gates hybrid retrieval.
         env:
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
         run: uv run python -m evals.retrieval_eval --min-recall 0.8

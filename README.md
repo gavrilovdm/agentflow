@@ -107,9 +107,11 @@ Retrieval eval, offline (hash embeddings, so dense is noise; 20 queries over `sr
 
 | mode | recall@5 | MRR |
 |---|---|---|
-| dense | 0.175 | 0.151 |
+| dense | 0.125 | 0.128 |
 | lexical | 1.000 | 1.000 |
-| hybrid | 0.900 | 0.578 |
+| hybrid | 0.775 | 0.568 |
+
+Without real embeddings the dense half is hash noise, and fusing it in *lowers* hybrid below lexical-only. That is why the CI gate checks the lexical half offline and switches to hybrid once `VOYAGE_API_KEY` is set. Gating hybrid on noise made the check move with every unrelated code change.
 
 Caveat: the golden queries were written by someone who knows the code, so they share vocabulary with it. That flatters lexical search. The next step is to replace them with queries the agents actually issued, taken from LangSmith traces, and to rerun with `VOYAGE_API_KEY` set to measure dense and hybrid properly.
 

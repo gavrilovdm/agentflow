@@ -4,7 +4,10 @@
     VOYAGE_API_KEY=... uv run python -m evals.retrieval_eval --min-recall 0.9
     LANGSMITH_API_KEY=... uv run python -m evals.retrieval_eval --langsmith   # log as an experiment
 
-Exits non-zero if hybrid recall@5 is below --min-recall, so CI can gate on it.
+Exits non-zero if recall@5 is below --min-recall, so CI can gate on it. The gated mode is
+hybrid when real embeddings are configured. Without them the dense half is hash noise, so
+the hybrid score moves with every code change; the gate then checks the lexical half,
+the only meaningful signal offline.
 """
 
 from __future__ import annotations
@@ -14,6 +17,8 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+
+from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from agentflow.rag.embeddings import get_embeddings
 from agentflow.rag.indexer import index_repo
@@ -72,10 +77,12 @@ async def run(min_recall: float, langsmith: bool) -> int:
     if langsmith:
         await _log_to_langsmith(golden, retriever)
 
-    hybrid_recall = totals["hybrid"]["recall"] / n
-    if hybrid_recall < min_recall:
-        print(f"FAIL: hybrid recall@{K} {hybrid_recall:.3f} < {min_recall}", file=sys.stderr)
+    gated = "lexical" if isinstance(emb, DeterministicFakeEmbedding) else "hybrid"
+    recall = totals[gated]["recall"] / n
+    if recall < min_recall:
+        print(f"FAIL: {gated} recall@{K} {recall:.3f} < {min_recall}", file=sys.stderr)
         return 1
+    print(f"gate: {gated} recall@{K} {recall:.3f} >= {min_recall}")
     return 0
 
 
