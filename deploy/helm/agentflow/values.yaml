@@ -1,0 +1,64 @@
+image:
+  repository: 123456789012.dkr.ecr.eu-central-1.amazonaws.com/agentflow
+  tag: latest
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  # IRSA role from infra/terraform (outputs.irsa_role_arn)
+  roleArn: ""
+
+api:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 6, targetCPU: 70 }
+
+worker:
+  replicas: 2
+  # Runs clone repos and run test suites: give them room and scratch space.
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { memory: 4Gi }
+  workspaceSize: 20Gi
+  # Long jobs: let an in-flight run finish its current node before the pod dies.
+  terminationGracePeriodSeconds: 900
+
+ingress:
+  enabled: true
+  className: alb
+  host: agentflow.example.com
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+
+config:
+  ORCHESTRATOR_MODEL: claude-opus-5
+  REVIEWER_MODEL: claude-opus-5
+  TEST_GENERATOR_MODEL: claude-opus-5
+  CODER_MODEL: deepseek-v4-flash
+  FALLBACK_MODEL: claude-sonnet-5
+  LANGSMITH_TRACING: "true"
+  LANGSMITH_PROJECT: agentflow
+
+# Secrets come from AWS Secrets Manager via External Secrets Operator.
+externalSecret:
+  enabled: true
+  secretStore: aws-secrets-manager
+  remoteKey: agentflow/prod
+  keys:
+    - ANTHROPIC_API_KEY
+    - DEEPSEEK_API_KEY
+    - VOYAGE_API_KEY
+    - DATABASE_URL
+    - REDIS_URL
+    - GITHUB_TOKEN
+    - GITHUB_WEBHOOK_SECRET
+    - TELEGRAM_BOT_TOKEN
+    - TELEGRAM_CHAT_ID
+    - TELEGRAM_WEBHOOK_SECRET
+    - LANGSMITH_API_KEY
+    - API_TOKEN
+
+serviceMonitor:
+  enabled: true

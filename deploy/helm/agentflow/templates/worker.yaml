@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentflow.name" . }}-worker
+  labels: {{- include "agentflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: worker }
+  template:
+    metadata:
+      labels: {{- include "agentflow.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "agentflow.name" . }}
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["arq", "agentflow.worker.WorkerSettings"]
+          ports: [{ name: metrics, containerPort: 9100 }]
+          {{- include "agentflow.env" . | nindent 10 }}
+          env:
+            - { name: TMPDIR, value: /workspaces }
+          volumeMounts: [{ name: workspaces, mountPath: /workspaces }]
+          livenessProbe: { tcpSocket: { port: metrics }, periodSeconds: 30 }
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+      volumes:
+        - name: workspaces
+          emptyDir: { sizeLimit: {{ .Values.worker.workspaceSize }} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentflow.name" . }}-worker-metrics
+  labels: {{- include "agentflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  selector: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: worker }
+  ports: [{ name: metrics, port: 9100, targetPort: metrics }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "agentflow.name" . }}-worker
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: worker }

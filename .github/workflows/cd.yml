@@ -1,0 +1,49 @@
+name: cd
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # GitHub OIDC → AWS, no long-lived keys
+  contents: read
+
+concurrency: { group: deploy-prod, cancel-in-progress: false }
+
+env:
+  AWS_REGION: eu-central-1
+  CLUSTER: agentflow-prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/agentflow:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: azure/setup-helm@v4
+      - name: Helm upgrade
+        run: |
+          aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
+          helm upgrade --install agentflow deploy/helm/agentflow \
+            --namespace agentflow --create-namespace \
+            --set image.repository=${{ steps.ecr.outputs.registry }}/agentflow \
+            --set image.tag=${{ github.sha }} \
+            --set serviceAccount.roleArn=${{ vars.AWS_APP_ROLE_ARN }} \
+            --wait --timeout 10m --atomic
