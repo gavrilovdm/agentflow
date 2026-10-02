@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
 
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"  # the guide app's dev server
     api_token: str = Field(default="", description="Bearer token for the REST API; empty disables auth")
     recursion_limit: int = 500
 

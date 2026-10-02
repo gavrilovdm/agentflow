@@ -1,0 +1,153 @@
+{
+ "nodes": [
+  "__start__",
+  "prepare_workspace",
+  "generate_spec",
+  "await_spec_approval",
+  "generate_tasks",
+  "await_task_approval",
+  "select_next_task",
+  "run_coder",
+  "generate_task_test",
+  "run_review",
+  "adjudicate",
+  "complete_task",
+  "handle_failure",
+  "create_pr",
+  "notify",
+  "finalize",
+  "__end__"
+ ],
+ "edges": [
+  {
+   "source": "__start__",
+   "target": "prepare_workspace",
+   "conditional": false
+  },
+  {
+   "source": "adjudicate",
+   "target": "handle_failure",
+   "conditional": true
+  },
+  {
+   "source": "adjudicate",
+   "target": "run_coder",
+   "conditional": true
+  },
+  {
+   "source": "await_spec_approval",
+   "target": "generate_spec",
+   "conditional": true
+  },
+  {
+   "source": "await_spec_approval",
+   "target": "generate_tasks",
+   "conditional": true
+  },
+  {
+   "source": "await_task_approval",
+   "target": "generate_tasks",
+   "conditional": true
+  },
+  {
+   "source": "await_task_approval",
+   "target": "select_next_task",
+   "conditional": true
+  },
+  {
+   "source": "complete_task",
+   "target": "select_next_task",
+   "conditional": false
+  },
+  {
+   "source": "create_pr",
+   "target": "notify",
+   "conditional": false
+  },
+  {
+   "source": "generate_spec",
+   "target": "await_spec_approval",
+   "conditional": false
+  },
+  {
+   "source": "generate_task_test",
+   "target": "run_review",
+   "conditional": false
+  },
+  {
+   "source": "generate_tasks",
+   "target": "await_task_approval",
+   "conditional": false
+  },
+  {
+   "source": "handle_failure",
+   "target": "__end__",
+   "conditional": true
+  },
+  {
+   "source": "handle_failure",
+   "target": "select_next_task",
+   "conditional": true
+  },
+  {
+   "source": "notify",
+   "target": "finalize",
+   "conditional": false
+  },
+  {
+   "source": "prepare_workspace",
+   "target": "generate_spec",
+   "conditional": false
+  },
+  {
+   "source": "run_coder",
+   "target": "generate_task_test",
+   "conditional": true
+  },
+  {
+   "source": "run_coder",
+   "target": "handle_failure",
+   "conditional": true
+  },
+  {
+   "source": "run_coder",
+   "target": "run_coder",
+   "conditional": true
+  },
+  {
+   "source": "run_review",
+   "target": "adjudicate",
+   "conditional": true
+  },
+  {
+   "source": "run_review",
+   "target": "complete_task",
+   "conditional": true
+  },
+  {
+   "source": "run_review",
+   "target": "handle_failure",
+   "conditional": true
+  },
+  {
+   "source": "run_review",
+   "target": "run_coder",
+   "conditional": true
+  },
+  {
+   "source": "select_next_task",
+   "target": "create_pr",
+   "conditional": true
+  },
+  {
+   "source": "select_next_task",
+   "target": "run_coder",
+   "conditional": true
+  },
+  {
+   "source": "finalize",
+   "target": "__end__",
+   "conditional": false
+  }
+ ]
+}

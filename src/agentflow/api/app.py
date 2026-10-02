@@ -10,13 +10,17 @@ from typing import Annotated, Any
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.integrations import github, telegram
 from agentflow.observability import APPROVALS, HTTP_REQUESTS, setup_logging
+from agentflow.rag.embeddings import get_embeddings
+from agentflow.rag.retriever import rrf_merge
+from agentflow.rag.store import Hit
 from agentflow.runner import open_persistence, snapshot
 
 log = logging.getLogger("agentflow.api")
@@ -34,6 +38,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="agentflow", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")
@@ -165,6 +175,48 @@ async def telegram_webhook(
         _, thread_id, *rest = text.split(maxsplit=2)
         await _enqueue_resume(request, thread_id, False, rest[0] if rest else None, "telegram")
     return {"status": "ok"}
+
+
+def _hit_json(h: Hit) -> dict[str, Any]:
+    return {
+        "path": h.path,
+        "start_line": h.start_line,
+        "end_line": h.end_line,
+        "kind": h.kind,
+        "score": round(h.score, 5),
+        "snippet": h.content[:600],
+    }
+
+
+@app.get("/repos", dependencies=[Auth])
+async def list_repos(request: Request) -> dict[str, list[str]]:
+    """Repositories that have a vector index (one per target repo the workflow has touched)."""
+    return {"repos": await request.app.state.persistence.chunk_store.repos()}
+
+
+@app.get("/search", dependencies=[Auth])
+async def search(
+    request: Request,
+    repo: str,
+    q: Annotated[str, Query(min_length=2)],
+    k: Annotated[int, Query(ge=1, le=20)] = 5,
+) -> dict[str, Any]:
+    """The retrieval the agents use, with its two halves exposed: dense (embeddings),
+    lexical (full-text) and their Reciprocal Rank Fusion — handy for seeing why a chunk won."""
+    store = request.app.state.persistence.chunk_store
+    embeddings = get_embeddings()
+    dense = await store.search_vector(repo, await embeddings.aembed_query(q), 20, None)
+    lexical = await store.search_text(repo, q, 20, None)
+    dense_view, lexical_view = [_hit_json(h) for h in dense[:k]], [_hit_json(h) for h in lexical[:k]]
+    hybrid = rrf_merge([dense, lexical], k)  # mutates scores, so render the halves first
+    return {
+        "repo": repo,
+        "query": q,
+        "embeddings": type(embeddings).__name__,
+        "dense": dense_view,
+        "lexical": lexical_view,
+        "hybrid": [_hit_json(h) for h in hybrid],
+    }
 
 
 @app.get("/healthz")

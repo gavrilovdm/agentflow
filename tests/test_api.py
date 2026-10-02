@@ -103,3 +103,27 @@ async def test_metrics_exposed(client):
     await client.get("/healthz")
     body = (await client.get("/metrics")).text
     assert "agentflow_http_requests_total" in body
+
+
+async def test_search_exposes_dense_lexical_and_fused(client, monkeypatch):
+    from pathlib import Path
+
+    from langchain_core.embeddings import DeterministicFakeEmbedding
+
+    from agentflow.rag.indexer import index_repo
+
+    fixture = Path(__file__).parent / "fixtures" / "sample_repo"
+    await index_repo(fixture, "shop", app.state.persistence.chunk_store, DeterministicFakeEmbedding(size=1024))
+    assert (await client.get("/repos")).json() == {"repos": ["shop"]}
+
+    body = (await client.get("/search", params={"repo": "shop", "q": "hash_password login", "k": 3})).json()
+    assert set(body) >= {"dense", "lexical", "hybrid", "embeddings"}
+    assert body["lexical"][0]["path"] == "shop/auth.py"
+    assert len(body["hybrid"]) == 3 and body["hybrid"][0]["snippet"]
+
+
+async def test_cors_allows_guide_origin(client):
+    r = await client.options(
+        "/healthz", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"}
+    )
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"

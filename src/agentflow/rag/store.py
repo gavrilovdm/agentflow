@@ -37,6 +37,7 @@ class Hit:
 class ChunkStore(Protocol):
     async def setup(self) -> None: ...
     async def file_hashes(self, repo: str) -> dict[str, str]: ...
+    async def repos(self) -> list[str]: ...
     async def delete_paths(self, repo: str, paths: list[str]) -> None: ...
     async def upsert(self, repo: str, chunks: list[Chunk], vectors: list[list[float]]) -> None: ...
     async def search_vector(self, repo: str, vector: list[float], k: int, kind: str | None) -> list[Hit]: ...
@@ -90,6 +91,11 @@ class PgVectorStore:
                 await c.execute(f"SELECT DISTINCT path, file_hash FROM {self.table} WHERE repo = %s", (repo,))
             ).fetchall()
         return {r["path"]: r["file_hash"] for r in rows}  # type: ignore[call-overload]
+
+    async def repos(self) -> list[str]:
+        async with await self._conn() as c:
+            rows = await (await c.execute(f"SELECT DISTINCT repo FROM {self.table} ORDER BY repo")).fetchall()
+        return [r["repo"] for r in rows]  # type: ignore[call-overload]
 
     async def delete_paths(self, repo: str, paths: list[str]) -> None:
         if not paths:
@@ -174,6 +180,9 @@ class InMemoryStore:
 
     async def file_hashes(self, repo: str) -> dict[str, str]:
         return {ch.path: ch.file_hash for (r, _, _), (ch, _) in self.rows.items() if r == repo}
+
+    async def repos(self) -> list[str]:
+        return sorted({r for r, _, _ in self.rows})
 
     async def delete_paths(self, repo: str, paths: list[str]) -> None:
         drop = set(paths)

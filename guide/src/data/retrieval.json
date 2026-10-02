@@ -1,0 +1,586 @@
+{
+ "k": 5,
+ "embeddings": "DeterministicFakeEmbedding",
+ "summary": {
+  "dense": {
+   "recall": 0.125,
+   "mrr": 0.128
+  },
+  "lexical": {
+   "recall": 1.0,
+   "mrr": 1.0
+  },
+  "hybrid": {
+   "recall": 0.775,
+   "mrr": 0.568
+  }
+ },
+ "cases": [
+  {
+   "query": "where is the fallback model configured for structured output calls",
+   "relevant": [
+    "agentflow/models.py"
+   ],
+   "dense": [
+    "agentflow/agents/orchestrator.py",
+    "agentflow/schemas.py",
+    "agentflow/rag/chunking.py",
+    "agentflow/gate/python.py",
+    "agentflow/gate/base.py"
+   ],
+   "lexical": [
+    "agentflow/models.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/agents/orchestrator.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/agents/coder.py"
+   ],
+   "hybrid": [
+    "agentflow/gate/base.py",
+    "agentflow/api/app.py",
+    "agentflow/gate/typescript.py",
+    "agentflow/agents/coder.py",
+    "agentflow/agents/orchestrator.py"
+   ]
+  },
+  {
+   "query": "refuse writing files outside the workspace (path traversal)",
+   "relevant": [
+    "agentflow/integrations/workspace.py"
+   ],
+   "dense": [
+    "agentflow/agents/test_generator.py",
+    "agentflow/runner.py",
+    "agentflow/mcp_server.py",
+    "agentflow/graph/state.py",
+    "agentflow/rag/store.py"
+   ],
+   "lexical": [
+    "agentflow/integrations/workspace.py",
+    "agentflow/agents/coder.py",
+    "agentflow/gate/__init__.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/graph/nodes.py"
+   ],
+   "hybrid": [
+    "agentflow/integrations/workspace.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/gate/base.py",
+    "agentflow/runner.py",
+    "agentflow/agents/coder.py"
+   ]
+  },
+  {
+   "query": "coder must not write scratch or debug scripts",
+   "relevant": [
+    "agentflow/agents/coder.py"
+   ],
+   "dense": [
+    "agentflow/rag/store.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/schemas.py",
+    "agentflow/api/app.py",
+    "agentflow/runner.py"
+   ],
+   "lexical": [
+    "agentflow/agents/coder.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/gate/__init__.py",
+    "agentflow/gate/base.py"
+   ],
+   "hybrid": [
+    "agentflow/agents/coder.py",
+    "agentflow/rag/store.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/schemas.py",
+    "agentflow/api/app.py"
+   ]
+  },
+  {
+   "query": "reciprocal rank fusion of dense and keyword results",
+   "relevant": [
+    "agentflow/rag/retriever.py"
+   ],
+   "dense": [
+    "agentflow/integrations/workspace.py",
+    "agentflow/rag/indexer.py",
+    "agentflow/rag/store.py",
+    "agentflow/agents/coder.py",
+    "agentflow/rag/embeddings.py"
+   ],
+   "lexical": [
+    "agentflow/rag/retriever.py",
+    "agentflow/api/app.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/graph/routing.py"
+   ],
+   "hybrid": [
+    "agentflow/gate/typescript.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/rag/store.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/rag/retriever.py"
+   ]
+  },
+  {
+   "query": "only re-embed files whose content hash changed",
+   "relevant": [
+    "agentflow/rag/indexer.py"
+   ],
+   "dense": [
+    "agentflow/agents/coder.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/mcp_server.py",
+    "agentflow/cli.py",
+    "agentflow/integrations/workspace.py"
+   ],
+   "lexical": [
+    "agentflow/rag/indexer.py",
+    "agentflow/rag/chunking.py",
+    "agentflow/agents/coder.py",
+    "agentflow/rag/store.py",
+    "agentflow/agents/test_generator.py"
+   ],
+   "hybrid": [
+    "agentflow/agents/coder.py",
+    "agentflow/rag/indexer.py",
+    "agentflow/rag/store.py",
+    "agentflow/gate/base.py",
+    "agentflow/graph/nodes.py"
+   ]
+  },
+  {
+   "query": "pgvector hnsw index and full text tsvector column",
+   "relevant": [
+    "agentflow/rag/store.py"
+   ],
+   "dense": [
+    "agentflow/graph/routing.py",
+    "agentflow/rag/store.py",
+    "agentflow/worker.py",
+    "agentflow/observability.py",
+    "agentflow/config.py"
+   ],
+   "lexical": [
+    "agentflow/rag/store.py",
+    "agentflow/integrations/telegram.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/rag/indexer.py",
+    "agentflow/runner.py"
+   ],
+   "hybrid": [
+    "agentflow/rag/store.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/graph/routing.py",
+    "agentflow/worker.py",
+    "agentflow/integrations/telegram.py"
+   ]
+  },
+  {
+   "query": "pytest exit code 5 no tests collected",
+   "relevant": [
+    "agentflow/gate/python.py"
+   ],
+   "dense": [
+    "agentflow/gate/typescript.py",
+    "agentflow/config.py",
+    "agentflow/graph/build.py",
+    "agentflow/rag/store.py",
+    "agentflow/graph/nodes.py"
+   ],
+   "lexical": [
+    "agentflow/gate/python.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/gate/typescript.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/agents/test_generator.py"
+   ],
+   "hybrid": [
+    "agentflow/gate/typescript.py",
+    "agentflow/gate/python.py",
+    "agentflow/config.py",
+    "agentflow/graph/build.py",
+    "agentflow/agents/reviewer.py"
+   ]
+  },
+  {
+   "query": "vitest config owned by the gate so the coder cannot narrow include",
+   "relevant": [
+    "agentflow/gate/typescript.py"
+   ],
+   "dense": [
+    "agentflow/gate/base.py",
+    "agentflow/agents/coder.py",
+    "agentflow/worker.py",
+    "agentflow/gate/python.py",
+    "agentflow/graph/routing.py"
+   ],
+   "lexical": [
+    "agentflow/gate/typescript.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/graph/routing.py",
+    "agentflow/config.py",
+    "agentflow/graph/nodes.py"
+   ],
+   "hybrid": [
+    "agentflow/agents/coder.py",
+    "agentflow/gate/python.py",
+    "agentflow/gate/base.py",
+    "agentflow/gate/__init__.py",
+    "agentflow/gate/typescript.py"
+   ]
+  },
+  {
+   "query": "decide whether the test or the code is wrong when failures repeat",
+   "relevant": [
+    "agentflow/agents/reviewer.py",
+    "agentflow/graph/nodes.py"
+   ],
+   "dense": [
+    "agentflow/graph/nodes.py",
+    "agentflow/rag/retriever.py",
+    "agentflow/observability.py",
+    "agentflow/agents/coder.py",
+    "agentflow/rag/embeddings.py"
+   ],
+   "lexical": [
+    "agentflow/agents/reviewer.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/routing.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/gate/python.py"
+   ],
+   "hybrid": [
+    "agentflow/agents/reviewer.py",
+    "agentflow/config.py",
+    "agentflow/graph/routing.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/rag/retriever.py"
+   ]
+  },
+  {
+   "query": "route to adjudicate when the same failure repeats",
+   "relevant": [
+    "agentflow/graph/routing.py"
+   ],
+   "dense": [
+    "agentflow/rag/chunking.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/rag/indexer.py",
+    "agentflow/cli.py",
+    "agentflow/integrations/workspace.py"
+   ],
+   "lexical": [
+    "agentflow/graph/routing.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/gate/base.py",
+    "agentflow/agents/coder.py"
+   ],
+   "hybrid": [
+    "agentflow/gate/base.py",
+    "agentflow/rag/chunking.py",
+    "agentflow/graph/routing.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/graph/nodes.py"
+   ]
+  },
+  {
+   "query": "skip tasks that depend on a failed task",
+   "relevant": [
+    "agentflow/graph/routing.py",
+    "agentflow/graph/nodes.py"
+   ],
+   "dense": [
+    "agentflow/models.py",
+    "agentflow/integrations/telegram.py",
+    "agentflow/config.py",
+    "agentflow/gate/base.py",
+    "agentflow/cli.py"
+   ],
+   "lexical": [
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/routing.py",
+    "agentflow/agents/orchestrator.py",
+    "agentflow/runner.py",
+    "agentflow/agents/coder.py"
+   ],
+   "hybrid": [
+    "agentflow/graph/nodes.py",
+    "agentflow/gate/base.py",
+    "agentflow/models.py",
+    "agentflow/integrations/telegram.py",
+    "agentflow/graph/routing.py"
+   ]
+  },
+  {
+   "query": "verify GitHub webhook HMAC signature",
+   "relevant": [
+    "agentflow/integrations/github.py"
+   ],
+   "dense": [
+    "agentflow/agents/reviewer.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/runner.py",
+    "agentflow/agents/coder.py",
+    "agentflow/integrations/workspace.py"
+   ],
+   "lexical": [
+    "agentflow/integrations/github.py",
+    "agentflow/api/app.py",
+    "agentflow/worker.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/graph/nodes.py"
+   ],
+   "hybrid": [
+    "agentflow/graph/nodes.py",
+    "agentflow/api/app.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/rag/chunking.py",
+    "agentflow/agents/reviewer.py"
+   ]
+  },
+  {
+   "query": "telegram approve reject inline keyboard buttons",
+   "relevant": [
+    "agentflow/integrations/telegram.py",
+    "agentflow/api/app.py"
+   ],
+   "dense": [
+    "agentflow/graph/nodes.py",
+    "agentflow/gate/python.py",
+    "agentflow/models.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/worker.py"
+   ],
+   "lexical": [
+    "agentflow/integrations/telegram.py",
+    "agentflow/api/app.py",
+    "agentflow/worker.py",
+    "agentflow/config.py",
+    "agentflow/graph/nodes.py"
+   ],
+   "hybrid": [
+    "agentflow/worker.py",
+    "agentflow/cli.py",
+    "agentflow/config.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/integrations/telegram.py"
+   ]
+  },
+  {
+   "query": "deduplicate resume jobs by checkpoint id",
+   "relevant": [
+    "agentflow/api/app.py"
+   ],
+   "dense": [
+    "agentflow/agents/coder.py",
+    "agentflow/agents/orchestrator.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/api/app.py",
+    "agentflow/graph/build.py"
+   ],
+   "lexical": [
+    "agentflow/api/app.py",
+    "agentflow/mcp_server.py",
+    "agentflow/runner.py",
+    "agentflow/worker.py",
+    "agentflow/rag/retriever.py"
+   ],
+   "hybrid": [
+    "agentflow/api/app.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/routing.py",
+    "agentflow/agents/coder.py",
+    "agentflow/agents/orchestrator.py"
+   ]
+  },
+  {
+   "query": "store reviewer feedback as long-term lessons",
+   "relevant": [
+    "agentflow/memory/lessons.py"
+   ],
+   "dense": [
+    "agentflow/agents/reviewer.py",
+    "agentflow/schemas.py",
+    "agentflow/gate/python.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/state.py"
+   ],
+   "lexical": [
+    "agentflow/memory/lessons.py",
+    "agentflow/runner.py",
+    "agentflow/rag/store.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/agents/orchestrator.py"
+   ],
+   "hybrid": [
+    "agentflow/agents/reviewer.py",
+    "agentflow/memory/lessons.py",
+    "agentflow/schemas.py",
+    "agentflow/gate/python.py",
+    "agentflow/runner.py"
+   ]
+  },
+  {
+   "query": "allow-list pydantic models for msgpack checkpoint serialization",
+   "relevant": [
+    "agentflow/graph/build.py"
+   ],
+   "dense": [
+    "agentflow/gate/python.py",
+    "agentflow/integrations/telegram.py",
+    "agentflow/graph/routing.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/schemas.py"
+   ],
+   "lexical": [
+    "agentflow/graph/build.py",
+    "agentflow/schemas.py",
+    "agentflow/rag/store.py",
+    "agentflow/agents/orchestrator.py",
+    "agentflow/rag/retriever.py"
+   ],
+   "hybrid": [
+    "agentflow/schemas.py",
+    "agentflow/api/app.py",
+    "agentflow/graph/routing.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/gate/python.py"
+   ]
+  },
+  {
+   "query": "break dependency cycles in the generated task plan",
+   "relevant": [
+    "agentflow/agents/orchestrator.py"
+   ],
+   "dense": [
+    "agentflow/api/app.py",
+    "agentflow/rag/retriever.py",
+    "agentflow/rag/chunking.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/runner.py"
+   ],
+   "lexical": [
+    "agentflow/agents/orchestrator.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/routing.py",
+    "agentflow/graph/state.py",
+    "agentflow/agents/test_generator.py"
+   ],
+   "hybrid": [
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/state.py",
+    "agentflow/api/app.py",
+    "agentflow/agents/orchestrator.py",
+    "agentflow/rag/retriever.py"
+   ]
+  },
+  {
+   "query": "acceptance tests written after the implementation, not before",
+   "relevant": [
+    "agentflow/agents/test_generator.py"
+   ],
+   "dense": [
+    "agentflow/schemas.py",
+    "agentflow/rag/tools.py",
+    "agentflow/api/app.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/rag/retriever.py"
+   ],
+   "lexical": [
+    "agentflow/agents/test_generator.py",
+    "agentflow/agents/coder.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/gate/base.py",
+    "agentflow/agents/reviewer.py"
+   ],
+   "hybrid": [
+    "agentflow/agents/test_generator.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/schemas.py",
+    "agentflow/rag/tools.py"
+   ]
+  },
+  {
+   "query": "expose tools to MCP clients",
+   "relevant": [
+    "agentflow/mcp_server.py"
+   ],
+   "dense": [
+    "agentflow/api/app.py",
+    "agentflow/agents/coder.py",
+    "agentflow/gate/__init__.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/gate/base.py"
+   ],
+   "lexical": [
+    "agentflow/mcp_server.py",
+    "agentflow/rag/tools.py",
+    "agentflow/agents/coder.py",
+    "agentflow/integrations/github.py",
+    "agentflow/agents/reviewer.py"
+   ],
+   "hybrid": [
+    "agentflow/mcp_server.py",
+    "agentflow/rag/tools.py",
+    "agentflow/api/app.py",
+    "agentflow/agents/coder.py",
+    "agentflow/gate/__init__.py"
+   ]
+  },
+  {
+   "query": "prometheus counters for runs and approvals",
+   "relevant": [
+    "agentflow/observability.py"
+   ],
+   "dense": [
+    "agentflow/cli.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/graph/build.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/rag/embeddings.py"
+   ],
+   "lexical": [
+    "agentflow/observability.py",
+    "agentflow/worker.py",
+    "agentflow/cli.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/rag/store.py"
+   ],
+   "hybrid": [
+    "agentflow/graph/build.py",
+    "agentflow/gate/typescript.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/routing.py",
+    "agentflow/cli.py"
+   ]
+  }
+ ],
+ "chunk_demo": {
+  "path": "agentflow/graph/routing.py",
+  "chunks": [
+   {
+    "index": 0,
+    "start": 1,
+    "end": 36,
+    "content": "\"\"\"Conditional edges. Pure functions of state + config, unit-tested in isolation.\"\"\"\n\nfrom __future__ import annotations\n\nfrom langgraph.graph import END\n\nfrom agentflow.config import WorkflowConfig\nfrom agentflow.graph.state import WorkflowState, task_by_id\nfrom agentflow.schemas import Task\n\nSTALL_REPEATS = 2  # three identical failures in a row\n\n\ndef after_spec_approval(state: WorkflowState) -> str:\n    return \"generate_tasks\" if state.get(\"spec_approved\") else \"generate_spec\"\n\n\ndef after_task_approval(state: WorkflowState) -> str:\n    return \"select_next_task\" if state.get(\"tasks_approved\") else \"generate_tasks\"\n\n\ndef after_task_selection(state: WorkflowState) -> str:\n    return \"run_coder\" if state.get(\"current_task_id\") else \"create_pr\"\n\n\ndef after_coder(state: WorkflowState, config: WorkflowConfig) -> str:\n    \"\"\"Code first, then the test that judges it (a no-op on retries, where the test\n    already exists and must stay fixed while the coder works against it).\"\"\"\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    result = state.get(\"task_results\", {}).get(task_id)\n    if result and result.success:\n        return \"generate_task_test\"\n    if task_by_id(state, task_id).coder_fix_attempts >= config.max_coder_fix_attempts:\n        return \"handle_failure\"\n    return \"run_coder\""
+   },
+   {
+    "index": 1,
+    "start": 39,
+    "end": 67,
+    "content": "def after_review(state: WorkflowState, config: WorkflowConfig) -> str:\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    task = task_by_id(state, task_id)\n    review = state.get(\"review_results\", {}).get(task_id)\n    if review and review.approved:\n        return \"complete_task\"\n    if (\n        task.review_cycles >= config.max_review_cycles\n        or task.gate_failures >= config.max_gate_failures\n        or task.reviewer_malfunctions >= config.max_reviewer_malfunctions\n    ):\n        return \"handle_failure\"\n    # Repeating the same failure: remaining attempts would go the same way. Give the\n    # referee one chance to spot an unsatisfiable test before writing the task off.\n    stall = state.get(\"stalls\", {}).get(task_id)\n    if stall and stall.repeats >= STALL_REPEATS:\n        return \"handle_failure\" if state.get(\"adjudicated\", {}).get(task_id) else \"adjudicate\"\n    return \"run_coder\"\n\n\ndef after_adjudication(state: WorkflowState) -> str:\n    \"\"\"The referee clears the stall only when it rewrote a faulty test.\"\"\"\n    stall = state.get(\"stalls\", {}).get(state[\"current_task_id\"] or \"\")\n    return \"handle_failure\" if stall and stall.repeats >= STALL_REPEATS else \"run_coder\"\n\n\ndef after_failure(state: WorkflowState) -> str:\n    return END if state.get(\"status\") == \"failed\" else \"select_next_task\""
+   },
+   {
+    "index": 2,
+    "start": 66,
+    "end": 87,
+    "content": "def after_failure(state: WorkflowState) -> str:\n    return END if state.get(\"status\") == \"failed\" else \"select_next_task\"\n\n\ndef next_runnable(tasks: list[Task]) -> Task | None:\n    done = {t.id for t in tasks if t.status == \"completed\"}\n    return next((t for t in tasks if t.status == \"pending\" and all(d in done for d in t.depends_on)), None)\n\n\ndef dependents_of(task_id: str, tasks: list[Task]) -> list[str]:\n    \"\"\"Every open task that needs `task_id`, directly or transitively.\"\"\"\n    blocked: set[str] = set()\n    grew = True\n    while grew:\n        grew = False\n        for t in tasks:\n            if t.id in blocked or t.id == task_id or t.status in (\"completed\", \"failed\"):\n                continue\n            if any(d == task_id or d in blocked for d in t.depends_on):\n                blocked.add(t.id)\n                grew = True\n    return sorted(blocked)"
+   }
+  ]
+ }
+}
