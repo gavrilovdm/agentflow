@@ -29,7 +29,12 @@ class SpecDraft(BaseModel):
     title: str = Field(description="Short feature/project title")
     goal: str = Field(description="What problem this solves and why")
     constraints: list[str] = Field(description="Tech stack, limitations, non-goals")
-    acceptance_criteria: list[str] = Field(description="Observable, testable outcomes that define success")
+    # min_length: a model sometimes emits this list as one plain string. The coercion
+    # below rescues bullet-delimited strings, but a single sentence used to slip through
+    # as a one-criterion spec; failing validation makes the orchestrator ask again.
+    acceptance_criteria: list[str] = Field(
+        min_length=2, description="Observable, testable outcomes that define success — a JSON array, one per item"
+    )
     technical_notes: str = Field(description="Patterns to follow, integrations, key architectural notes")
     out_of_scope: list[str] = Field(description="What is explicitly NOT included")
 

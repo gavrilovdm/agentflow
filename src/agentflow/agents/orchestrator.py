@@ -8,6 +8,7 @@ replaces the old "LLM reads project-map.md and guesses which files matter" step.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,6 +16,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from agentflow.config import get_settings
 from agentflow.models import structured
 from agentflow.schemas import Spec, SpecDraft, Task, TaskPlan
+
+log = logging.getLogger(__name__)
 
 SPEC_SYSTEM = """You are a senior software architect. Create a precise, unambiguous development
 specification from the user's request.
@@ -35,6 +38,13 @@ Rules:
 - definition_of_done is specific: "function X returns Y given Z", not "feature works"
 - Foundational types/interfaces come before their consumers
 - ID format: task-<slug>, e.g. task-add-auth-middleware"""
+
+
+SPEC_ATTEMPTS = 2
+LIST_FIELDS_HINT = HumanMessage(
+    "Your previous answer did not match the schema. constraints, acceptance_criteria and out_of_scope must be "
+    "JSON arrays with one item per entry, and acceptance_criteria needs at least two separate testable statements."
+)
 
 
 def _revision_message(label: str, previous: object, feedback: str) -> HumanMessage:
@@ -58,9 +68,20 @@ async def generate_spec(
     if previous and feedback:
         messages.append(_revision_message("spec", previous.model_dump(), feedback))
     s = get_settings()
-    draft: SpecDraft = await structured(s.orchestrator_model, SpecDraft).ainvoke(
-        messages, config={"tags": ["orchestrator", "spec"]}
-    )
+    runnable = structured(s.orchestrator_model, SpecDraft)
+    draft: SpecDraft | None = None
+    for attempt in range(SPEC_ATTEMPTS):
+        try:
+            draft = await runnable.ainvoke(
+                messages if attempt == 0 else [*messages, LIST_FIELDS_HINT],
+                config={"tags": ["orchestrator", "spec"]},
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 — schema violations surface as several exception types
+            if attempt == SPEC_ATTEMPTS - 1:
+                raise
+            log.warning("spec rejected by schema (attempt %s): %s", attempt + 1, str(exc)[:200])
+    assert draft is not None
     return Spec(
         id=previous.id if previous else f"spec-{uuid.uuid4().hex[:8]}",
         version=(previous.version + 1) if previous else 1,

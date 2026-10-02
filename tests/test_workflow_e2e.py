@@ -45,7 +45,7 @@ def fakes(monkeypatch):
             title="Calculator",
             goal=prompt,
             constraints=[],
-            acceptance_criteria=["add works"],
+            acceptance_criteria=["add works", "mul works"],
             technical_notes="",
             out_of_scope=[],
         )

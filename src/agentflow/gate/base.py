@@ -9,6 +9,7 @@ can clear — those wedge a task until its budget runs out.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,13 +36,19 @@ class CommandResult:
     output: str
 
 
-async def run_command(args: list[str], cwd: Path, timeout: float = 600) -> CommandResult:
+async def run_command(
+    args: list[str], cwd: Path, timeout: float = 600, env: dict[str, str] | None = None
+) -> CommandResult:
     """Run a command, merging stdout+stderr. Test runners and type checkers report
     diagnostics on stdout; reading only stderr once told the coder a task failed
     without saying why."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            *args,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, **env} if env else None,
         )
     except FileNotFoundError as exc:
         return CommandResult(False, 127, f"{args[0]}: command not found ({exc})")

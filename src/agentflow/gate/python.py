@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
+import tempfile
 from pathlib import Path
 
 from agentflow.gate.base import (
@@ -19,6 +21,14 @@ from agentflow.schemas import GateResult
 VENV = ".venv"
 STAMP = ".agentflow-install-stamp"
 NO_TESTS_COLLECTED = 5  # pytest exit code
+
+
+def fresh_bytecode_env() -> dict[str, str]:
+    """Bytecode caches are validated by source mtime (1 s resolution) and size. The coder
+    often rewrites a file within the same second at the same size (`a - b` → `a + b`), and
+    Python then runs the stale .pyc — the gate judges code that no longer exists. A fresh
+    cache prefix per gate run means no cached bytecode is ever reused."""
+    return {"PYTHONPYCACHEPREFIX": tempfile.mkdtemp(prefix="agentflow-pyc-")}
 
 
 def extract_pytest_failures(raw: str, per_failure: int = 6) -> list[str]:
@@ -83,9 +93,25 @@ class PythonGate:
     ) -> GateResult:
         install_error = await self._ensure_env(workspace)
         bin_ = workspace / VENV / "bin"
+        env = fresh_bytecode_env()
+        try:
+            return await self._checks(workspace, bin_, env, install_error, test_paths, enable_lint, lint_paths)
+        finally:
+            shutil.rmtree(env["PYTHONPYCACHEPREFIX"], ignore_errors=True)
+
+    async def _checks(
+        self,
+        workspace: Path,
+        bin_: Path,
+        env: dict[str, str],
+        install_error: str | None,
+        test_paths: list[str] | None,
+        enable_lint: bool,
+        lint_paths: list[str] | None,
+    ) -> GateResult:
 
         if _has_mypy_config(workspace):
-            types = await run_command([str(bin_ / "mypy"), ".", "--exclude", ACCEPTANCE_TEST_DIR], workspace)
+            types = await run_command([str(bin_ / "mypy"), ".", "--exclude", ACCEPTANCE_TEST_DIR], workspace, env=env)
             type_errors = (
                 []
                 if types.ok
@@ -93,12 +119,14 @@ class PythonGate:
             )
         else:
             # No type-checker configured: still catch syntax errors, the analogue of tsc.
-            types = await run_command([str(bin_ / "python"), "-m", "compileall", "-q", "-x", r"\.venv", "."], workspace)
+            types = await run_command(
+                [str(bin_ / "python"), "-m", "compileall", "-q", "-x", r"\.venv", "."], workspace, env=env
+            )
             type_errors = [] if types.ok else tail(types.output)
 
         test_args = [str(bin_ / "pytest"), "-q", "-rfE", "--no-header", "-p", "no:cacheprovider"]
         test_args += [p for p in (test_paths or []) if (workspace / p).exists()]
-        tests = await run_command(test_args, workspace)
+        tests = await run_command(test_args, workspace, env=env)
         # Exit 5 = nothing collected. Normal for a scaffolding task with no tests yet;
         # a failure only when this task's own acceptance test was supposed to run.
         tests_ok = tests.ok or (tests.code == NO_TESTS_COLLECTED and not test_paths)
