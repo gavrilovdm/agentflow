@@ -17,7 +17,7 @@ DSN = os.environ.get("DATABASE_URL", "postgresql://agentflow:agentflow@localhost
 
 
 async def test_pgvector_roundtrip():
-    store = PgVectorStore(DSN, dim=32)
+    store = PgVectorStore(DSN, dim=32, table="code_chunks_test")
     await store.setup()
     repo = "test/shop-integration"
     await store.delete_paths(repo, list(await store.file_hashes(repo)))

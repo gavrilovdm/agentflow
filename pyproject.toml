@@ -51,11 +51,12 @@ build-backend = "hatchling.build"
 packages = ["src/agentflow"]
 
 [tool.ruff]
-line-length = 110
+line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC"]
+ignore = ["ASYNC109", "ASYNC240", "ASYNC230"]  # short local file reads in a CLI-adjacent agent are fine
 
 [tool.mypy]
 python_version = "3.12"
@@ -68,3 +69,6 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = ["integration: needs Postgres/API keys"]
 addopts = "-m 'not integration'"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]

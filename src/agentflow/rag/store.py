@@ -48,9 +48,12 @@ def _vec(v: list[float]) -> str:
 
 
 class PgVectorStore:
-    def __init__(self, dsn: str, dim: int = 1024):
+    def __init__(self, dsn: str, dim: int = 1024, table: str = "code_chunks"):
+        if not table.isidentifier():
+            raise ValueError(f"bad table name {table!r}")
         self.dsn = dsn
         self.dim = dim
+        self.table = table
 
     async def _conn(self) -> AsyncConnection:
         return await AsyncConnection.connect(self.dsn, autocommit=True, row_factory=dict_row)
@@ -60,7 +63,7 @@ class PgVectorStore:
             await c.execute("CREATE EXTENSION IF NOT EXISTS vector")
             await c.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS code_chunks (
+                CREATE TABLE IF NOT EXISTS {self.table} (
                     repo        text NOT NULL,
                     path        text NOT NULL,
                     chunk_index int  NOT NULL,
@@ -77,15 +80,15 @@ class PgVectorStore:
                 )"""
             )
             await c.execute(
-                "CREATE INDEX IF NOT EXISTS code_chunks_hnsw ON code_chunks "
+                f"CREATE INDEX IF NOT EXISTS {self.table}_hnsw ON {self.table} "
                 "USING hnsw (embedding vector_cosine_ops)"
             )
-            await c.execute("CREATE INDEX IF NOT EXISTS code_chunks_tsv ON code_chunks USING gin (tsv)")
+            await c.execute(f"CREATE INDEX IF NOT EXISTS {self.table}_tsv ON {self.table} USING gin (tsv)")
 
     async def file_hashes(self, repo: str) -> dict[str, str]:
         async with await self._conn() as c:
             rows = await (
-                await c.execute("SELECT DISTINCT path, file_hash FROM code_chunks WHERE repo = %s", (repo,))
+                await c.execute(f"SELECT DISTINCT path, file_hash FROM {self.table} WHERE repo = %s", (repo,))
             ).fetchall()
         return {r["path"]: r["file_hash"] for r in rows}
 
@@ -93,14 +96,14 @@ class PgVectorStore:
         if not paths:
             return
         async with await self._conn() as c:
-            await c.execute("DELETE FROM code_chunks WHERE repo = %s AND path = ANY(%s)", (repo, paths))
+            await c.execute(f"DELETE FROM {self.table} WHERE repo = %s AND path = ANY(%s)", (repo, paths))
 
     async def upsert(self, repo: str, chunks: list[Chunk], vectors: list[list[float]]) -> None:
         if not chunks:
             return
         async with await self._conn() as c, c.cursor() as cur:
             await cur.executemany(
-                """INSERT INTO code_chunks
+                f"""INSERT INTO {self.table}
                    (repo, path, chunk_index, kind, content, start_line, end_line, file_hash, embedding)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)
                    ON CONFLICT (repo, path, chunk_index) DO UPDATE SET
@@ -116,9 +119,9 @@ class PgVectorStore:
         async with await self._conn() as c:
             rows = await (
                 await c.execute(
-                    """SELECT path, chunk_index, content, start_line, end_line, kind,
+                    f"""SELECT path, chunk_index, content, start_line, end_line, kind,
                               1 - (embedding <=> %s::vector) AS score
-                       FROM code_chunks WHERE repo = %s AND (%s::text IS NULL OR kind = %s)
+                       FROM {self.table} WHERE repo = %s AND (%s::text IS NULL OR kind = %s)
                        ORDER BY embedding <=> %s::vector LIMIT %s""",
                     (_vec(vector), repo, kind, kind, _vec(vector), k),
                 )
@@ -132,9 +135,9 @@ class PgVectorStore:
         async with await self._conn() as c:
             rows = await (
                 await c.execute(
-                    """SELECT path, chunk_index, content, start_line, end_line, kind,
+                    f"""SELECT path, chunk_index, content, start_line, end_line, kind,
                               ts_rank_cd(tsv, q) AS score
-                       FROM code_chunks, to_tsquery('simple', %s) q
+                       FROM {self.table}, to_tsquery('simple', %s) q
                        WHERE repo = %s AND tsv @@ q AND (%s::text IS NULL OR kind = %s)
                        ORDER BY score DESC LIMIT %s""",
                     (terms, repo, kind, kind, k),
