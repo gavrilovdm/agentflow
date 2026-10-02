@@ -83,8 +83,10 @@ class PythonGate:
 
         if _has_mypy_config(workspace):
             types = await run_command([str(bin_ / "mypy"), "."], workspace)
-            type_errors = [] if types.ok else with_fallback(
-                [line for line in types.output.splitlines() if ": error:" in line], types.output
+            type_errors = (
+                []
+                if types.ok
+                else with_fallback([line for line in types.output.splitlines() if ": error:" in line], types.output)
             )
         else:
             # No type-checker configured: still catch syntax errors, the analogue of tsc.

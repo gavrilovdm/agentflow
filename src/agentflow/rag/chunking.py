@@ -63,7 +63,10 @@ def list_files(root: Path) -> list[str]:
     try:
         out = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-            cwd=root, capture_output=True, text=True, check=True,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.splitlines()
     except (subprocess.CalledProcessError, FileNotFoundError):
         out = [str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()]

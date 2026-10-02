@@ -11,7 +11,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
@@ -55,8 +55,8 @@ class PgVectorStore:
         self.dim = dim
         self.table = table
 
-    async def _conn(self) -> AsyncConnection:
-        return await AsyncConnection.connect(self.dsn, autocommit=True, row_factory=dict_row)
+    async def _conn(self) -> AsyncConnection[Any]:
+        return await AsyncConnection.connect(self.dsn, autocommit=True, row_factory=dict_row)  # type: ignore[arg-type]
 
     async def setup(self) -> None:
         async with await self._conn() as c:
@@ -80,8 +80,7 @@ class PgVectorStore:
                 )"""
             )
             await c.execute(
-                f"CREATE INDEX IF NOT EXISTS {self.table}_hnsw ON {self.table} "
-                "USING hnsw (embedding vector_cosine_ops)"
+                f"CREATE INDEX IF NOT EXISTS {self.table}_hnsw ON {self.table} USING hnsw (embedding vector_cosine_ops)"
             )
             await c.execute(f"CREATE INDEX IF NOT EXISTS {self.table}_tsv ON {self.table} USING gin (tsv)")
 
@@ -90,7 +89,7 @@ class PgVectorStore:
             rows = await (
                 await c.execute(f"SELECT DISTINCT path, file_hash FROM {self.table} WHERE repo = %s", (repo,))
             ).fetchall()
-        return {r["path"]: r["file_hash"] for r in rows}
+        return {r["path"]: r["file_hash"] for r in rows}  # type: ignore[call-overload]
 
     async def delete_paths(self, repo: str, paths: list[str]) -> None:
         if not paths:
@@ -146,7 +145,7 @@ class PgVectorStore:
         return [_hit(r) for r in rows]
 
 
-def _hit(r: dict) -> Hit:
+def _hit(r: Any) -> Hit:
     return Hit(r["path"], r["chunk_index"], r["content"], r["start_line"], r["end_line"], r["kind"], float(r["score"]))
 
 

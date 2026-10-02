@@ -33,9 +33,7 @@ class SpecDraft(BaseModel):
     technical_notes: str = Field(description="Patterns to follow, integrations, key architectural notes")
     out_of_scope: list[str] = Field(description="What is explicitly NOT included")
 
-    _coerce = field_validator("constraints", "acceptance_criteria", "out_of_scope", mode="before")(
-        _split_lines
-    )
+    _coerce = field_validator("constraints", "acceptance_criteria", "out_of_scope", mode="before")(_split_lines)
 
 
 class TaskDraft(BaseModel):

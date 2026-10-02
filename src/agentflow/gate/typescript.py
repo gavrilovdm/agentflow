@@ -24,8 +24,16 @@ STAMP = "node_modules/.agentflow-install-stamp"
 # the acceptance tests — vitest then ran zero files and no source edit could clear it.
 GATE_VITEST_CONFIG = "vitest.agentflow.config.ts"
 ESLINT_CONFIGS = (
-    "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts",
-    ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml",
+    "eslint.config.js",
+    "eslint.config.mjs",
+    "eslint.config.cjs",
+    "eslint.config.ts",
+    ".eslintrc",
+    ".eslintrc.js",
+    ".eslintrc.cjs",
+    ".eslintrc.json",
+    ".eslintrc.yml",
+    ".eslintrc.yaml",
 )
 _OK = CommandResult(True, 0, "")
 
@@ -40,8 +48,10 @@ def extract_vitest_failures(raw: str, per_failure: int = 6, max_line: int = 2000
         if "FAIL" in line or "✗" in line or "×" in line:
             keep.update(range(i, min(len(lines), i + 1 + per_failure)))
         head = line[:max_line]
-        if re.match(r"^\s*[A-Za-z]*Error\b", head) or "Unhandled error" in head or (
-            "expected " in head and " to " in head
+        if (
+            re.match(r"^\s*[A-Za-z]*Error\b", head)
+            or "Unhandled error" in head
+            or ("expected " in head and " to " in head)
         ):
             keep.add(i)
     return [lines[i] for i in sorted(keep) if lines[i].strip()]
@@ -85,9 +95,9 @@ class TypeScriptGate:
         install_error = await self._ensure_deps(workspace)
         (workspace / GATE_VITEST_CONFIG).write_text(
             'import { defineConfig } from "vitest/config";\n\n'
-            'export default defineConfig({\n'
+            "export default defineConfig({\n"
             '  test: { include: ["tests/**/*.test.ts", "src/**/*.test.ts"] },\n'
-            '});\n'
+            "});\n"
         )
         test_args = ["npx", "vitest", "run", "--config", GATE_VITEST_CONFIG, "--reporter=verbose"]
         test_args += [os.path.normpath(p) for p in (test_paths or [])]
@@ -110,7 +120,9 @@ class TypeScriptGate:
         return summarize(
             {
                 "Dependency install": [install_error] if install_error else [],
-                "TypeScript errors": [] if tsc.ok else with_fallback(
+                "TypeScript errors": []
+                if tsc.ok
+                else with_fallback(
                     [line for line in tsc.output.splitlines() if re.search(r"error TS\d+", line)], tsc.output
                 ),
                 "Test failures": [] if tests.ok else with_fallback(extract_vitest_failures(tests.output), tests.output),

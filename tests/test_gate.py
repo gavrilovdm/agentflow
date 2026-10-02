@@ -26,7 +26,12 @@ def test_pytest_extractor_keeps_reason_not_just_name():
 
 
 def test_vitest_extractor_survives_huge_line():
-    raw = " FAIL tests/a.test.ts > adds\nTypeError: x.addNote is not a function\n" + "expected " + "a" * 60_000 + " to be b\n"
+    raw = (
+        " FAIL tests/a.test.ts > adds\nTypeError: x.addNote is not a function\n"
+        + "expected "
+        + "a" * 60_000
+        + " to be b\n"
+    )
     out = extract_vitest_failures(raw)
     assert any("addNote" in line for line in out)
 
