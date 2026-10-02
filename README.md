@@ -115,6 +115,10 @@ Without real embeddings the dense half is hash noise, and fusing it in *lowers* 
 
 Caveat: the golden queries were written by someone who knows the code, so they share vocabulary with it. That flatters lexical search. The next step is to replace them with queries the agents actually issued, taken from LangSmith traces, and to rerun with `VOYAGE_API_KEY` set to measure dense and hybrid properly.
 
+## Interactive guide
+
+`guide/` is a small React app that explains the project. It replays a real run step by step, gives each concept something to try (RAG search playground, routing simulator, HITL), lists the use cases, and tells the stories of the bugs found live. Start it with `cd guide && pnpm install && pnpm dev`.
+
 ## Live run
 
 `scripts/live_smoke.py` drives the dockerised service end to end: `POST /runs` → approve spec → approve plan → wait.

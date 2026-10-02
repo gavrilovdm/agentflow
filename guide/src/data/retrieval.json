@@ -4,15 +4,15 @@
  "summary": {
   "dense": {
    "recall": 0.125,
-   "mrr": 0.128
+   "mrr": 0.126
   },
   "lexical": {
    "recall": 1.0,
    "mrr": 1.0
   },
   "hybrid": {
-   "recall": 0.775,
-   "mrr": 0.568
+   "recall": 0.875,
+   "mrr": 0.561
   }
  },
  "cases": [
@@ -22,11 +22,11 @@
     "agentflow/models.py"
    ],
    "dense": [
-    "agentflow/agents/orchestrator.py",
-    "agentflow/schemas.py",
     "agentflow/rag/chunking.py",
-    "agentflow/gate/python.py",
-    "agentflow/gate/base.py"
+    "agentflow/api/app.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/build.py",
+    "agentflow/runner.py"
    ],
    "lexical": [
     "agentflow/models.py",
@@ -36,11 +36,11 @@
     "agentflow/agents/coder.py"
    ],
    "hybrid": [
-    "agentflow/gate/base.py",
     "agentflow/api/app.py",
     "agentflow/gate/typescript.py",
     "agentflow/agents/coder.py",
-    "agentflow/agents/orchestrator.py"
+    "agentflow/rag/chunking.py",
+    "agentflow/models.py"
    ]
   },
   {
@@ -49,11 +49,11 @@
     "agentflow/integrations/workspace.py"
    ],
    "dense": [
+    "agentflow/gate/base.py",
     "agentflow/agents/test_generator.py",
     "agentflow/runner.py",
-    "agentflow/mcp_server.py",
-    "agentflow/graph/state.py",
-    "agentflow/rag/store.py"
+    "agentflow/agents/orchestrator.py",
+    "agentflow/mcp_server.py"
    ],
    "lexical": [
     "agentflow/integrations/workspace.py",
@@ -64,8 +64,8 @@
    ],
    "hybrid": [
     "agentflow/integrations/workspace.py",
-    "agentflow/agents/test_generator.py",
     "agentflow/gate/base.py",
+    "agentflow/agents/test_generator.py",
     "agentflow/runner.py",
     "agentflow/agents/coder.py"
    ]
@@ -76,11 +76,11 @@
     "agentflow/agents/coder.py"
    ],
    "dense": [
+    "agentflow/agents/orchestrator.py",
     "agentflow/rag/store.py",
     "agentflow/integrations/workspace.py",
-    "agentflow/schemas.py",
     "agentflow/api/app.py",
-    "agentflow/runner.py"
+    "agentflow/gate/python.py"
    ],
    "lexical": [
     "agentflow/agents/coder.py",
@@ -91,9 +91,9 @@
    ],
    "hybrid": [
     "agentflow/agents/coder.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/rag/store.py",
     "agentflow/integrations/workspace.py",
-    "agentflow/schemas.py",
     "agentflow/api/app.py"
    ]
   },
@@ -103,11 +103,11 @@
     "agentflow/rag/retriever.py"
    ],
    "dense": [
+    "agentflow/gate/python.py",
     "agentflow/integrations/workspace.py",
     "agentflow/rag/indexer.py",
     "agentflow/rag/store.py",
-    "agentflow/agents/coder.py",
-    "agentflow/rag/embeddings.py"
+    "agentflow/agents/coder.py"
    ],
    "lexical": [
     "agentflow/rag/retriever.py",
@@ -117,10 +117,10 @@
     "agentflow/graph/routing.py"
    ],
    "hybrid": [
+    "agentflow/gate/python.py",
     "agentflow/gate/typescript.py",
     "agentflow/graph/nodes.py",
     "agentflow/rag/store.py",
-    "agentflow/integrations/workspace.py",
     "agentflow/rag/retriever.py"
    ]
   },
@@ -133,8 +133,8 @@
     "agentflow/agents/coder.py",
     "agentflow/graph/nodes.py",
     "agentflow/mcp_server.py",
-    "agentflow/cli.py",
-    "agentflow/integrations/workspace.py"
+    "agentflow/agents/orchestrator.py",
+    "agentflow/cli.py"
    ],
    "lexical": [
     "agentflow/rag/indexer.py",
@@ -161,7 +161,7 @@
     "agentflow/rag/store.py",
     "agentflow/worker.py",
     "agentflow/observability.py",
-    "agentflow/config.py"
+    "agentflow/schemas.py"
    ],
    "lexical": [
     "agentflow/rag/store.py",
@@ -173,9 +173,9 @@
    "hybrid": [
     "agentflow/rag/store.py",
     "agentflow/integrations/workspace.py",
+    "agentflow/gate/python.py",
     "agentflow/graph/routing.py",
-    "agentflow/worker.py",
-    "agentflow/integrations/telegram.py"
+    "agentflow/worker.py"
    ]
   },
   {
@@ -187,8 +187,8 @@
     "agentflow/gate/typescript.py",
     "agentflow/config.py",
     "agentflow/graph/build.py",
-    "agentflow/rag/store.py",
-    "agentflow/graph/nodes.py"
+    "agentflow/gate/base.py",
+    "agentflow/rag/store.py"
    ],
    "lexical": [
     "agentflow/gate/python.py",
@@ -211,11 +211,11 @@
     "agentflow/gate/typescript.py"
    ],
    "dense": [
-    "agentflow/gate/base.py",
     "agentflow/agents/coder.py",
     "agentflow/worker.py",
-    "agentflow/gate/python.py",
-    "agentflow/graph/routing.py"
+    "agentflow/graph/routing.py",
+    "agentflow/api/app.py",
+    "agentflow/graph/state.py"
    ],
    "lexical": [
     "agentflow/gate/typescript.py",
@@ -226,10 +226,10 @@
    ],
    "hybrid": [
     "agentflow/agents/coder.py",
-    "agentflow/gate/python.py",
-    "agentflow/gate/base.py",
     "agentflow/gate/__init__.py",
-    "agentflow/gate/typescript.py"
+    "agentflow/gate/typescript.py",
+    "agentflow/worker.py",
+    "agentflow/agents/test_generator.py"
    ]
   },
   {
@@ -254,10 +254,10 @@
    ],
    "hybrid": [
     "agentflow/agents/reviewer.py",
+    "agentflow/gate/python.py",
     "agentflow/config.py",
     "agentflow/graph/routing.py",
-    "agentflow/graph/nodes.py",
-    "agentflow/rag/retriever.py"
+    "agentflow/graph/nodes.py"
    ]
   },
   {
@@ -280,11 +280,11 @@
     "agentflow/agents/coder.py"
    ],
    "hybrid": [
-    "agentflow/gate/base.py",
     "agentflow/rag/chunking.py",
     "agentflow/graph/routing.py",
     "agentflow/agents/reviewer.py",
-    "agentflow/graph/nodes.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/rag/indexer.py"
    ]
   },
   {
@@ -297,8 +297,8 @@
     "agentflow/models.py",
     "agentflow/integrations/telegram.py",
     "agentflow/config.py",
-    "agentflow/gate/base.py",
-    "agentflow/cli.py"
+    "agentflow/agents/orchestrator.py",
+    "agentflow/schemas.py"
    ],
    "lexical": [
     "agentflow/graph/nodes.py",
@@ -308,8 +308,8 @@
     "agentflow/agents/coder.py"
    ],
    "hybrid": [
+    "agentflow/schemas.py",
     "agentflow/graph/nodes.py",
-    "agentflow/gate/base.py",
     "agentflow/models.py",
     "agentflow/integrations/telegram.py",
     "agentflow/graph/routing.py"
@@ -350,7 +350,7 @@
    ],
    "dense": [
     "agentflow/graph/nodes.py",
-    "agentflow/gate/python.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/models.py",
     "agentflow/integrations/workspace.py",
     "agentflow/worker.py"
@@ -364,8 +364,8 @@
    ],
    "hybrid": [
     "agentflow/worker.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/cli.py",
-    "agentflow/config.py",
     "agentflow/graph/nodes.py",
     "agentflow/integrations/telegram.py"
    ]
@@ -377,8 +377,8 @@
    ],
    "dense": [
     "agentflow/agents/coder.py",
-    "agentflow/agents/orchestrator.py",
     "agentflow/integrations/workspace.py",
+    "agentflow/schemas.py",
     "agentflow/api/app.py",
     "agentflow/graph/build.py"
    ],
@@ -394,7 +394,7 @@
     "agentflow/graph/nodes.py",
     "agentflow/graph/routing.py",
     "agentflow/agents/coder.py",
-    "agentflow/agents/orchestrator.py"
+    "agentflow/integrations/workspace.py"
    ]
   },
   {
@@ -404,10 +404,10 @@
    ],
    "dense": [
     "agentflow/agents/reviewer.py",
-    "agentflow/schemas.py",
-    "agentflow/gate/python.py",
     "agentflow/graph/nodes.py",
-    "agentflow/graph/state.py"
+    "agentflow/graph/state.py",
+    "agentflow/rag/store.py",
+    "agentflow/cli.py"
    ],
    "lexical": [
     "agentflow/memory/lessons.py",
@@ -419,8 +419,8 @@
    "hybrid": [
     "agentflow/agents/reviewer.py",
     "agentflow/memory/lessons.py",
-    "agentflow/schemas.py",
-    "agentflow/gate/python.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/state.py",
     "agentflow/runner.py"
    ]
   },
@@ -430,8 +430,8 @@
     "agentflow/graph/build.py"
    ],
    "dense": [
-    "agentflow/gate/python.py",
     "agentflow/integrations/telegram.py",
+    "agentflow/gate/python.py",
     "agentflow/graph/routing.py",
     "agentflow/graph/nodes.py",
     "agentflow/schemas.py"
@@ -447,8 +447,8 @@
     "agentflow/schemas.py",
     "agentflow/api/app.py",
     "agentflow/graph/routing.py",
-    "agentflow/agents/reviewer.py",
-    "agentflow/gate/python.py"
+    "agentflow/integrations/telegram.py",
+    "agentflow/graph/build.py"
    ]
   },
   {
@@ -484,10 +484,10 @@
     "agentflow/agents/test_generator.py"
    ],
    "dense": [
-    "agentflow/schemas.py",
     "agentflow/rag/tools.py",
     "agentflow/api/app.py",
     "agentflow/graph/nodes.py",
+    "agentflow/gate/python.py",
     "agentflow/rag/retriever.py"
    ],
    "lexical": [
@@ -499,10 +499,10 @@
    ],
    "hybrid": [
     "agentflow/agents/test_generator.py",
+    "agentflow/gate/python.py",
     "agentflow/agents/reviewer.py",
-    "agentflow/graph/nodes.py",
-    "agentflow/schemas.py",
-    "agentflow/rag/tools.py"
+    "agentflow/rag/tools.py",
+    "agentflow/api/app.py"
    ]
   },
   {
@@ -515,7 +515,7 @@
     "agentflow/agents/coder.py",
     "agentflow/gate/__init__.py",
     "agentflow/graph/nodes.py",
-    "agentflow/gate/base.py"
+    "agentflow/agents/test_generator.py"
    ],
    "lexical": [
     "agentflow/mcp_server.py",
@@ -540,9 +540,9 @@
    "dense": [
     "agentflow/cli.py",
     "agentflow/integrations/workspace.py",
+    "agentflow/schemas.py",
     "agentflow/graph/build.py",
-    "agentflow/graph/nodes.py",
-    "agentflow/rag/embeddings.py"
+    "agentflow/graph/nodes.py"
    ],
    "lexical": [
     "agentflow/observability.py",

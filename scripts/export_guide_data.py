@@ -156,6 +156,13 @@ def _msg(m: Any) -> dict:
     }
 
 
+def _tool_text(out: Any) -> str:
+    """Tool outputs are traced as serialized ToolMessages; keep just their content."""
+    if isinstance(out, dict):
+        out = out.get("content", out.get("kwargs", {}).get("content", out))
+    return out if isinstance(out, str) else json.dumps(out, default=str)
+
+
 def export_llm_calls() -> None:
     env = {k: v for k, v in dotenv_values(ROOT / ".env").items() if k.startswith("LANGSMITH") and v}
     if not env.get("LANGSMITH_API_KEY"):
@@ -196,7 +203,7 @@ def export_llm_calls() -> None:
                         "t": r.start_time,
                         "name": r.name,
                         "input": str((r.inputs or {}).get("input", r.inputs))[:400],
-                        "output": str((r.outputs or {}).get("output", ""))[:800],
+                        "output": _tool_text((r.outputs or {}).get("output", ""))[:800],
                     }
                 )
     dump("llm_calls.json", calls)
