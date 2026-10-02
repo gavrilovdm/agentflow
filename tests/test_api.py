@@ -98,11 +98,15 @@ async def test_approval_flow_and_telegram_button(client, tmp_path, monkeypatch):
     r = await client.post("/webhooks/telegram", json={"callback_query": {"id": "1", "data": "approve|t-api"}})
     assert r.status_code == 200
     fn, args, kwargs = app.state.queue.jobs[-1]
-    assert fn == "resume_run_job" and args[:2] == ("t-api", True)
+    assert fn == "resume_run_job" and args == ("t-api", {"approved": True, "feedback": None})
     assert kwargs["_job_id"].startswith("resume:t-api:")
 
     await client.post("/webhooks/telegram", json={"message": {"text": "/reject t-api make it async"}})
-    assert app.state.queue.jobs[-1][1] == ("t-api", False, "make it async")
+    assert app.state.queue.jobs[-1][1] == ("t-api", {"approved": False, "feedback": "make it async"})
+
+    # A failure decision is not a valid answer to a spec approval.
+    bad = await client.post("/runs/t-api/decision", json={"action": "retry"})
+    assert bad.status_code == 422
 
 
 async def test_metrics_exposed(client):
@@ -133,3 +137,28 @@ async def test_cors_allows_guide_origin(client):
         "/healthz", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"}
     )
     assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+async def test_failed_task_decision_via_api_and_telegram(client, monkeypatch):
+    """Endpoints validate against the pending question and enqueue a decision dict."""
+    from agentflow.runner import RunSnapshot
+
+    pending = {"type": "task_failed", "task_id": "x", "dossier": {}, "options": ["retry", "skip", "abort"]}
+
+    async def fake_snapshot(graph, thread_id):
+        return RunSnapshot(thread_id, "awaiting_approval", pending, {"status": "coding"}, "cp-1")
+
+    monkeypatch.setattr("agentflow.api.app.snapshot", fake_snapshot)
+    r = await client.post("/runs/t-x/decision", json={"action": "retry", "hint": "check the import path"})
+    assert r.status_code == 202
+    fn, args, kwargs = app.state.queue.jobs[-1]
+    assert args == ("t-x", {"action": "retry", "hint": "check the import path"})
+    assert kwargs["_job_id"] == "resume:t-x:cp-1"
+
+    # replan was not offered (e.g. replan budget used up) → rejected
+    assert (await client.post("/runs/t-x/decision", json={"action": "replan"})).status_code == 422
+
+    await client.post("/webhooks/telegram", json={"callback_query": {"id": "1", "data": "skip|t-x"}})
+    assert app.state.queue.jobs[-1][1] == ("t-x", {"action": "skip", "hint": None})
+    await client.post("/webhooks/telegram", json={"message": {"text": "/hint t-x mock the HTTP client"}})
+    assert app.state.queue.jobs[-1][1] == ("t-x", {"action": "retry", "hint": "mock the HTTP client"})

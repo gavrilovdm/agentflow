@@ -18,6 +18,7 @@ from langgraph.types import interrupt
 from agentflow.agents import coder, orchestrator, reviewer, test_generator
 from agentflow.config import get_settings
 from agentflow.gate import Gate, detect_gate
+from agentflow.graph import escalation
 from agentflow.graph.context import Deps
 from agentflow.graph.routing import dependents_of, next_runnable, next_stall
 from agentflow.graph.state import WorkflowState, replace_task, task_by_id
@@ -27,7 +28,7 @@ from agentflow.memory.lessons import recall_lessons, remember_review_feedback
 from agentflow.models import text_model, text_of
 from agentflow.rag.indexer import index_repo
 from agentflow.rag.retriever import pack_context
-from agentflow.schemas import ApprovalDecision, CoderResult, ReviewCycle, ReviewResult, Stall
+from agentflow.schemas import ApprovalDecision, CoderResult, FailureDecision, ReviewCycle, ReviewResult, Stall, Task
 
 log = logging.getLogger("agentflow.graph")
 
@@ -155,6 +156,7 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         test_content=_read(root / test_path) if test_path else "",
         retrieved_context=retrieved,
         lessons=lessons,
+        human_hint=state.get("hints", {}).get(task_id) or None,
     )
 
     # Two failure sources feed a retry: the coder itself erroring out, and the coder
@@ -187,46 +189,42 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
 
 
 async def generate_task_test(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
-    """Write the task's acceptance test.
-
-    test_first (default): before any code, from the task's interface and Definition of Done.
-    The test must then fail (red): a test that passes before the code exists asserts nothing
-    the task adds, so it is regenerated once with that feedback.
-    test_after: after the code, using it only for names and imports.
-    """
+    """Write the task's acceptance test before any code, from its interface and Definition of
+    Done. The test must then fail (red): a test that passes before the code exists asserts
+    nothing the task adds, so it is regenerated once with that feedback."""
     task_id = state["current_task_id"]
     assert task_id
     if state.get("tests", {}).get(task_id):
         return {}  # keep the target stable across the coder→gate→review retry loop
     task, spec, root, gate = task_by_id(state, task_id), state["spec"], _ws(state), _gate(state)
     assert spec
-    test_first = runtime.context.config.test_strategy == "test_first"
-    result = state.get("task_results", {}).get(task_id)
-    written = {} if test_first or result is None else result.written_files
 
-    # Before the code exists the generator must still see the code the task modifies: a
-    # test-first draft once asserted that an untouched insert() returns a dict instead of
-    # its id, and coder and reviewer then ping-ponged over it until the budget ran out.
-    existing = {p: _read(root / p) for p in task.target_files if (root / p).is_file()} if test_first else None
-    rel = await test_generator.generate_test(task, spec, gate, root, written, existing_files=existing)
-    if test_first and await _passes(gate, root, rel):
+    # The generator must still see the code the task modifies: a draft once asserted that an
+    # untouched insert() returns a dict instead of its id, and coder and reviewer then
+    # ping-ponged over it until the budget ran out.
+    existing = _current_target_files(task, root)
+    rel = await test_generator.generate_test(task, spec, gate, root, existing_files=existing)
+    if await _passes(gate, root, rel):
         progress(runtime, f"{rel} passes before any code exists — regenerating", task=task_id)
         rel = await test_generator.generate_test(
             task,
             spec,
             gate,
             root,
-            written,
+            existing_files=existing,
             previous_test=_read(root / rel),
             ruling="This test already passes although the task is not implemented yet, so it verifies nothing "
             "the task adds. Assert the new behaviour from the Definition of Done.",
-            existing_files=existing,
         )
         if await _passes(gate, root, rel):
             # Can be legitimate (e.g. a pure refactor); keep it rather than loop.
             progress(runtime, f"{rel} still green before implementation — keeping it", task=task_id)
-    progress(runtime, f"acceptance test written: {rel}", task=task_id, red=test_first)
+    progress(runtime, f"acceptance test written: {rel}", task=task_id)
     return {"tests": {task_id: rel}}
+
+
+def _current_target_files(task: Task, root: Path) -> dict[str, str]:
+    return {p: _read(root / p) for p in task.target_files if (root / p).is_file()}
 
 
 async def _passes(gate: Gate, root: Path, test_rel: str) -> bool:
@@ -319,9 +317,15 @@ async def adjudicate(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         return {"adjudicated": {task_id: True}}  # stall left intact → handle_failure
 
     progress(runtime, f"{task_id}: referee says the test is at fault — regenerating", task=task_id)
-    written = state["task_results"][task_id].written_files
     rel = await test_generator.generate_test(
-        task, spec, _gate(state), root, written, previous_test=test_content, ruling=ruling.reasoning
+        task,
+        spec,
+        _gate(state),
+        root,
+        existing_files=_current_target_files(task, root),
+        previous_test=test_content,
+        ruling=ruling.reasoning,
+        attempted_code=state["task_results"][task_id].written_files,
     )
     return {
         "adjudicated": {task_id: True},
@@ -352,6 +356,102 @@ async def complete_task(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     return {"tasks": replace_task(state["tasks"], task_id, status="completed")}
 
 
+async def escalate(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
+    """A task ran out of budget. Ask a human what to do — retry with a hint, re-plan, skip,
+    or stop — instead of silently skipping it and everything that depends on it.
+
+    Unattended runs (on_task_failure="skip") and tasks already escalated
+    max_escalations_per_task times keep the old behaviour: skip without asking.
+    """
+    cfg = runtime.context.config
+    task_id = state["current_task_id"]
+    assert task_id
+    count = state.get("escalations", {}).get(task_id, 0)
+    if cfg.on_task_failure == "skip" or count >= cfg.max_escalations_per_task:
+        return {"failure_decisions": {task_id: FailureDecision(action="skip", auto=True)}}
+
+    dossier = escalation.build_dossier(state, task_id)
+    options = escalation.options_for(state, cfg.max_replans)
+    raw = interrupt({"type": "task_failed", "task_id": task_id, "dossier": dossier, "options": options})
+    decision = FailureDecision.model_validate(raw)
+    if decision.action not in options:
+        decision = FailureDecision(action="skip", hint=f"'{decision.action}' was not available")
+    progress(runtime, f"{task_id}: human chose {decision.action}", task=task_id, hint=decision.hint)
+
+    update: dict = {
+        "failure_decisions": {task_id: decision},
+        "escalations": {task_id: count + 1},
+    }
+    if decision.action == "retry":
+        # A fresh budget with the human's guidance; the acceptance test stays (the referee
+        # or the hint can still change course), the partial code stays on disk.
+        task = task_by_id(state, task_id)
+        update |= {
+            "tasks": replace_task(
+                state["tasks"],
+                task_id,
+                coder_fix_attempts=0,
+                gate_failures=0,
+                review_cycles=0,
+                reviewer_malfunctions=0,
+                status="coding",
+            ),
+            "stalls": {task_id: Stall()},
+            "adjudicated": {task_id: False},
+            "review_results": {task_id: ReviewResult(task_id=task_id, approved=False)},
+            "hints": {task_id: decision.hint or ""},
+        }
+        if task.coder_fix_attempts and (result := state.get("task_results", {}).get(task_id)):
+            update["task_results"] = {task_id: result.model_copy(update={"error": None})}
+    return update
+
+
+async def replan(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
+    """Rewrite the not-yet-done part of the plan around the failure. Completed tasks and their
+    commits are untouched; replacement tasks get fresh ids so no per-task state leaks in."""
+    task_id = state["current_task_id"]
+    assert task_id
+    spec = state["spec"]
+    assert spec
+    tasks = state["tasks"]
+    failed = task_by_id(state, task_id)
+    completed = [t for t in tasks if t.status == "completed"]
+    remaining = [t for t in tasks if t.status in ("pending", "coding") and t.id != task_id]
+    decision = state.get("failure_decisions", {}).get(task_id)
+    context = await _repo_context(runtime, state, f"{failed.title}\n{failed.description}", budget=4000)
+
+    new = await orchestrator.replan_tasks(
+        spec,
+        completed,
+        failed,
+        remaining,
+        escalation.build_dossier(state, task_id),
+        decision.hint if decision else None,
+        context,
+    )
+    used = {t.id for t in tasks} | set(state.get("task_results", {})) | set(state.get("tests", {}))
+    renames: dict[str, str] = {}
+    for t in new:
+        if t.id in used:
+            fresh, n = f"{t.id}-r", 2
+            while fresh in used:
+                fresh, n = f"{t.id}-r{n}", n + 1
+            renames[t.id] = fresh
+            used.add(fresh)
+    for t in new:
+        t.id = renames.get(t.id, t.id)
+        t.depends_on = [renames.get(d, d) for d in t.depends_on]
+        t.status = "pending"
+    plan = orchestrator.validate_plan([*completed, *new])
+    progress(runtime, f"re-planned: {[t.id for t in new]}", replaced=[task_id, *[t.id for t in remaining]])
+    return {
+        "tasks": plan,
+        "current_task_id": None,
+        "replans": state.get("replans", 0) + 1,
+        "failed_tasks": {task_id: f"Replaced by re-plan: {', '.join(t.id for t in new)}"},
+    }
+
+
 async def handle_failure(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     task_id = state.get("current_task_id")
     tasks = state["tasks"]
@@ -373,6 +473,17 @@ async def handle_failure(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         )
     else:
         reason = state.get("error") or "unknown"
+
+    decision = state.get("failure_decisions", {}).get(task_id or "")
+    if decision and decision.action == "abort":
+        reason = f"Stopped by a human after: {reason}"
+        open_tasks = [t for t in tasks if t.status not in ("completed", "failed")]
+        failed = {t.id: (reason if t.id == task_id else "Not started — run stopped by a human") for t in open_tasks}
+        tasks = [t.model_copy(update={"status": "failed"}) if t.id in failed else t for t in tasks]
+        progress(runtime, f"run stopped by a human at {task_id}", task=task_id)
+        spec = state.get("spec")
+        await telegram.send_message(f"🛑 *Run stopped*\n\n*Feature:* {spec.title if spec else '?'}\n{reason[:1500]}")
+        return {"status": "failed", "error": reason, "tasks": tasks, "failed_tasks": failed}
 
     # Skip only the subtree that needed this task. Aborting the whole run threw away
     # every completed, reviewed task; unrelated work is worth finishing.

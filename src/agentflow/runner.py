@@ -22,6 +22,7 @@ from agentflow.graph.context import Deps
 from agentflow.rag.embeddings import get_embeddings
 from agentflow.rag.store import ChunkStore, PgVectorStore
 from agentflow.rag.store import InMemoryStore as InMemoryChunkStore
+from agentflow.schemas import ApprovalDecision, FailureDecision
 
 log = logging.getLogger("agentflow.runner")
 
@@ -121,19 +122,44 @@ async def start_run(
     return await snapshot(p.graph, thread_id)
 
 
+def validate_decision(pending: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
+    """Check a human's answer fits the question the run is paused on.
+
+    spec/plan approvals take {"approved", "feedback"}; a failed task takes {"action", "hint"}
+    with action among the options the pause offered.
+    """
+    if pending.get("type") == "task_failed":
+        d = FailureDecision.model_validate(decision)
+        if d.action not in pending.get("options", []):
+            raise ValueError(f"'{d.action}' is not an option here; choose one of {pending.get('options')}")
+        return d.model_dump(exclude={"auto"})
+    return ApprovalDecision.model_validate(decision).model_dump()
+
+
 async def resume_run(
     p: Persistence,
     thread_id: str,
-    approved: bool,
+    decision: dict[str, Any] | None = None,
+    *,
+    approved: bool | None = None,
     feedback: str | None = None,
     on_event: Any = None,
 ) -> RunSnapshot:
+    """Answer the question a paused run is waiting on and continue it.
+
+    `approved`/`feedback` is shorthand for a spec/plan approval decision.
+    """
+    if decision is None:
+        if approved is None:
+            raise ValueError("pass a decision, or approved=…")
+        decision = {"approved": approved, "feedback": feedback}
     # The run's config was fixed when it started; a resume must not change targets mid-run.
     current = await snapshot(p.graph, thread_id)
     if current.interrupt is None:
-        raise ValueError(f"run {thread_id} is not waiting for approval (status: {current.status})")
+        raise ValueError(f"run {thread_id} is not waiting for a decision (status: {current.status})")
+    resume = validate_decision(current.interrupt, decision)
     config = WorkflowConfig.model_validate(current.values["run_config"])
-    await _drive(p, Command(resume={"approved": approved, "feedback": feedback}), config, thread_id, on_event)
+    await _drive(p, Command(resume=resume), config, thread_id, on_event)
     return await snapshot(p.graph, thread_id)
 
 

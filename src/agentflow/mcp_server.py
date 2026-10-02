@@ -21,7 +21,7 @@ from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.rag.embeddings import get_embeddings
 from agentflow.rag.retriever import HybridRetriever, pack_context
 from agentflow.rag.store import PgVectorStore
-from agentflow.runner import open_persistence, snapshot
+from agentflow.runner import open_persistence, snapshot, validate_decision
 
 mcp = MCPServer(
     "agentflow",
@@ -55,7 +55,23 @@ async def get_run(thread_id: str) -> dict[str, Any]:
 async def review_checkpoint(thread_id: str, approved: bool, feedback: str | None = None) -> dict[str, str]:
     """Approve or reject the spec/plan a run is waiting on. Rejections should carry feedback."""
     q = await _queue()
-    await q.enqueue_job("resume_run_job", thread_id, approved, feedback)
+    await q.enqueue_job("resume_run_job", thread_id, {"approved": approved, "feedback": feedback})
+    await q.aclose()
+    return {"thread_id": thread_id, "status": "resuming"}
+
+
+@mcp.tool()
+async def resolve_failed_task(thread_id: str, action: str, hint: str | None = None) -> dict[str, str]:
+    """A run is paused because a task ran out of budget (get_run shows the dossier).
+    action: "retry" (fresh budget; put what to do differently in `hint`), "replan" (rewrite the
+    remaining plan; `hint` says how), "skip" (drop it and its dependents) or "abort" (stop the run)."""
+    async with open_persistence() as p:
+        snap = await snapshot(p.graph, thread_id)
+    if snap.interrupt is None or snap.interrupt.get("type") != "task_failed":
+        return {"thread_id": thread_id, "status": "not waiting on a failed task"}
+    decision = validate_decision(snap.interrupt, {"action": action, "hint": hint})
+    q = await _queue()
+    await q.enqueue_job("resume_run_job", thread_id, decision, _job_id=f"resume:{thread_id}:{snap.checkpoint_id}")
     await q.aclose()
     return {"thread_id": thread_id, "status": "resuming"}
 

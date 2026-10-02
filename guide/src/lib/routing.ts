@@ -56,14 +56,10 @@ export function afterReview(task: TaskCounters, review: ReviewState, b: Budgets)
   return { next: 'run_coder', reason: 'Budget left — send the feedback back to the coder for another attempt.' }
 }
 
-export type TestStrategy = 'test_first' | 'test_after'
-export type AfterCoder = 'run_review' | 'generate_task_test' | 'run_coder' | 'handle_failure'
+export type AfterCoder = 'run_review' | 'run_coder' | 'handle_failure'
 
-export function afterCoder(success: boolean, task: TaskCounters, b: Budgets, strategy: TestStrategy = 'test_first'): Decision<AfterCoder> {
-  if (success)
-    return strategy === 'test_first'
-      ? { next: 'run_review', reason: 'Code written against the existing test — run the gate.' }
-      : { next: 'generate_task_test', reason: 'Code written — now write the test that judges it.' }
+export function afterCoder(success: boolean, task: TaskCounters, b: Budgets): Decision<AfterCoder> {
+  if (success) return { next: 'run_review', reason: 'Code written against the existing test — run the gate.' }
   if (task.coderFixAttempts >= b.maxCoderFixAttempts)
     return { next: 'handle_failure', reason: `Coder crashed ${task.coderFixAttempts}× — out of attempts.` }
   return { next: 'run_coder', reason: 'Coder crashed; retry with the error as feedback.' }
@@ -75,17 +71,10 @@ export interface PlanTask {
   status: 'pending' | 'coding' | 'completed' | 'failed'
 }
 
-export function afterTaskSelection(hasTask: boolean, strategy: TestStrategy = 'test_first'): Decision<string> {
-  if (!hasTask) return { next: 'create_pr', reason: 'No runnable tasks left.' }
-  return strategy === 'test_first'
+export function afterTaskSelection(hasTask: boolean): Decision<string> {
+  return hasTask
     ? { next: 'generate_task_test', reason: 'Write the failing acceptance test before any code.' }
-    : { next: 'run_coder', reason: 'Code first; the test is written afterwards.' }
-}
-
-export function afterTest(strategy: TestStrategy = 'test_first'): Decision<string> {
-  return strategy === 'test_first'
-    ? { next: 'run_coder', reason: 'Test is red — now make it green.' }
-    : { next: 'run_review', reason: 'Test written for existing code — run the gate.' }
+    : { next: 'create_pr', reason: 'No runnable tasks left.' }
 }
 
 /** Every open task that needs `taskId`, directly or transitively (port of dependents_of). */

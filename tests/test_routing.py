@@ -31,24 +31,24 @@ def test_review_approved_completes():
 
 def test_review_budgets_are_separate():
     assert routing.after_review(state(t("a", gate_failures=2)), CFG) == "run_coder"
-    assert routing.after_review(state(t("a", gate_failures=3)), CFG) == "handle_failure"
-    assert routing.after_review(state(t("a", review_cycles=2)), CFG) == "handle_failure"
+    assert routing.after_review(state(t("a", gate_failures=3)), CFG) == "escalate"
+    assert routing.after_review(state(t("a", review_cycles=2)), CFG) == "escalate"
 
 
 def test_stall_goes_to_referee_once():
     stalled = {"a": Stall(signature="x", repeats=2)}
     assert routing.after_review(state(t("a"), stalls=stalled), CFG) == "adjudicate"
-    assert routing.after_review(state(t("a"), stalls=stalled, adjudicated={"a": True}), CFG) == "handle_failure"
+    assert routing.after_review(state(t("a"), stalls=stalled, adjudicated={"a": True}), CFG) == "escalate"
 
 
 def test_adjudication_outcome():
     assert routing.after_adjudication(state(t("a"), stalls={"a": Stall()})) == "run_coder"
-    assert routing.after_adjudication(state(t("a"), stalls={"a": Stall(signature="x", repeats=2)})) == "handle_failure"
+    assert routing.after_adjudication(state(t("a"), stalls={"a": Stall(signature="x", repeats=2)})) == "escalate"
 
 
 def test_coder_attempt_budget():
     assert routing.after_coder(state(t("a", coder_fix_attempts=1)), CFG) == "run_coder"
-    assert routing.after_coder(state(t("a", coder_fix_attempts=2)), CFG) == "handle_failure"
+    assert routing.after_coder(state(t("a", coder_fix_attempts=2)), CFG) == "escalate"
 
 
 def test_dependents_are_transitive_and_skip_closed_tasks():
@@ -61,17 +61,12 @@ def test_next_runnable_respects_dependencies():
     assert routing.next_runnable(tasks).id == "c"
 
 
-def test_test_first_order():
-    first, after = CFG, CFG.model_copy(update={"test_strategy": "test_after"})
+def test_tests_come_before_code():
     s = state(t("a"))
-    assert routing.after_task_selection(s, first) == "generate_task_test"
-    assert routing.after_task_selection(s, after) == "run_coder"
-    assert routing.after_task_selection({"current_task_id": None}, first) == "create_pr"
-    assert routing.after_test(s, first) == "run_coder"
-    assert routing.after_test(s, after) == "run_review"
+    assert routing.after_task_selection(s) == "generate_task_test"
+    assert routing.after_task_selection({"current_task_id": None}) == "create_pr"
     ok = {"task_results": {"a": CoderResult(task_id="a", success=True)}}
-    assert routing.after_coder({**s, **ok}, first) == "run_review"
-    assert routing.after_coder({**s, **ok}, after) == "generate_task_test"
+    assert routing.after_coder({**s, **ok}, CFG) == "run_review"
 
 
 def test_after_failure():
@@ -89,7 +84,7 @@ def test_plan_validation_breaks_cycles_and_dangling_deps():
 
 def test_reviewer_malfunctions_are_capped():
     assert routing.after_review(state(t("a", reviewer_malfunctions=2)), CFG) == "run_coder"
-    assert routing.after_review(state(t("a", reviewer_malfunctions=3)), CFG) == "handle_failure"
+    assert routing.after_review(state(t("a", reviewer_malfunctions=3)), CFG) == "escalate"
 
 
 def test_stall_catches_oscillation_not_just_streaks():

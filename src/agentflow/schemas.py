@@ -161,3 +161,14 @@ class Stall(BaseModel):
 class ApprovalDecision(BaseModel):
     approved: bool
     feedback: str | None = None
+
+
+FailureAction = Literal["retry", "replan", "skip", "abort"]
+
+
+class FailureDecision(BaseModel):
+    """A human's answer when a task has run out of budget (see graph/escalation.py)."""
+
+    action: FailureAction
+    hint: str | None = None  # guidance for the coder (retry) or the planner (replan)
+    auto: bool = False  # decided by policy (unattended mode / escalation cap), not a human

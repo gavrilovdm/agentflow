@@ -53,6 +53,7 @@ class CoderContext:
     test_content: str = ""
     retrieved_context: str = ""
     lessons: list[str] = field(default_factory=list)
+    human_hint: str | None = None
 
 
 def build_file_tools(workspace: Path, written: dict[str, str]) -> list[BaseTool]:
@@ -120,6 +121,11 @@ def system_prompt(ctx: CoderContext) -> str:
         sections.append(
             f"## Acceptance test for this task\n```\n{ctx.test_content}\n```\n"
             "It was written against the Definition of Done. Make it pass."
+        )
+    if ctx.human_hint:
+        sections.append(
+            "## Guidance from a human (takes priority)\n"
+            f"This task ran out of attempts before and a human reviewed it. Their guidance:\n{ctx.human_hint}"
         )
     if ctx.lessons:
         sections.append("## Lessons from past reviews of this repository\n" + "\n".join(f"- {x}" for x in ctx.lessons))

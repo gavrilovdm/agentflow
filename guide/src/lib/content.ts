@@ -242,7 +242,7 @@ export const INTERVIEW: { q: string; a: string }[] = [
   },
   {
     q: 'Is it test-driven? Why the tests before the code?',
-    a: 'Yes, contract-first. The first version was TDD, but the test generator had to invent names and deadlocked the coder, so it moved to writing tests after the code. That fixed the deadlock but let tests mirror the code, bugs included. Now the planner fixes each task’s interface, the test is written from it before any code and must fail first, and the coder gets an executable target on its first attempt. A referee still handles a test that contradicts its task, and test-after stays as a switch for comparison.',
+    a: 'Yes, contract-first. The first version was TDD, but the test generator had to invent names and deadlocked the coder, so it moved to writing tests after the code. That fixed the deadlock but let tests mirror the code, bugs included. Now the planner fixes each task’s interface, the test is written from it before any code and must fail first, and the coder gets an executable target on its first attempt. A referee still handles a test that contradicts its task.',
   },
   {
     q: 'Why not a single agent with all the tools?',

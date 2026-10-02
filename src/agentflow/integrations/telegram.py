@@ -55,5 +55,18 @@ async def request_approval(thread_id: str, kind: str, summary: str) -> None:
     )
 
 
+FAILURE_BUTTONS = {"retry": "🔁 Retry", "replan": "🗺 Re-plan", "skip": "⏭ Skip", "abort": "🛑 Stop"}
+
+
+async def request_failure_decision(thread_id: str, dossier_text: str, options: list[str]) -> None:
+    """A task ran out of budget: show the evidence and ask what to do."""
+    await send_message(
+        f"🔴 *A task needs you*\n\n{dossier_text}\n\n"
+        f"Add guidance with `/hint {thread_id} <what to do differently>` (retries) or "
+        f"`/replan {thread_id} <how to restructure>`.\nthread: `{thread_id}`",
+        buttons=[[{"text": FAILURE_BUTTONS[o], "callback_data": f"{o}|{thread_id}"} for o in options]],
+    )
+
+
 async def answer_callback(callback_id: str, text: str) -> None:
     await _call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})

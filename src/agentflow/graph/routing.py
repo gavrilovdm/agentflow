@@ -34,28 +34,21 @@ def after_task_approval(state: WorkflowState) -> str:
     return "select_next_task" if state.get("tasks_approved") else "generate_tasks"
 
 
-def after_task_selection(state: WorkflowState, config: WorkflowConfig) -> str:
-    """test_first: the acceptance test is written before any code for the task."""
-    if not state.get("current_task_id"):
-        return "create_pr"
-    return "generate_task_test" if config.test_strategy == "test_first" else "run_coder"
-
-
-def after_test(state: WorkflowState, config: WorkflowConfig) -> str:
-    return "run_coder" if config.test_strategy == "test_first" else "run_review"
+def after_task_selection(state: WorkflowState) -> str:
+    """Each task starts with its acceptance test, written before any code."""
+    return "generate_task_test" if state.get("current_task_id") else "create_pr"
 
 
 def after_coder(state: WorkflowState, config: WorkflowConfig) -> str:
-    """test_first: the test already exists, go straight to the gate.
-    test_after: code first, then the test that judges it. On retries the test exists and
-    stays fixed while the coder works against it."""
+    """The test was written before the code, so a successful attempt goes straight to the
+    gate; the test stays fixed while the coder works against it."""
     task_id = state["current_task_id"]
     assert task_id
     result = state.get("task_results", {}).get(task_id)
     if result and result.success:
-        return "run_review" if config.test_strategy == "test_first" else "generate_task_test"
+        return "run_review"
     if task_by_id(state, task_id).coder_fix_attempts >= config.max_coder_fix_attempts:
-        return "handle_failure"
+        return "escalate"
     return "run_coder"
 
 
@@ -71,19 +64,27 @@ def after_review(state: WorkflowState, config: WorkflowConfig) -> str:
         or task.gate_failures >= config.max_gate_failures
         or task.reviewer_malfunctions >= config.max_reviewer_malfunctions
     ):
-        return "handle_failure"
+        return "escalate"
     # Repeating the same failure: remaining attempts would go the same way. Give the
     # referee one chance to spot an unsatisfiable test before writing the task off.
     stall = state.get("stalls", {}).get(task_id)
     if stall and stall.repeats >= STALL_REPEATS:
-        return "handle_failure" if state.get("adjudicated", {}).get(task_id) else "adjudicate"
+        return "escalate" if state.get("adjudicated", {}).get(task_id) else "adjudicate"
     return "run_coder"
 
 
 def after_adjudication(state: WorkflowState) -> str:
     """The referee clears the stall only when it rewrote a faulty test."""
     stall = state.get("stalls", {}).get(state["current_task_id"] or "")
-    return "handle_failure" if stall and stall.repeats >= STALL_REPEATS else "run_coder"
+    return "escalate" if stall and stall.repeats >= STALL_REPEATS else "run_coder"
+
+
+def after_escalation(state: WorkflowState) -> str:
+    """retry → back to the coder with a fresh budget; replan → rewrite the remaining plan;
+    skip / abort → handle_failure (which skips the subtree or stops the run)."""
+    decision = state.get("failure_decisions", {}).get(state["current_task_id"] or "")
+    action = decision.action if decision else "skip"
+    return {"retry": "run_coder", "replan": "replan"}.get(action, "handle_failure")
 
 
 def after_failure(state: WorkflowState) -> str:

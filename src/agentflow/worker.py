@@ -14,6 +14,7 @@ from arq.connections import RedisSettings
 from prometheus_client import start_http_server
 
 from agentflow.config import WorkflowConfig, get_settings
+from agentflow.graph.escalation import dossier_text
 from agentflow.integrations import telegram
 from agentflow.observability import JOB_SECONDS, RUNS_FINISHED, RUNS_STARTED, setup_logging
 from agentflow.runner import CRASH_PREFIX, RunSnapshot, open_persistence, resume_run, start_run
@@ -38,7 +39,12 @@ async def _after(snap: RunSnapshot) -> dict[str, Any]:
             )
         else:
             summary = "\n".join(f"• `{t['id']}` {t['title']}" for t in snap.interrupt.get("tasks", []))
-        await telegram.request_approval(snap.thread_id, kind, summary)
+        if kind == "task_failed":
+            await telegram.request_failure_decision(
+                snap.thread_id, dossier_text(snap.interrupt["dossier"]), snap.interrupt["options"]
+            )
+        else:
+            await telegram.request_approval(snap.thread_id, kind, summary)
     return snap.to_json()
 
 
@@ -57,9 +63,12 @@ async def start_run_job(
     return await _after(snap)
 
 
-async def resume_run_job(ctx: dict, thread_id: str, approved: bool, feedback: str | None = None) -> dict:
+async def resume_run_job(ctx: dict, thread_id: str, decision: dict | bool, feedback: str | None = None) -> dict:
+    # Jobs enqueued before decisions became dicts carry (approved, feedback).
+    if isinstance(decision, bool):
+        decision = {"approved": decision, "feedback": feedback}
     with JOB_SECONDS.labels("resume").time():
-        snap = await resume_run(ctx["persistence"], thread_id, approved, feedback)
+        snap = await resume_run(ctx["persistence"], thread_id, decision)
     return await _after(snap)
 
 
