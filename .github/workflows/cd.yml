@@ -17,6 +17,8 @@ env:
 
 jobs:
   deploy:
+    # Skipped until the AWS side exists (terraform apply → set repo variable AWS_CI_ROLE_ARN).
+    if: vars.AWS_CI_ROLE_ARN != ''
     runs-on: ubuntu-latest
     environment: prod
     steps:
