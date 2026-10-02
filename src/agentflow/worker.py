@@ -16,13 +16,19 @@ from prometheus_client import start_http_server
 from agentflow.config import WorkflowConfig, get_settings
 from agentflow.integrations import telegram
 from agentflow.observability import JOB_SECONDS, RUNS_FINISHED, RUNS_STARTED, setup_logging
-from agentflow.runner import RunSnapshot, open_persistence, resume_run, start_run
+from agentflow.runner import CRASH_PREFIX, RunSnapshot, open_persistence, resume_run, start_run
 
 log = logging.getLogger("agentflow.worker")
 
 
 async def _after(snap: RunSnapshot) -> dict[str, Any]:
     RUNS_FINISHED.labels(snap.status).inc()
+    error = snap.values.get("error") or ""
+    if error.startswith(CRASH_PREFIX):
+        spec = snap.values.get("spec")
+        await telegram.send_message(
+            f"❌ *Run failed* `{snap.thread_id}`\n*Feature:* {spec.title if spec else '?'}\n{error}"
+        )
     if snap.interrupt:
         kind = snap.interrupt.get("type", "approval")
         if kind == "spec_approval":

@@ -3,6 +3,7 @@ REST API, queue worker and MCP server so they cannot drift apart."""
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -21,6 +22,8 @@ from agentflow.graph.context import Deps
 from agentflow.rag.embeddings import get_embeddings
 from agentflow.rag.store import ChunkStore, PgVectorStore
 from agentflow.rag.store import InMemoryStore as InMemoryChunkStore
+
+log = logging.getLogger("agentflow.runner")
 
 
 @dataclass
@@ -134,10 +137,23 @@ async def resume_run(
     return await snapshot(p.graph, thread_id)
 
 
+CRASH_PREFIX = "Run crashed: "
+
+
 async def _drive(p: Persistence, inp: Any, config: WorkflowConfig, thread_id: str, on_event: Any) -> None:
-    """Run until the graph finishes or pauses at an interrupt, forwarding progress events."""
-    async for chunk in p.graph.astream(  # type: ignore[call-overload]
-        inp, _config(thread_id), context=make_deps(p, config), stream_mode="custom"
-    ):
-        if on_event:
-            await on_event(chunk)
+    """Run until the graph finishes or pauses at an interrupt, forwarding progress events.
+
+    A node that still fails after its retries and fallbacks would otherwise leave the run
+    with no terminal status — pollers wait forever and nobody is told. Record it as failed
+    (routed through handle_failure's edge, which ends the graph) instead of raising.
+    """
+    try:
+        async for chunk in p.graph.astream(  # type: ignore[call-overload]
+            inp, _config(thread_id), context=make_deps(p, config), stream_mode="custom"
+        ):
+            if on_event:
+                await on_event(chunk)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("run %s crashed", thread_id)
+        error = f"{CRASH_PREFIX}{type(exc).__name__}: {str(exc)[:1000]}"
+        await p.graph.aupdate_state(_config(thread_id), {"status": "failed", "error": error}, as_node="handle_failure")

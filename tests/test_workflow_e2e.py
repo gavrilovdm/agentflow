@@ -185,3 +185,14 @@ async def test_review_feedback_becomes_lesson(repo: Path, fakes, monkeypatch):
         assert task_add.review_cycles == 1
         items = await p.graph.store.asearch(("lessons", f"local:{repo.resolve()}".replace(".", "_")), query="docstring")
         assert any("docstring" in i.value["text"] for i in items)
+
+
+async def test_node_crash_marks_run_failed(repo: Path, fakes, monkeypatch):
+    async def broken_spec(*a, **k):
+        raise ValueError("provider exploded")  # ValueError is not retried by the node RetryPolicy
+
+    monkeypatch.setattr(orchestrator, "generate_spec", broken_spec)
+    async with open_persistence(in_memory=True) as p:
+        snap = await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id="t4")
+    assert snap.status == "failed"
+    assert snap.values["error"].startswith("Run crashed: ValueError: provider exploded")

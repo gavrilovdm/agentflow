@@ -45,8 +45,10 @@ def chat_model(
             base_url=s.deepseek_base_url,
             max_retries=3,
             # DeepSeek's thinking mode rejects a forced tool_choice, which is what
-            # with_structured_output(method="function_calling") sends.
-            model_kwargs={"thinking": {"type": "disabled"}} if forces_tool_choice else {},
+            # with_structured_output(method="function_calling") sends. Non-OpenAI params
+            # must travel in extra_body: model_kwargs reach create() as kwargs and the SDK
+            # raises TypeError, which took down every structured DeepSeek call.
+            extra_body={"thinking": {"type": "disabled"}} if forces_tool_choice else None,
         )
     raise ValueError(f"Unknown model: {name}")
 
