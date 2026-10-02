@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     voyage_api_key: str = ""
+    # OpenAI-compatible proxy to Claude (e.g. cursor-proxy): models named cpx* go through it.
+    claude_proxy_url: str = "http://127.0.0.1:8787/v1"
+    claude_proxy_key: str = ""
 
     orchestrator_model: str = "claude-opus-5"
     reviewer_model: str = "claude-opus-5"

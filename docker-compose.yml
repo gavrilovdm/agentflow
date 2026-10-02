@@ -23,7 +23,8 @@ services:
       DATABASE_URL: postgresql://agentflow:agentflow@postgres:5432/agentflow
       REDIS_URL: redis://redis:6379
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}  # shell env wins over .env (e.g. GITHUB_TOKEN=$(gh auth token))
-    ports: ["8000:8000"]
+      CLAUDE_PROXY_URL: http://host.docker.internal:8787/v1
+    ports: ["8010:8000"]  # 8000 is often taken locally
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
@@ -36,6 +37,7 @@ services:
       DATABASE_URL: postgresql://agentflow:agentflow@postgres:5432/agentflow
       REDIS_URL: redis://redis:6379
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}  # shell env wins over .env (e.g. GITHUB_TOKEN=$(gh auth token))
+      CLAUDE_PROXY_URL: http://host.docker.internal:8787/v1
     volumes: [workspaces:/tmp/agentflow]
     depends_on:
       postgres: { condition: service_healthy }

@@ -38,6 +38,17 @@ def chat_model(
         if temperature is not None and "opus" not in name:  # opus thinking rejects temperature
             kwargs["temperature"] = temperature
         return ChatAnthropic(**kwargs)
+    if name.startswith("cpx"):
+        # Claude through an OpenAI-compatible proxy (cpxopus / cpxsonnet / cpxhaiku), which
+        # translates chat.completions — tools and tool_choice included — into Anthropic messages.
+        return ChatOpenAI(
+            model=name,
+            temperature=temperature if "opus" not in name else None,
+            max_tokens=max_tokens,  # type: ignore[call-arg]
+            api_key=s.claude_proxy_key or "unset",  # type: ignore[arg-type]
+            base_url=s.claude_proxy_url,
+            max_retries=3,
+        )
     if name.startswith("deepseek-"):
         return ChatOpenAI(
             model=name,
