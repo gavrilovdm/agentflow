@@ -1,0 +1,7 @@
+[
+  {"prompt": "Add password reset via emailed one-time token that expires after 30 minutes"},
+  {"prompt": "Add a discount code system: percentage or fixed-amount codes, single-use or multi-use, with expiry"},
+  {"prompt": "Expose order history for a user, newest first, paginated"},
+  {"prompt": "Rate-limit login attempts to 5 per minute per email"},
+  {"prompt": "Make it faster"}
+]

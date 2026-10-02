@@ -1,0 +1,22 @@
+[
+  {"query": "where is the fallback model configured for structured output calls", "relevant": ["agentflow/models.py"]},
+  {"query": "refuse writing files outside the workspace (path traversal)", "relevant": ["agentflow/integrations/workspace.py"]},
+  {"query": "coder must not write scratch or debug scripts", "relevant": ["agentflow/agents/coder.py"]},
+  {"query": "reciprocal rank fusion of dense and keyword results", "relevant": ["agentflow/rag/retriever.py"]},
+  {"query": "only re-embed files whose content hash changed", "relevant": ["agentflow/rag/indexer.py"]},
+  {"query": "pgvector hnsw index and full text tsvector column", "relevant": ["agentflow/rag/store.py"]},
+  {"query": "pytest exit code 5 no tests collected", "relevant": ["agentflow/gate/python.py"]},
+  {"query": "vitest config owned by the gate so the coder cannot narrow include", "relevant": ["agentflow/gate/typescript.py"]},
+  {"query": "decide whether the test or the code is wrong when failures repeat", "relevant": ["agentflow/agents/reviewer.py", "agentflow/graph/nodes.py"]},
+  {"query": "route to adjudicate when the same failure repeats", "relevant": ["agentflow/graph/routing.py"]},
+  {"query": "skip tasks that depend on a failed task", "relevant": ["agentflow/graph/routing.py", "agentflow/graph/nodes.py"]},
+  {"query": "verify GitHub webhook HMAC signature", "relevant": ["agentflow/integrations/github.py"]},
+  {"query": "telegram approve reject inline keyboard buttons", "relevant": ["agentflow/integrations/telegram.py", "agentflow/api/app.py"]},
+  {"query": "deduplicate resume jobs by checkpoint id", "relevant": ["agentflow/api/app.py"]},
+  {"query": "store reviewer feedback as long-term lessons", "relevant": ["agentflow/memory/lessons.py"]},
+  {"query": "allow-list pydantic models for msgpack checkpoint serialization", "relevant": ["agentflow/graph/build.py"]},
+  {"query": "break dependency cycles in the generated task plan", "relevant": ["agentflow/agents/orchestrator.py"]},
+  {"query": "acceptance tests written after the implementation, not before", "relevant": ["agentflow/agents/test_generator.py"]},
+  {"query": "expose tools to MCP clients", "relevant": ["agentflow/mcp_server.py"]},
+  {"query": "prometheus counters for runs and approvals", "relevant": ["agentflow/observability.py"]}
+]
