@@ -68,10 +68,10 @@ uv run agentflow run "Add a change_email service that rejects duplicates" --path
 
 ```bash
 docker compose up -d            # postgres+pgvector, redis, api, worker
-curl -X POST localhost:8000/runs -H 'content-type: application/json' \
+curl -X POST localhost:8010/runs -H 'content-type: application/json' \
      -d '{"prompt": "Add order history endpoint", "repo": "you/your-repo"}'
-curl localhost:8000/runs/<thread_id>                       # status, spec, tasks, pending approval
-curl -X POST localhost:8000/runs/<thread_id>/approval \
+curl localhost:8010/runs/<thread_id>                       # status, spec, tasks, pending approval
+curl -X POST localhost:8010/runs/<thread_id>/approval \
      -H 'content-type: application/json' -d '{"approved": true}'
 ```
 
@@ -113,11 +113,34 @@ Retrieval eval, offline (hash embeddings, so dense is noise; 20 queries over `sr
 
 Caveat: the golden queries were written by someone who knows the code, so they share vocabulary with it. That flatters lexical search. The next step is to replace them with queries the agents actually issued, taken from LangSmith traces, and to rerun with `VOYAGE_API_KEY` set to measure dense and hybrid properly.
 
+## Live run
+
+`scripts/live_smoke.py` drives the dockerised service end to end: `POST /runs` → approve spec → approve plan → wait.
+A run on a private sandbox repo (Opus via an OpenAI-compatible proxy for orchestrator/tests/review, DeepSeek as coder)
+planned two dependent tasks, passed the gate and review on the first attempt for both, and opened a PR with both
+acceptance tests committed — 160 s wall time.
+
+Getting there surfaced seven bugs the offline suite could not see, each now covered by a test:
+- the workspace volume was root-owned
+- linting the whole repo failed tasks on files the coder may not edit
+- uncapped reviewer malfunctions looped forever when the API balance ran out
+- DeepSeek's `thinking` flag must travel in `extra_body`
+- a tool `name` kwarg broke the whole OpenAI-compatible fallback branch
+- `ChatAnthropic` ignored keys from `.env`
+- crashed runs had no terminal status
+
+`pytest -m live` now makes one structured call per configured model *in isolation*, because a fallback chain
+hides a broken fallback until the day the primary goes down.
+
+Claude can be reached directly (`claude-*` model names, `ANTHROPIC_API_KEY`) or through an OpenAI-compatible proxy
+(`cpx*` names, `CLAUDE_PROXY_URL` / `CLAUDE_PROXY_KEY`).
+
 ## Development
 
 ```bash
-uv run pytest                        # 26 tests: gate, RAG, routing, API/webhooks, whole-graph e2e (LLMs faked)
+uv run pytest                        # 29 tests: gate, RAG, routing, API/webhooks, whole-graph e2e (LLMs faked)
 docker compose up -d postgres && uv run pytest -m integration   # pgvector round-trip
+uv run pytest -m live                # one real structured call per configured model (costs money)
 uv run ruff check . && uv run mypy src
 ```
 
