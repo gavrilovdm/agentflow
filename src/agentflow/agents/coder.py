@@ -109,7 +109,12 @@ def system_prompt(ctx: CoderContext) -> str:
         f"You are an expert {ctx.language} developer implementing one task of a larger plan.",
         f"## Specification (read-only)\n**Goal:** {ctx.spec.goal}\n**Technical notes:** {ctx.spec.technical_notes}",
         f"## Your task\n**Title:** {ctx.task.title}\n**Description:** {ctx.task.description}\n"
-        f"**Target files:** {', '.join(ctx.task.target_files)}\n**Definition of Done:** {ctx.task.definition_of_done}",
+        f"**Target files:** {', '.join(ctx.task.target_files)}\n**Definition of Done:** {ctx.task.definition_of_done}"
+        + (
+            f"\n**Interface (binding — implement exactly these names and signatures):**\n{ctx.task.interface}"
+            if ctx.task.interface
+            else ""
+        ),
     ]
     if ctx.test_content:
         sections.append(

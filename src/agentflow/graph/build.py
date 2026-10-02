@@ -67,11 +67,15 @@ def build_graph(
     g.add_conditional_edges("await_spec_approval", routing.after_spec_approval, ["generate_tasks", "generate_spec"])
     g.add_edge("generate_tasks", "await_task_approval")
     g.add_conditional_edges("await_task_approval", routing.after_task_approval, ["select_next_task", "generate_tasks"])
-    g.add_conditional_edges("select_next_task", routing.after_task_selection, ["run_coder", "create_pr"])
     g.add_conditional_edges(
-        "run_coder", _with_config(routing.after_coder), ["generate_task_test", "run_coder", "handle_failure"]
+        "select_next_task", _with_config(routing.after_task_selection), ["generate_task_test", "run_coder", "create_pr"]
     )
-    g.add_edge("generate_task_test", "run_review")
+    g.add_conditional_edges(
+        "run_coder",
+        _with_config(routing.after_coder),
+        ["run_review", "generate_task_test", "run_coder", "handle_failure"],
+    )
+    g.add_conditional_edges("generate_task_test", _with_config(routing.after_test), ["run_coder", "run_review"])
     g.add_conditional_edges(
         "run_review",
         _with_config(routing.after_review),

@@ -46,7 +46,7 @@ export function Replay() {
         <>
           The request: <i>“{run.steps[0].delta.user_prompt as string}”</i>. Each step below is a real saved snapshot
           (checkpoint) of the run, with the actual model and tool calls that happened during it. Step through, or press
-          play.
+          play. This recording predates the switch to test-first, so here the code comes before its test.
         </>
       }
     >

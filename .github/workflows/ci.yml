@@ -6,6 +6,16 @@ on:
     branches: [main]
 
 jobs:
+  docs:
+    # Mirrors the Claude Code Stop hook: code changes in a PR must come with doc changes.
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'no-docs')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Docs updated alongside code
+        run: python3 .claude/hooks/docs_guard.py --ci
+
   python:
     runs-on: ubuntu-latest
     services:

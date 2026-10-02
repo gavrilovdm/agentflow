@@ -77,7 +77,13 @@ async def test_github_issue_label_triggers_run(client, monkeypatch):
 async def test_approval_flow_and_telegram_button(client, tmp_path, monkeypatch):
     async def fake_spec(prompt, context, previous=None, feedback=None):
         return Spec(
-            id="s", title="T", goal="g", constraints=[], acceptance_criteria=["a", "b"], technical_notes="", out_of_scope=[]
+            id="s",
+            title="T",
+            goal="g",
+            constraints=[],
+            acceptance_criteria=["a", "b"],
+            technical_notes="",
+            out_of_scope=[],
         )
 
     monkeypatch.setattr(orchestrator, "generate_spec", fake_spec)

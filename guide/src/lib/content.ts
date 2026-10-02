@@ -19,8 +19,8 @@ export const NODES: Record<string, NodeInfo> = {
   generate_tasks: { title: 'Plan the tasks', who: 'Opus (orchestrator)', what: 'Split the spec into small tasks with dependencies (a DAG). Cycles and dangling dependencies get repaired automatically.', concept: 'tools', file: 'src/agentflow/agents/orchestrator.py' },
   await_task_approval: { title: 'Human checks the plan', who: 'You', what: 'Second checkpoint: approve the plan, or reject it with feedback and it gets re-planned.', concept: 'state', file: 'src/agentflow/graph/nodes.py' },
   select_next_task: { title: 'Pick next task', who: 'Python', what: 'Choose the first pending task whose dependencies are all done. None left → go open the PR.', concept: 'routing', file: 'src/agentflow/graph/routing.py' },
-  run_coder: { title: 'Write the code', who: 'DeepSeek (coder agent)', what: 'A tool-using agent reads files, searches the codebase, writes files. It gets past review feedback and lessons from earlier runs.', concept: 'tools', file: 'src/agentflow/agents/coder.py' },
-  generate_task_test: { title: 'Write the acceptance test', who: 'Opus (test generator)', what: 'Write a test from the task’s Definition of Done — after the code exists, so names and imports line up, but asserting what the task demands.', concept: 'tools', file: 'src/agentflow/agents/test_generator.py' },
+  generate_task_test: { title: 'Write the failing test', who: 'Opus (test generator)', what: 'Before any code: write the acceptance test from the task’s interface and Definition of Done, then check it fails (red). A test that already passes asserts nothing and is rewritten.', concept: 'tools', file: 'src/agentflow/agents/test_generator.py' },
+  run_coder: { title: 'Make it pass', who: 'DeepSeek (coder agent)', what: 'A tool-using agent reads files, searches the codebase and writes code until the failing test can pass. It also gets past review feedback and lessons from earlier runs.', concept: 'tools', file: 'src/agentflow/agents/coder.py' },
   run_review: { title: 'Gate, then review', who: 'pytest/ruff + Opus (reviewer)', what: 'Deterministic checks first (types, tests, lint). Only if they pass does a reviewer agent judge the diff — and it can search the repo while doing so.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   adjudicate: { title: 'Referee', who: 'Opus (referee)', what: 'When the same failure repeats 3×, decide whether the test is wrong rather than the code. If so, rewrite the test and try again.', concept: 'routing', file: 'src/agentflow/agents/reviewer.py' },
   complete_task: { title: 'Commit + learn', who: 'Python', what: 'Commit code and test together, re-index the repo so later tasks can find the new code, and save useful review feedback as long-term lessons.', concept: 'memory', file: 'src/agentflow/graph/nodes.py' },
@@ -145,6 +145,22 @@ BUGS.push(
     lesson: 'Before gating on a metric, check that it moves only when the thing you care about moves.',
     commit: '9715bdf',
   },
+  {
+    id: 'oscillation', title: 'A ping-pong the loop detector could not see',
+    symptom: 'First live test-first run: one task burned 4 gate failures and 4 review rejections, alternating, then the whole plan was skipped.',
+    cause: 'The test demanded a change to an API the task said not to touch; the coder made it, the reviewer (rightly) rejected it, the coder reverted, the test failed again. Failures alternated A, B, A, B — and stall detection only looked for the same failure twice in a row, so the referee was never called.',
+    fix: 'Count repeats within a window of recent attempts, and show the referee every distinct recent failure so the contradiction is visible.',
+    lesson: 'Loops are not only streaks. Detect cycles, not just repetition.',
+    commit: 'test-first PR',
+  },
+  {
+    id: 'blind-test', title: 'Test-first without looking at the code',
+    symptom: 'The test asserted that an existing insert() returns a dict. It returns an id, and the task said to leave it alone.',
+    cause: 'In test-first mode the test generator was given the interface of the new code but not the current code of the files being changed, so it guessed existing behaviour.',
+    fix: 'Give the generator the current contents of the task’s target files, with a rule not to assert different behaviour for APIs the task does not change.',
+    lesson: 'Writing tests first does not mean writing them blind — the contract includes what must stay the same.',
+    commit: 'test-first PR',
+  },
 )
 
 export interface UseCase {
@@ -222,7 +238,11 @@ export const CODE_MAP: { concept: string; files: string[] }[] = [
 export const INTERVIEW: { q: string; a: string }[] = [
   {
     q: 'Walk me through what happens when a request comes in.',
-    a: 'It becomes a LangGraph run. Opus writes a spec grounded in retrieved code, a human approves, Opus plans a task DAG, a human approves. Then per task: DeepSeek codes with tools, Opus writes an acceptance test from the definition of done, a deterministic gate runs, an Opus reviewer judges the diff, and the task is committed. Finally a full-suite check and a PR. State is checkpointed in Postgres after every step.',
+    a: 'It becomes a LangGraph run. Opus writes a spec grounded in retrieved code, a human approves, Opus plans a task DAG with a binding interface per task, a human approves. Then per task, test-first: Opus writes an acceptance test that must fail, DeepSeek makes it pass with tools, a deterministic gate runs, an Opus reviewer judges the diff, and the task is committed. Finally a full-suite check and a PR. State is checkpointed in Postgres after every step.',
+  },
+  {
+    q: 'Is it test-driven? Why the tests before the code?',
+    a: 'Yes, contract-first. The first version was TDD, but the test generator had to invent names and deadlocked the coder, so it moved to writing tests after the code. That fixed the deadlock but let tests mirror the code, bugs included. Now the planner fixes each task’s interface, the test is written from it before any code and must fail first, and the coder gets an executable target on its first attempt. A referee still handles a test that contradicts its task, and test-after stays as a switch for comparison.',
   },
   {
     q: 'Why not a single agent with all the tools?',

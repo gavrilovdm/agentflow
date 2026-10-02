@@ -22,7 +22,18 @@ from agentflow.schemas import GeneratedTest, Spec, Task
 log = logging.getLogger(__name__)
 ATTEMPTS = 3
 
-SYSTEM = """You are a senior test engineer writing acceptance tests for a task that has just been implemented.
+SYSTEM_FIRST = """You are a senior test engineer writing the acceptance test for a task BEFORE it is implemented.
+
+The test is the contract the coder will implement against. Derive every assertion from the task's
+Definition of Done and the spec. Import and call ONLY the names, modules and signatures given in the
+task's Interface — never invent others, because the coder will implement exactly that interface.
+The test must fail now (the code does not exist yet) and pass once the task is done correctly; a test
+that would already pass is worthless.
+
+## Framework rules
+{rules}"""
+
+SYSTEM_AFTER = """You are a senior test engineer writing acceptance tests for a task that has just been implemented.
 
 The implementation is NOT the specification. Derive every assertion from the task's Definition of
 Done and the spec; use the code only for real names, signatures and import paths. A test that
@@ -48,6 +59,7 @@ async def generate_test(
     written_files: dict[str, str],
     previous_test: str | None = None,
     ruling: str | None = None,
+    existing_files: dict[str, str] | None = None,
 ) -> str:
     """Write the acceptance test into the workspace; returns its repo-relative path."""
     files = "\n\n".join(f"### {p}\n```\n{c}\n```" for p, c in written_files.items())
@@ -55,7 +67,18 @@ async def generate_test(
         f"## Specification\n**Title:** {spec.title}\n**Goal:** {spec.goal}\n**Acceptance criteria:**\n"
         + "\n".join(f"- {c}" for c in spec.acceptance_criteria)
         + f"\n\n## Task\n**ID:** {task.id}\n**Title:** {task.title}\n**Description:** {task.description}\n"
-        f"**Target files:** {', '.join(task.target_files)}\n**Definition of Done:** {task.definition_of_done}\n\n"
+        f"**Target files:** {', '.join(task.target_files)}\n**Definition of Done:** {task.definition_of_done}\n"
+        + (f"**Interface (binding):**\n{task.interface}\n" if task.interface else "")
+        + "\n"
+        + (
+            "## Current code of the files this task changes\n"
+            "Existing behaviour shown here must stay as it is unless the task says otherwise; never assert a "
+            "different return value or signature for an API the task does not change.\n\n"
+            + "\n\n".join(f"### {p}\n```\n{c}\n```" for p, c in existing_files.items())
+            + "\n\n"
+            if existing_files
+            else ""
+        )
         + (f"## Implementation just written (for names and imports only)\n\n{files}\n\n" if files else "")
         + (
             f"## Rewrite required\nThe previous test was judged incorrect:\n{ruling}\n\n"
@@ -64,7 +87,8 @@ async def generate_test(
             else ""
         )
     )
-    messages = [SystemMessage(SYSTEM.format(rules=gate.test_prompt_rules())), HumanMessage(body)]
+    system = SYSTEM_AFTER if written_files else SYSTEM_FIRST
+    messages = [SystemMessage(system.format(rules=gate.test_prompt_rules())), HumanMessage(body)]
     runnable = structured(get_settings().test_generator_model, GeneratedTest)
 
     last_error: Exception | None = None

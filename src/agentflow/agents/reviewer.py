@@ -38,6 +38,9 @@ repeated several times, so one of the two is wrong in a way the coder cannot fix
 Answer "test" when the test contradicts the task or spec — it calls a function the spec never defines,
 uses a different name for an entity, or asserts out-of-scope behaviour. Such a test is unsatisfiable.
 Answer "code" when the test faithfully reflects the task and the implementation simply falls short.
+If the failures alternate — the test fails, and the change that makes it pass is rejected by the
+reviewer for breaking the task's scope or an existing API — the test demands something the task
+forbids: answer "test" and say what it should assert instead.
 Prefer "code" unless the test clearly departs from the specification."""
 
 
@@ -101,7 +104,7 @@ async def adjudicate(task: Task, spec: Spec, test_content: str, failure: str) ->
                 f"## Specification\n**Goal:** {spec.goal}\n**Technical notes:** {spec.technical_notes}\n\n"
                 f"## Task\n**Title:** {task.title}\n**Description:** {task.description}\n"
                 f"**Definition of Done:** {task.definition_of_done}\n\n"
-                f"## Test\n```\n{test_content}\n```\n\n## Repeating failure\n```\n{failure[:2000]}\n```"
+                f"## Test\n```\n{test_content}\n```\n\n## Recent failures (oldest first)\n```\n{failure[:2000]}\n```"
             ),
         ],
         config={"tags": ["referee", f"task:{task.id}"]},

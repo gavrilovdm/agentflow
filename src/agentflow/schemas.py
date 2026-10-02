@@ -47,6 +47,16 @@ class TaskDraft(BaseModel):
     description: str = Field(description="Detailed description of what needs to be built")
     target_files: list[str] = Field(description="File paths to create or modify, relative to repo root")
     definition_of_done: str = Field(description="Specific, observable definition of done")
+    # The contract tests are written against before any code exists. Writing tests first
+    # used to fail because the test generator had to invent names (`addNote` where the spec
+    # said `add`); fixing the names in the plan removes that guesswork.
+    interface: str = Field(
+        default="",
+        description=(
+            "Exact public contract this task exposes: module path, function/class signatures with "
+            "types, return values, exceptions raised. Every name here is binding for tests and code."
+        ),
+    )
     depends_on: list[str] = Field(default_factory=list, description="IDs of tasks that must finish first")
 
 
@@ -144,7 +154,8 @@ class PullRequest(BaseModel):
 
 class Stall(BaseModel):
     signature: str = ""
-    repeats: int = 0
+    repeats: int = 0  # earlier occurrences of `signature` within the recent window
+    history: list[str] = Field(default_factory=list)  # recent failure signatures, oldest first
 
 
 class ApprovalDecision(BaseModel):
