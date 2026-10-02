@@ -21,8 +21,16 @@ async def _call(method: str, payload: dict[str, Any]) -> httpx.Response | None:
     if not s.telegram_bot_token or not s.telegram_chat_id:
         log.info("telegram not configured; skipping %s", method)
         return None
-    async with httpx.AsyncClient(timeout=15) as client:
-        return await client.post(API.format(token=s.telegram_bot_token, method=method), json=payload)
+    # A notification must never fail the job that sends it: a transient network error once
+    # made a worker job "fail" after the run had already paused correctly, and the human was
+    # never told. Retry once, then log and move on.
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                return await client.post(API.format(token=s.telegram_bot_token, method=method), json=payload)
+        except httpx.HTTPError as exc:
+            log.warning("telegram %s attempt %s failed: %s", method, attempt, type(exc).__name__)
+    return None
 
 
 async def send_message(text: str, buttons: list[list[dict[str, str]]] | None = None) -> None:

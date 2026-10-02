@@ -24,7 +24,9 @@ export const NODES: Record<string, NodeInfo> = {
   run_review: { title: 'Gate, then review', who: 'pytest/ruff + Opus (reviewer)', what: 'Deterministic checks first (types, tests, lint). Only if they pass does a reviewer agent judge the diff — and it can search the repo while doing so.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   adjudicate: { title: 'Referee', who: 'Opus (referee)', what: 'When the same failure repeats 3×, decide whether the test is wrong rather than the code. If so, rewrite the test and try again.', concept: 'routing', file: 'src/agentflow/agents/reviewer.py' },
   complete_task: { title: 'Commit + learn', who: 'Python', what: 'Commit code and test together, re-index the repo so later tasks can find the new code, and save useful review feedback as long-term lessons.', concept: 'memory', file: 'src/agentflow/graph/nodes.py' },
-  handle_failure: { title: 'Contain the failure', who: 'Python', what: 'Mark the task failed and skip only the tasks that depend on it — unrelated work keeps going.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
+  escalate: { title: 'Ask a human', who: 'You', what: 'A task ran out of budget. The run pauses with a dossier — attempts, recent failures, open reviewer requests, partial work — and you choose: retry with a hint, re-plan, skip, or stop.', concept: 'routing', file: 'src/agentflow/graph/escalation.py' },
+  replan: { title: 'Re-plan', who: 'Opus (orchestrator)', what: 'Rewrite only the not-yet-done tasks around the failure, using the dossier and your guidance. Completed tasks and their commits stay as they are.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
+  handle_failure: { title: 'Contain the failure', who: 'Python', what: 'Skip: mark the task failed and skip only the tasks that depend on it. Stop: mark everything left as not started and end the run.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   create_pr: { title: 'Open the PR', who: 'Python + Opus', what: 'Run the whole test suite once more, push the branch, write a description and open the pull request.', file: 'src/agentflow/graph/nodes.py' },
   notify: { title: 'Notify', who: 'Telegram', what: 'Tell a human it is done (or what failed).', file: 'src/agentflow/integrations/telegram.py' },
   finalize: { title: 'Clean up', who: 'Python', what: 'Delete the temporary clone. The graph ends.', file: 'src/agentflow/integrations/workspace.py' },
@@ -161,6 +163,14 @@ BUGS.push(
     lesson: 'Writing tests first does not mean writing them blind — the contract includes what must stay the same.',
     commit: 'test-first PR',
   },
+  {
+    id: 'notify-crash', title: 'A notification that failed the job',
+    symptom: 'During the first live escalation, the worker job that paused the run was marked failed with a ConnectError.',
+    cause: 'A transient network error reaching Telegram escaped from the notification call. The run itself had paused correctly, but the job failed and the human was never told.',
+    fix: 'Retry once, then log a warning; notification calls never raise.',
+    lesson: 'Side-channel calls (alerts, metrics) must not be able to fail the main work.',
+    commit: 'escalation PR',
+  },
 )
 
 export interface UseCase {
@@ -190,6 +200,7 @@ Events:       Issues`,
     id: 'telegram', title: 'Approve from your phone', who: 'The human in the loop',
     steps: [
       'When a run pauses, the worker sends the spec (or plan) with ✅ / ❌ buttons.',
+      'If a task runs out of budget, it sends the evidence with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop; /hint <thread> <guidance> retries with your guidance.',
       'A button press hits /webhooks/telegram, which enqueues a resume for exactly that checkpoint.',
       'Double-tapping is safe: the job id is derived from the checkpoint, so it resumes once.',
       'To reject with feedback, reply /reject <thread> <what to change>.',
@@ -254,7 +265,11 @@ export const INTERVIEW: { q: string; a: string }[] = [
   },
   {
     q: 'How do you stop an agent from looping forever?',
-    a: 'Separate budgets: coder crashes, gate failures, review rejections and reviewer malfunctions are counted independently. Repeated identical failures are detected and sent once to a referee that can decide the test is wrong. A failed task only takes down its dependents. The live run taught me the last one: an uncapped malfunction counter looped when the API ran out of credit.',
+    a: 'Separate budgets: coder crashes, gate failures, review rejections and reviewer malfunctions are counted independently. A failure that comes back a third time within recent attempts — in a row or alternating — goes once to a referee that can decide the test is wrong. When a budget is spent the run escalates: it pauses with an evidence dossier and a human chooses retry-with-hint, re-plan, skip or stop. Live runs taught me both the oscillation case and the uncapped reviewer-malfunction loop.',
+  },
+  {
+    q: 'What happens when the agent cannot finish a task?',
+    a: 'It stops and asks instead of guessing or silently dropping work. The dossier shows what was tried, the distinct failures, what the reviewer still wants, what written code exists and what would be blocked. Retry resets the budget and puts the human hint at the top of the coder prompt; re-plan rewrites only the remaining tasks; skip drops the task and its dependents; stop ends the run. Unattended mode keeps the skip behaviour, and per-task escalation and re-plan caps keep it bounded.',
   },
   {
     q: 'How do you know it works? How do you evaluate it?',

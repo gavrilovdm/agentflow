@@ -84,7 +84,7 @@ export function Concepts() {
               The workflow is a <Term t="LangGraph" /> graph: steps share one state object, and after every step a{' '}
               <Term t="checkpoint" /> is written to Postgres. That is what makes pausing cheap: at the spec and the plan
               a node calls <Term t="interrupt" />, the process can even exit, and a later approval resumes from the
-              exact snapshot.
+              exact snapshot. The same mechanism asks a human what to do when a task runs out of budget.
             </p>
           </>
         }
@@ -105,7 +105,8 @@ export function Concepts() {
             </p>
             <p>
               If the same failure comes back a third time within the last few attempts — in a row or alternating with another one — retrying is pointless; a referee agent decides whether the{' '}
-              <i>test</i> is the problem. A task that finally fails only takes down tasks that depend on it.
+              <i>test</i> is the problem. If the budget still runs out, the run <b>escalates</b>: it pauses with the
+              evidence and a human chooses retry-with-hint, re-plan, skip or stop.
             </p>
           </>
         }
@@ -433,7 +434,7 @@ function Slider({ label, value, max, onChange }: { label: string; value: number;
   )
 }
 
-const NEXT_COLOR: Record<string, string> = { complete_task: 'var(--ok)', run_coder: 'var(--coder)', adjudicate: 'var(--opus)', handle_failure: 'var(--bad)' }
+const NEXT_COLOR: Record<string, string> = { complete_task: 'var(--ok)', run_coder: 'var(--coder)', adjudicate: 'var(--opus)', escalate: 'var(--human)' }
 
 function RoutingWidget() {
   const b = DEFAULT_BUDGETS
