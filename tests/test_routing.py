@@ -72,3 +72,8 @@ def test_plan_validation_breaks_cycles_and_dangling_deps():
     tasks = validate_plan([t("a", ["b"]), t("b", ["a"]), t("c", ["zzz", "a"])])
     assert routing.next_runnable(tasks) is not None
     assert tasks[2].depends_on == ["a"]
+
+
+def test_reviewer_malfunctions_are_capped():
+    assert routing.after_review(state(t("a", reviewer_malfunctions=2)), CFG) == "run_coder"
+    assert routing.after_review(state(t("a", reviewer_malfunctions=3)), CFG) == "handle_failure"

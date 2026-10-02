@@ -36,6 +36,9 @@ class WorkflowConfig(BaseModel):
     max_coder_fix_attempts: int = 2
     max_review_cycles: int = 4
     max_gate_failures: int = 5
+    # Reviewer outages are not the task's fault, so they don't consume review cycles —
+    # but uncapped, an outage (or an exhausted API balance) loops coder→reviewer forever.
+    max_reviewer_malfunctions: int = 3
     enable_lint: bool = True
     # None = in-place mode: operate on a local directory, no clone, no PR.
     target_repo: TargetRepo | None = None

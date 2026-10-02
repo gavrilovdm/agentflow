@@ -43,7 +43,11 @@ def after_review(state: WorkflowState, config: WorkflowConfig) -> str:
     review = state.get("review_results", {}).get(task_id)
     if review and review.approved:
         return "complete_task"
-    if task.review_cycles >= config.max_review_cycles or task.gate_failures >= config.max_gate_failures:
+    if (
+        task.review_cycles >= config.max_review_cycles
+        or task.gate_failures >= config.max_gate_failures
+        or task.reviewer_malfunctions >= config.max_reviewer_malfunctions
+    ):
         return "handle_failure"
     # Repeating the same failure: remaining attempts would go the same way. Give the
     # referee one chance to spot an unsatisfiable test before writing the task off.

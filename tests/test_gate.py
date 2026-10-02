@@ -55,3 +55,24 @@ async def test_python_gate_end_to_end(tmp_path: Path):
     (tmp_path / "calc" / "__init__.py").write_text("def add(a: int, b: int) -> int:\n    return a + b\n")
     passed = await gate.run(tmp_path, ["tests/acceptance/test_add.py"], enable_lint=True)
     assert passed.passed, passed.summary
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
+async def test_python_gate_lints_only_task_files(tmp_path: Path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="calc"\nversion="0.1.0"\n[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+    )
+    (tmp_path / "calc").mkdir()
+    (tmp_path / "calc" / "__init__.py").write_text("")
+    (tmp_path / "calc" / "legacy.py").write_text("import os\n")  # pre-existing violation, not ours
+    (tmp_path / "calc" / "new.py").write_text("def f() -> int:\n    return 1\n")
+    (tmp_path / "tests" / "acceptance").mkdir(parents=True)
+    (tmp_path / "tests" / "acceptance" / "test_new.py").write_text(
+        "import sys\nfrom calc.new import f\n\n\ndef test_f():\n    assert f() == 1\n"  # unused import in generated test
+    )
+    gate = PythonGate()
+    scoped = await gate.run(tmp_path, ["tests/acceptance/test_new.py"], True, lint_paths=["calc/new.py"])
+    assert scoped.passed, scoped.summary
+    (tmp_path / "calc" / "new.py").write_text("import json\n\n\ndef f() -> int:\n    return 1\n")
+    dirty = await gate.run(tmp_path, ["tests/acceptance/test_new.py"], True, lint_paths=["calc/new.py"])
+    assert "Lint errors" in dirty.errors

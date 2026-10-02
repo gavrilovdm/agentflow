@@ -98,6 +98,7 @@ class Task(TaskDraft):
     status: TaskStatus = "pending"
     coder_fix_attempts: int = 0
     review_cycles: int = 0
+    reviewer_malfunctions: int = 0
     gate_failures: int = 0
 
 

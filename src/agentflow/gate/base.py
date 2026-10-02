@@ -17,6 +17,14 @@ from typing import Protocol
 from agentflow.schemas import GateResult
 
 ACCEPTANCE_TEST_DIR = "tests/acceptance"
+
+
+def lintable(workspace: Path, paths: list[str], suffixes: tuple[str, ...]) -> list[str]:
+    return [
+        p for p in paths if p.endswith(suffixes) and not p.startswith(ACCEPTANCE_TEST_DIR) and (workspace / p).exists()
+    ]
+
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -72,7 +80,13 @@ class Gate(Protocol):
         """Framework, import-path and mocking rules injected into the test generator."""
         ...
 
-    async def run(self, workspace: Path, test_paths: list[str] | None, enable_lint: bool) -> GateResult:
+    async def run(
+        self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None
+    ) -> GateResult:
         """Run the checks. `test_paths` scopes the run to this task's acceptance test
-        plus those of completed tasks (regression); None runs the whole suite."""
+        plus those of completed tasks (regression); None runs the whole suite.
+
+        `lint_paths` scopes lint to the files the task wrote. Linting the whole repo failed
+        tasks on pre-existing violations and on the generated acceptance test, neither of
+        which the coder is allowed to touch — the task could never pass."""
         ...

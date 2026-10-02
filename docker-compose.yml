@@ -22,6 +22,7 @@ services:
     environment:
       DATABASE_URL: postgresql://agentflow:agentflow@postgres:5432/agentflow
       REDIS_URL: redis://redis:6379
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}  # shell env wins over .env (e.g. GITHUB_TOKEN=$(gh auth token))
     ports: ["8000:8000"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -34,6 +35,7 @@ services:
     environment:
       DATABASE_URL: postgresql://agentflow:agentflow@postgres:5432/agentflow
       REDIS_URL: redis://redis:6379
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}  # shell env wins over .env (e.g. GITHUB_TOKEN=$(gh auth token))
     volumes: [workspaces:/tmp/agentflow]
     depends_on:
       postgres: { condition: service_healthy }

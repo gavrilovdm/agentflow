@@ -12,7 +12,8 @@ COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-install-project
 
 FROM base AS runtime
-RUN useradd --create-home --uid 10001 agentflow
+RUN useradd --create-home --uid 10001 agentflow \
+    && mkdir -p /tmp/agentflow && chown agentflow:agentflow /tmp/agentflow  # workspace volume mount point
 COPY --from=deps /app/.venv /app/.venv
 COPY src ./src
 COPY pyproject.toml uv.lock README.md ./

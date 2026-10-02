@@ -11,6 +11,7 @@ from pathlib import Path
 from agentflow.gate.base import (
     ACCEPTANCE_TEST_DIR,
     CommandResult,
+    lintable,
     run_command,
     summarize,
     tail,
@@ -91,7 +92,9 @@ class TypeScriptGate:
         stamp.write_text(digest)
         return None
 
-    async def run(self, workspace: Path, test_paths: list[str] | None, enable_lint: bool) -> GateResult:
+    async def run(
+        self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None
+    ) -> GateResult:
         install_error = await self._ensure_deps(workspace)
         (workspace / GATE_VITEST_CONFIG).write_text(
             'import { defineConfig } from "vitest/config";\n\n'
@@ -101,12 +104,13 @@ class TypeScriptGate:
         )
         test_args = ["npx", "vitest", "run", "--config", GATE_VITEST_CONFIG, "--reporter=verbose"]
         test_args += [os.path.normpath(p) for p in (test_paths or [])]
-        lint_on = enable_lint and _has_eslint(workspace)
+        targets = ["src"] if lint_paths is None else lintable(workspace, lint_paths, (".ts", ".tsx"))
+        lint_on = enable_lint and bool(targets) and _has_eslint(workspace)
 
         tsc, tests, lint = await asyncio.gather(
             run_command(["npx", "tsc", "--noEmit"], workspace),
             run_command(test_args, workspace),
-            run_command(["npx", "eslint", "src", "--max-warnings", "0"], workspace) if lint_on else _done(),
+            run_command(["npx", "eslint", *targets, "--max-warnings", "0"], workspace) if lint_on else _done(),
         )
         # TS18003 "No inputs were found": a scaffolding task has no sources yet. That is a
         # project-shape condition, not a defect, and wedged every run's first task.

@@ -212,11 +212,11 @@ async def run_review(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     regression = [tests[t.id] for t in state["tasks"] if t.status == "completed" and t.id in tests]
     test_paths = [own_test, *regression] if own_test else None
 
-    gate = await _gate(state).run(root, test_paths, cfg.enable_lint)
+    written = list(state["task_results"][task_id].written_files)
+    gate = await _gate(state).run(root, test_paths, cfg.enable_lint, lint_paths=written)
     if not gate.passed:
         cycle = ReviewCycle(verdict="failed", comments=gate.summary, change_requests=[gate.summary])
     else:
-        written = list(state["task_results"][task_id].written_files)
         diff = await asyncio.to_thread(ws.stage_and_diff, root, written)
         cycle = await reviewer.review_diff(
             task, spec, _read(root / own_test) if own_test else "", diff, runtime.context.retriever(state["repo_id"])
@@ -230,6 +230,7 @@ async def run_review(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         task_id,
         gate_failures=task.gate_failures + int(gate_failed),
         review_cycles=task.review_cycles + int(rejected),
+        reviewer_malfunctions=task.reviewer_malfunctions + int(cycle.reviewer_malfunction),
     )
 
     # An attempt failing exactly like the previous one is not converging; track it so
@@ -327,7 +328,8 @@ async def handle_failure(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     elif last and task:
         # Report the running totals across every pass, not just the last pass's cycles.
         reason = (
-            f"{last.verdict} after {task.gate_failures} gate failure(s) and {task.review_cycles} review cycle(s)"
+            f"{last.verdict} after {task.gate_failures} gate failure(s), {task.review_cycles} review cycle(s) "
+            f"and {task.reviewer_malfunctions} reviewer malfunction(s)"
             + (" — stalled, repeating the same failure" if stall and stall.repeats >= 2 else "")
             + f": {last.comments}"
         )

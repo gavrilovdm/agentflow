@@ -8,6 +8,7 @@ from pathlib import Path
 
 from agentflow.gate.base import (
     ACCEPTANCE_TEST_DIR,
+    lintable,
     run_command,
     summarize,
     tail,
@@ -77,12 +78,14 @@ class PythonGate:
         stamp.write_text(digest)
         return None
 
-    async def run(self, workspace: Path, test_paths: list[str] | None, enable_lint: bool) -> GateResult:
+    async def run(
+        self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None
+    ) -> GateResult:
         install_error = await self._ensure_env(workspace)
         bin_ = workspace / VENV / "bin"
 
         if _has_mypy_config(workspace):
-            types = await run_command([str(bin_ / "mypy"), "."], workspace)
+            types = await run_command([str(bin_ / "mypy"), ".", "--exclude", ACCEPTANCE_TEST_DIR], workspace)
             type_errors = (
                 []
                 if types.ok
@@ -102,8 +105,19 @@ class PythonGate:
         test_errors = [] if tests_ok else with_fallback(extract_pytest_failures(tests.output), tests.output)
 
         lint_errors: list[str] = []
-        if enable_lint:
-            lint = await run_command([str(bin_ / "ruff"), "check", "--output-format=concise", "."], workspace)
+        targets = ["."] if lint_paths is None else lintable(workspace, lint_paths, (".py",))
+        if enable_lint and targets:
+            lint = await run_command(
+                [
+                    str(bin_ / "ruff"),
+                    "check",
+                    "--output-format=concise",
+                    "--extend-exclude",
+                    ACCEPTANCE_TEST_DIR,
+                    *targets,
+                ],
+                workspace,
+            )
             lint_errors = [] if lint.ok else tail(lint.output)
 
         return summarize(

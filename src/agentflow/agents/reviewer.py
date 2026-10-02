@@ -9,9 +9,10 @@ structured `ReviewDecision`. A malformed or failed review is reported as a
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelCallLimitMiddleware, ModelRetryMiddleware
+from langchain.agents.middleware import ModelCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agentflow.config import get_settings
@@ -40,6 +41,16 @@ Answer "code" when the test faithfully reflects the task and the implementation 
 Prefer "code" unless the test clearly departs from the specification."""
 
 
+def _middleware(primary: str, fallback: str) -> list[Any]:
+    middleware: list[Any] = [
+        ModelCallLimitMiddleware(run_limit=8, exit_behavior="end"),
+        ModelRetryMiddleware(max_retries=2),
+    ]
+    if fallback and fallback != primary:
+        middleware.append(ModelFallbackMiddleware(chat_model(fallback)))
+    return middleware
+
+
 async def review_diff(
     task: Task, spec: Spec, test_content: str, diff: str, retriever: HybridRetriever | None
 ) -> ReviewCycle:
@@ -49,10 +60,7 @@ async def review_diff(
         tools=make_search_tools(retriever) if retriever else [],
         system_prompt=REVIEW_SYSTEM,
         response_format=ReviewDecision,
-        middleware=[
-            ModelCallLimitMiddleware(run_limit=8, exit_behavior="end"),  # type: ignore[list-item]
-            ModelRetryMiddleware(max_retries=2),
-        ],
+        middleware=_middleware(s.reviewer_model, s.fallback_model),
         name="reviewer",
     )
     prompt = (

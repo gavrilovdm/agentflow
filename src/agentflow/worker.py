@@ -36,10 +36,6 @@ async def _after(snap: RunSnapshot) -> dict[str, Any]:
     return snap.to_json()
 
 
-async def _on_event(event: dict[str, Any]) -> None:
-    log.info(event.get("message", ""), extra={"data": event})
-
-
 async def start_run_job(
     ctx: dict, prompt: str, config: dict, thread_id: str, issue_number: int | None = None, trigger: str = "api"
 ) -> dict:
@@ -51,14 +47,13 @@ async def start_run_job(
             WorkflowConfig.model_validate(config),
             thread_id=thread_id,
             issue_number=issue_number,
-            on_event=_on_event,
         )
     return await _after(snap)
 
 
 async def resume_run_job(ctx: dict, thread_id: str, approved: bool, feedback: str | None = None) -> dict:
     with JOB_SECONDS.labels("resume").time():
-        snap = await resume_run(ctx["persistence"], thread_id, approved, feedback, on_event=_on_event)
+        snap = await resume_run(ctx["persistence"], thread_id, approved, feedback)
     return await _after(snap)
 
 
