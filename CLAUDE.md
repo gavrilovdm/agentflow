@@ -18,7 +18,7 @@
 | `src/agentflow/gate/` | README "Gate per language" |
 | `src/agentflow/api/`, `worker.py`, `mcp_server.py` | README "As a service"; guide USE_CASES |
 | `evals/` | README "Evals" |
-| Real-run data in the guide | re-run `uv run python scripts/export_guide_data.py`; replay scenarios live in `guide/src/lib/scenarios.ts` |
+| Real-run data in the guide | re-run `uv run python scripts/export_guide_data.py`, then `cd guide && pnpm rag:index`; replay scenarios live in `guide/src/lib/scenarios.ts` |
 
 ## Conventions
 - Comments explain *why* (the failure a rule prevents), not what.

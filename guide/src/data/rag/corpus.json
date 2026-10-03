@@ -1,0 +1,1330 @@
+[
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 0,
+  "start": 1,
+  "end": 31,
+  "kind": "code",
+  "content": "\"\"\"Coder agent: a fresh tool-using agent per task attempt.\n\nBuilt with `create_agent` plus middleware for the production concerns the old\nhand-rolled loop handled ad hoc or not at all: a model-call ceiling (runaway tool\nloops), retries with backoff on transient API errors, and provider fallback.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport re\nfrom dataclasses import dataclass, field\nfrom pathlib import Path\nfrom typing import Any\n\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import (\n    ModelCallLimitMiddleware,\n    ModelFallbackMiddleware,\n    ModelRetryMiddleware,\n)\nfrom langchain_core.tools import BaseTool, tool\n\nfrom agentflow.config import get_settings\nfrom agentflow.gate import ACCEPTANCE_TEST_DIR\nfrom agentflow.integrations.workspace import PathEscapeError, resolve_in_workspace\nfrom agentflow.models import chat_model\nfrom agentflow.rag.retriever import HybridRetriever\nfrom agentflow.rag.tools import make_search_tools\nfrom agentflow.schemas import CoderResult, Spec, Task\n\nMAX_MODEL_CALLS = 25"
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 1,
+  "start": 31,
+  "end": 40,
+  "kind": "code",
+  "content": "MAX_MODEL_CALLS = 25\n\n# Scratch scripts the coder writes to poke at the project. Everything written is\n# committed, so these reached PRs and the reviewer burned cycles rejecting them.\n# Prompting against it did not hold; the tool refuses them and says why.\nSCRATCH_PATTERNS = [\n    re.compile(r\"\\.(sh|bash|zsh|bat|ps1)$\", re.I),\n    re.compile(r\"(^|/)(run|debug|check|scratch|tmp|temp)[-_][^/]*\\.(js|mjs|cjs|py)$\", re.I),\n    re.compile(r\"(^|/)(debug|scratch|tmp|temp)\\.[^/]+$\", re.I),\n]"
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 2,
+  "start": 43,
+  "end": 47,
+  "kind": "code",
+  "content": "def is_scratch_file(rel: str) -> bool:\n    return any(p.search(rel) for p in SCRATCH_PATTERNS)\n\n\n@dataclass"
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 3,
+  "start": 48,
+  "end": 56,
+  "kind": "code",
+  "content": "class CoderContext:\n    task: Task\n    spec: Spec\n    workspace: Path\n    language: str\n    test_content: str = \"\"\n    retrieved_context: str = \"\"\n    lessons: list[str] = field(default_factory=list)\n    human_hint: str | None = None"
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 4,
+  "start": 59,
+  "end": 82,
+  "kind": "code",
+  "content": "def build_file_tools(workspace: Path, written: dict[str, str]) -> list[BaseTool]:\n    @tool\n    def write_file(file_path: str, content: str) -> str:\n        \"\"\"Write full content to a file (relative to the repo root). Creates parent directories.\"\"\"\n        try:\n            abs_path, rel = resolve_in_workspace(workspace, file_path)\n        except PathEscapeError as exc:\n            return str(exc)\n        # The acceptance test grades this task; letting the coder rewrite it would make\n        # the gate measure nothing. Unit tests elsewhere are fine.\n        if rel.startswith(ACCEPTANCE_TEST_DIR):\n            return (\n                f'Refusing to write \"{rel}\": {ACCEPTANCE_TEST_DIR} holds the acceptance tests this task is '\n                \"graded against. Put unit tests elsewhere under tests/.\"\n            )\n        if is_scratch_file(rel):\n            return (\n                f'Refusing to write \"{rel}\": helper/debug scripts get committed with everything else. '\n                \"Write only the source and test files the task calls for.\"\n            )\n        abs_path.parent.mkdir(parents=True, exist_ok=True)\n        abs_path.write_text(content)\n        written[rel] = content\n        return f\"Written: {rel}\""
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 5,
+  "start": 84,
+  "end": 105,
+  "kind": "code",
+  "content": "@tool\n    def read_file(file_path: str) -> str:\n        \"\"\"Read an existing file (relative to the repo root) before modifying it.\"\"\"\n        try:\n            abs_path, _ = resolve_in_workspace(workspace, file_path)\n            return abs_path.read_text()\n        except (PathEscapeError, OSError):\n            return f\"File not found: {file_path}\"\n\n    @tool\n    def list_dir(directory: str = \".\") -> str:\n        \"\"\"List files in a directory (relative to the repo root).\"\"\"\n        try:\n            abs_path, _ = resolve_in_workspace(workspace, directory) if directory not in (\"\", \".\") else (workspace, \".\")\n        except PathEscapeError as exc:\n            return str(exc)\n        if not abs_path.is_dir():\n            return f\"Not a directory: {directory}\"\n        skip = {\".git\", \".venv\", \"node_modules\", \"__pycache__\"}\n        return \"\\n\".join(sorted(p.name + (\"/\" if p.is_dir() else \"\") for p in abs_path.iterdir() if p.name not in skip))\n\n    return [write_file, read_file, list_dir]"
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 6,
+  "start": 108,
+  "end": 135,
+  "kind": "code",
+  "content": "def system_prompt(ctx: CoderContext) -> str:\n    sections = [\n        f\"You are an expert {ctx.language} developer implementing one task of a larger plan.\",\n        f\"## Specification (read-only)\\n**Goal:** {ctx.spec.goal}\\n**Technical notes:** {ctx.spec.technical_notes}\",\n        f\"## Your task\\n**Title:** {ctx.task.title}\\n**Description:** {ctx.task.description}\\n\"\n        f\"**Target files:** {', '.join(ctx.task.target_files)}\\n**Definition of Done:** {ctx.task.definition_of_done}\"\n        + (\n            f\"\\n**Interface (binding — implement exactly these names and signatures):**\\n{ctx.task.interface}\"\n            if ctx.task.interface\n            else \"\"\n        ),\n    ]\n    if ctx.test_content:\n        sections.append(\n            f\"## Acceptance test for this task\\n```\\n{ctx.test_content}\\n```\\n\"\n            \"It was written against the Definition of Done. Make it pass.\"\n        )\n    if ctx.human_hint:\n        sections.append(\n            \"## Guidance from a human (takes priority)\\n\"\n            f\"This task ran out of attempts before and a human reviewed it. Their guidance:\\n{ctx.human_hint}\"\n        )\n    if ctx.lessons:\n        sections.append(\"## Lessons from past reviews of this repository\\n\" + \"\\n\".join(f\"- {x}\" for x in ctx.lessons))\n    if ctx.retrieved_context:\n        sections.append(f\"## Retrieved repository context\\n{ctx.retrieved_context}\")\n    sections.append(\n        \"## Instructions\\n\""
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 7,
+  "start": 133,
+  "end": 143,
+  "kind": "code",
+  "content": "sections.append(f\"## Retrieved repository context\\n{ctx.retrieved_context}\")\n    sections.append(\n        \"## Instructions\\n\"\n        \"1. Use search_codebase / search_docs to find existing code and conventions before writing new code\\n\"\n        \"2. Reuse the names and signatures that existing code and the task already use — later tasks depend on them\\n\"\n        \"3. Write each required file with write_file (full content)\\n\"\n        \"4. Do NOT modify acceptance tests; do NOT add features beyond the task\\n\"\n        \"5. No scratch, debug or helper scripts — everything you write is committed\\n\"\n        \"6. When done, reply with the list of files you wrote\"\n    )\n    return \"\\n\\n\".join(sections)"
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 8,
+  "start": 146,
+  "end": 158,
+  "kind": "code",
+  "content": "async def run_coder(ctx: CoderContext, retriever: HybridRetriever | None, feedback: str | None = None) -> CoderResult:\n    s = get_settings()\n    written: dict[str, str] = {}\n    tools = build_file_tools(ctx.workspace, written)\n    if retriever is not None:\n        tools += make_search_tools(retriever)\n\n    middleware: list[Any] = [\n        ModelCallLimitMiddleware(run_limit=MAX_MODEL_CALLS, exit_behavior=\"end\"),\n        ModelRetryMiddleware(max_retries=2),\n    ]\n    if s.fallback_model and s.fallback_model != s.coder_model:\n        middleware.append(ModelFallbackMiddleware(chat_model(s.fallback_model, temperature=0.1)))"
+ },
+ {
+  "path": "agentflow/agents/coder.py",
+  "index": 9,
+  "start": 160,
+  "end": 181,
+  "kind": "code",
+  "content": "agent = create_agent(\n        chat_model(s.coder_model, temperature=0.1),\n        tools=tools,\n        system_prompt=system_prompt(ctx),\n        middleware=middleware,\n        name=\"coder\",\n    )\n    user = (\n        f\"The previous attempt was rejected. Fix these problems and rewrite the affected files:\\n\\n{feedback}\"\n        if feedback\n        else \"Implement the task. Start with the main implementation file.\"\n    )\n    try:\n        await agent.ainvoke(\n            {\"messages\": [{\"role\": \"user\", \"content\": user}]},\n            config={\"tags\": [\"coder\", f\"task:{ctx.task.id}\"], \"recursion_limit\": MAX_MODEL_CALLS * 3},\n        )\n    except Exception as exc:  # noqa: BLE001 — an agent crash is a failed attempt, not a dead run\n        return CoderResult(task_id=ctx.task.id, success=False, written_files=written, error=str(exc)[:2000])\n    if not written:\n        return CoderResult(task_id=ctx.task.id, success=False, error=\"Coder wrote no files\")\n    return CoderResult(task_id=ctx.task.id, success=True, written_files=written)"
+ },
+ {
+  "path": "agentflow/agents/orchestrator.py",
+  "index": 0,
+  "start": 1,
+  "end": 32,
+  "kind": "code",
+  "content": "\"\"\"Orchestrator: turns a request into a spec, then a dependency-ordered task plan.\n\nBoth calls are structured outputs (Pydantic schemas → forced tool call) with a\nmodel fallback chain. Planning is grounded in retrieved repository context, which\nreplaces the old \"LLM reads project-map.md and guesses which files matter\" step.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nimport uuid\n\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nfrom agentflow.config import get_settings\nfrom agentflow.models import structured\nfrom agentflow.schemas import Spec, SpecDraft, Task, TaskPlan\n\nlog = logging.getLogger(__name__)\n\nSPEC_SYSTEM = \"\"\"You are a senior software architect. Create a precise, unambiguous development\nspecification from the user's request.\n\nRules:\n- Acceptance criteria must be testable (\"responds in <200ms\", not \"should be fast\")\n- Constraints name the actual tech stack, matching what the repository already uses\n- technical_notes reference existing modules, functions and patterns from the repository context\n- out_of_scope lists anything a developer might reasonably assume is included but isn't\n- A developer must be able to start coding with no follow-up questions.\"\"\"\n\nTASKS_SYSTEM = \"\"\"You are a senior software architect breaking an approved spec into an ordered task list."
+ },
+ {
+  "path": "agentflow/agents/orchestrator.py",
+  "index": 1,
+  "start": 32,
+  "end": 52,
+  "kind": "code",
+  "content": "TASKS_SYSTEM = \"\"\"You are a senior software architect breaking an approved spec into an ordered task list.\n\nRules:\n- Each task is small enough for one focused coding session and independently testable\n- depends_on lists only IDs from THIS list that must finish first\n- target_files lists the exact files to create or modify, consistent with the repository layout\n- definition_of_done is specific: \"function X returns Y given Z\", not \"feature works\"\n- Foundational types/interfaces come before their consumers\n- interface is mandatory and binding: the exact module path, function/class signatures with types,\n  return values and exceptions this task exposes. Tests are written against it BEFORE the code,\n  so reuse names from the spec and the repository and never leave a name for the coder to choose\n- Do not create separate \"write tests\" tasks: every task automatically gets its own acceptance test,\n  written before its code. Tests belong to the task whose behaviour they check\n- ID format: task-<slug>, e.g. task-add-auth-middleware\"\"\"\n\n\nSPEC_ATTEMPTS = 2\nLIST_FIELDS_HINT = HumanMessage(\n    \"Your previous answer did not match the schema. constraints, acceptance_criteria and out_of_scope must be \"\n    \"JSON arrays with one item per entry, and acceptance_criteria needs at least two separate testable statements.\"\n)"
+ },
+ {
+  "path": "agentflow/agents/orchestrator.py",
+  "index": 2,
+  "start": 55,
+  "end": 60,
+  "kind": "code",
+  "content": "def _revision_message(label: str, previous: object, feedback: str) -> HumanMessage:\n    return HumanMessage(\n        f\"## Previous {label} (rejected by reviewer)\\n\\n```json\\n{json.dumps(previous, indent=2)}\\n```\\n\\n\"\n        f\"## Reviewer feedback\\n\\n{feedback}\\n\\n\"\n        f\"Revise the {label} to address this feedback. Keep everything the feedback doesn't ask to change.\"\n    )"
+ },
+ {
+  "path": "agentflow/agents/orchestrator.py",
+  "index": 3,
+  "start": 63,
+  "end": 94,
+  "kind": "code",
+  "content": "async def generate_spec(\n    prompt: str, repo_context: str, previous: Spec | None = None, feedback: str | None = None\n) -> Spec:\n    messages = [\n        SystemMessage(SPEC_SYSTEM),\n        HumanMessage(\n            (f\"## Relevant repository context\\n\\n{repo_context}\" if repo_context else \"## Repository\\n\\nEmpty.\")\n            + f\"\\n\\n## User request\\n\\n{prompt}\"\n        ),\n    ]\n    if previous and feedback:\n        messages.append(_revision_message(\"spec\", previous.model_dump(), feedback))\n    s = get_settings()\n    runnable = structured(s.orchestrator_model, SpecDraft)\n    draft: SpecDraft | None = None\n    for attempt in range(SPEC_ATTEMPTS):\n        try:\n            draft = await runnable.ainvoke(\n                messages if attempt == 0 else [*messages, LIST_FIELDS_HINT],\n                config={\"tags\": [\"orchestrator\", \"spec\"]},\n            )\n            break\n        except Exception as exc:  # noqa: BLE001 — schema violations surface as several exception types\n            if attempt == SPEC_ATTEMPTS - 1:\n                raise\n            log.warning(\"spec rejected by schema (attempt %s): %s\", attempt + 1, str(exc)[:200])\n    assert draft is not None\n    return Spec(\n        id=previous.id if previous else f\"spec-{uuid.uuid4().hex[:8]}\",\n        version=(previous.version + 1) if previous else 1,\n        **draft.model_dump(),\n    )"
+ },
+ {
+  "path": "agentflow/agents/orchestrator.py",
+  "index": 4,
+  "start": 97,
+  "end": 120,
+  "kind": "code",
+  "content": "async def generate_tasks(\n    spec: Spec, repo_context: str, previous: list[Task] | None = None, feedback: str | None = None\n) -> list[Task]:\n    messages = [\n        SystemMessage(TASKS_SYSTEM),\n        HumanMessage(\n            f\"## Approved specification\\n\\n```json\\n{spec.model_dump_json(indent=2)}\\n```\\n\\n\"\n            + (f\"## Repository context\\n\\n{repo_context}\" if repo_context else \"\")\n        ),\n    ]\n    if previous and feedback:\n        messages.append(_revision_message(\"task list\", [t.model_dump() for t in previous], feedback))\n    s = get_settings()\n    plan: TaskPlan = await structured(s.orchestrator_model, TaskPlan).ainvoke(\n        messages, config={\"tags\": [\"orchestrator\", \"tasks\"]}\n    )\n    return validate_plan([Task(**t.model_dump()) for t in plan.tasks])\n\n\nREPLAN_SYSTEM = \"\"\"You are a senior software architect revising a plan after a task failed.\n\nYou get the spec, the tasks already completed (their code is committed and must not be redone),\nthe task that failed with the evidence of why, any human guidance, and the tasks still pending.\nReturn ONLY the tasks still to do — a replacement for the failed and pending tasks."
+ },
+ {
+  "path": "agentflow/agents/orchestrator.py",
+  "index": 5,
+  "start": 122,
+  "end": 128,
+  "kind": "code",
+  "content": "Rules:\n- Address the cause of the failure: split the failed task, change its approach or interface, add a\n  missing prerequisite, or drop it if the spec can be met without it. Follow the human guidance.\n- Every task follows the same rules as the original plan: small, independently testable, binding\n  interface, specific definition_of_done, no separate \"write tests\" tasks.\n- depends_on may reference completed task ids and ids in your new list only.\n- Use fresh ids (task-<slug>) — never reuse the id of the failed task.\"\"\""
+ },
+ {
+  "path": "agentflow/agents/orchestrator.py",
+  "index": 6,
+  "start": 131,
+  "end": 155,
+  "kind": "code",
+  "content": "async def replan_tasks(\n    spec: Spec,\n    completed: list[Task],\n    failed: Task,\n    remaining: list[Task],\n    dossier: dict,\n    hint: str | None,\n    repo_context: str,\n) -> list[Task]:\n    messages = [\n        SystemMessage(REPLAN_SYSTEM),\n        HumanMessage(\n            f\"## Specification\\n```json\\n{spec.model_dump_json(indent=2)}\\n```\\n\\n\"\n            f\"## Completed tasks\\n```json\\n{json.dumps([t.model_dump() for t in completed], indent=2)}\\n```\\n\\n\"\n            f\"## Failed task\\n```json\\n{failed.model_dump_json(indent=2)}\\n```\\n\\n\"\n            f\"## Why it failed\\n```json\\n{json.dumps(dossier, indent=2, default=str)}\\n```\\n\\n\"\n            f\"## Still pending\\n```json\\n{json.dumps([t.model_dump() for t in remaining], indent=2)}\\n```\\n\\n\"\n            + (f\"## Human guidance\\n{hint}\\n\\n\" if hint else \"\")\n            + (f\"## Repository context\\n{repo_context}\" if repo_context else \"\")\n        ),\n    ]\n    plan: TaskPlan = await structured(get_settings().orchestrator_model, TaskPlan).ainvoke(\n        messages, config={\"tags\": [\"orchestrator\", \"replan\"]}\n    )\n    return [Task(**t.model_dump()) for t in plan.tasks]"
+ },
+ {
+  "path": "agentflow/agents/orchestrator.py",
+  "index": 7,
+  "start": 158,
+  "end": 173,
+  "kind": "code",
+  "content": "def validate_plan(tasks: list[Task]) -> list[Task]:\n    \"\"\"Drop dangling dependencies and break cycles, so the scheduler can never deadlock\n    on a plan the model got slightly wrong. Cycles are broken by dropping the in-cycle\n    edges of the earliest stuck task in plan order; downstream edges are kept.\"\"\"\n    ids = {t.id for t in tasks}\n    for t in tasks:\n        t.depends_on = list(dict.fromkeys(d for d in t.depends_on if d in ids and d != t.id))\n    done: set[str] = set()\n    while len(done) < len(tasks):\n        ready = [t for t in tasks if t.id not in done and all(d in done for d in t.depends_on)]\n        if ready:\n            done.update(t.id for t in ready)\n            continue\n        stuck = next(t for t in tasks if t.id not in done)\n        stuck.depends_on = [d for d in stuck.depends_on if d in done]\n    return tasks"
+ },
+ {
+  "path": "agentflow/agents/reviewer.py",
+  "index": 0,
+  "start": 1,
+  "end": 28,
+  "kind": "code",
+  "content": "\"\"\"Reviewer and referee.\n\nThe reviewer is an agent, not a single prompt: it can search the codebase to check\na diff against existing conventions and call sites, and it must finish with a\nstructured `ReviewDecision`. A malformed or failed review is reported as a\n*malfunction* cycle, which the graph does not charge to the task's budget.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom typing import Any\n\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import ModelCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware\nfrom langchain_core.language_models import BaseChatModel\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nfrom agentflow.config import get_settings\nfrom agentflow.models import chat_model, structured\nfrom agentflow.rag.retriever import HybridRetriever\nfrom agentflow.rag.tools import make_search_tools\nfrom agentflow.schemas import FailureRuling, ReviewCycle, ReviewDecision, Spec, Task\n\nlog = logging.getLogger(__name__)\n\nREVIEW_SYSTEM = \"\"\"You are a senior code reviewer. Review the diff against the spec, the task's\nDefinition of Done and the acceptance test. The automated gate (types, tests, lint) has ALREADY passed."
+ },
+ {
+  "path": "agentflow/agents/reviewer.py",
+  "index": 1,
+  "start": 30,
+  "end": 45,
+  "kind": "code",
+  "content": "Approve if the change does what the task asks, is consistent with existing code, and has no real bugs.\nRequest changes only for incorrect logic, missing required behaviour, or clear violations of the\nspec or the repository's conventions — not for style preferences.\nYou may use search_codebase to check how the changed code fits existing modules.\nEach change request must name the file and the exact fix needed.\"\"\"\n\nREFEREE_SYSTEM = \"\"\"You settle a deadlock between a test and an implementation. The same failure has\nrepeated several times, so one of the two is wrong in a way the coder cannot fix by trying again.\n\nAnswer \"test\" when the test contradicts the task or spec — it calls a function the spec never defines,\nuses a different name for an entity, or asserts out-of-scope behaviour. Such a test is unsatisfiable.\nAnswer \"code\" when the test faithfully reflects the task and the implementation simply falls short.\nIf the failures alternate — the test fails, and the change that makes it pass is rejected by the\nreviewer for breaking the task's scope or an existing API — the test demands something the task\nforbids: answer \"test\" and say what it should assert instead.\nPrefer \"code\" unless the test clearly departs from the specification.\"\"\""
+ },
+ {
+  "path": "agentflow/agents/reviewer.py",
+  "index": 2,
+  "start": 48,
+  "end": 53,
+  "kind": "code",
+  "content": "def reviewer_chat_model(name: str) -> BaseChatModel:\n    \"\"\"The reviewer must end with a structured ReviewDecision, which the agent obtains by\n    forcing a tool call. DeepSeek's thinking mode rejects a forced tool_choice, so it is\n    disabled here — for the primary model *and* the fallback. Building the fallback without\n    it made every review fail (400) the moment the Opus proxy got rate-limited.\"\"\"\n    return chat_model(name, forces_tool_choice=True)"
+ },
+ {
+  "path": "agentflow/agents/reviewer.py",
+  "index": 3,
+  "start": 56,
+  "end": 63,
+  "kind": "code",
+  "content": "def _middleware(primary: str, fallback: str) -> list[Any]:\n    middleware: list[Any] = [\n        ModelCallLimitMiddleware(run_limit=8, exit_behavior=\"end\"),\n        ModelRetryMiddleware(max_retries=2),\n    ]\n    if fallback and fallback != primary:\n        middleware.append(ModelFallbackMiddleware(reviewer_chat_model(fallback)))\n    return middleware"
+ },
+ {
+  "path": "agentflow/agents/reviewer.py",
+  "index": 4,
+  "start": 66,
+  "end": 96,
+  "kind": "code",
+  "content": "async def review_diff(\n    task: Task, spec: Spec, test_content: str, diff: str, retriever: HybridRetriever | None\n) -> ReviewCycle:\n    s = get_settings()\n    agent = create_agent(\n        reviewer_chat_model(s.reviewer_model),\n        tools=make_search_tools(retriever) if retriever else [],\n        system_prompt=REVIEW_SYSTEM,\n        response_format=ReviewDecision,\n        middleware=_middleware(s.reviewer_model, s.fallback_model),\n        name=\"reviewer\",\n    )\n    prompt = (\n        f\"## Spec: {spec.title}\\n**Goal:** {spec.goal}\\n\\n\"\n        f\"## Task: {task.title}\\n{task.description}\\n\\n**Definition of Done:** {task.definition_of_done}\\n\\n\"\n        f\"## Acceptance test\\n```\\n{test_content}\\n```\\n\\n\"\n        f\"## Diff\\n```diff\\n{diff or '(no changes staged)'}\\n```\"\n    )\n    try:\n        result = await agent.ainvoke(\n            {\"messages\": [{\"role\": \"user\", \"content\": prompt}]},\n            config={\"tags\": [\"reviewer\", f\"task:{task.id}\"]},\n        )\n        decision: ReviewDecision | None = result.get(\"structured_response\")\n        if decision is None:\n            raise ValueError(\"reviewer finished without a structured decision\")\n    except Exception as exc:  # noqa: BLE001\n        # One reviewer's bad response is not a reason to destroy a run holding committed work.\n        reason = str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__\n        log.warning(\"reviewer malfunction on %s: %s\", task.id, reason)\n        return ReviewCycle("
+ },
+ {
+  "path": "agentflow/agents/reviewer.py",
+  "index": 5,
+  "start": 95,
+  "end": 104,
+  "kind": "code",
+  "content": "log.warning(\"reviewer malfunction on %s: %s\", task.id, reason)\n        return ReviewCycle(\n            verdict=\"changes_requested\",\n            comments=f\"The reviewer could not produce a usable verdict: {reason}\",\n            diff=diff,\n            reviewer_malfunction=True,\n        )\n    return ReviewCycle(\n        verdict=decision.verdict, comments=decision.summary, change_requests=decision.change_requests, diff=diff\n    )"
+ },
+ {
+  "path": "agentflow/agents/reviewer.py",
+  "index": 6,
+  "start": 107,
+  "end": 120,
+  "kind": "code",
+  "content": "async def adjudicate(task: Task, spec: Spec, test_content: str, failure: str) -> FailureRuling:\n    runnable = structured(get_settings().reviewer_model, FailureRuling)\n    return await runnable.ainvoke(\n        [\n            SystemMessage(REFEREE_SYSTEM),\n            HumanMessage(\n                f\"## Specification\\n**Goal:** {spec.goal}\\n**Technical notes:** {spec.technical_notes}\\n\\n\"\n                f\"## Task\\n**Title:** {task.title}\\n**Description:** {task.description}\\n\"\n                f\"**Definition of Done:** {task.definition_of_done}\\n\\n\"\n                f\"## Test\\n```\\n{test_content}\\n```\\n\\n## Recent failures (oldest first)\\n```\\n{failure[:2000]}\\n```\"\n            ),\n        ],\n        config={\"tags\": [\"referee\", f\"task:{task.id}\"]},\n    )"
+ },
+ {
+  "path": "agentflow/agents/test_generator.py",
+  "index": 0,
+  "start": 1,
+  "end": 34,
+  "kind": "code",
+  "content": "\"\"\"Acceptance-test generator — contract-first: each task's test is written before its code.\n\nTests written first used to deadlock: the generator had to invent names it could not see\n(`addNote` where the spec said `add`). Each task now carries a binding `interface` from the\nplan, so the test uses exactly the names the coder must implement. Assertions come from the\nDefinition of Done; the current code of the files being changed is shown so untouched\nbehaviour is not asserted away.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom pathlib import Path\n\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nfrom agentflow.config import get_settings\nfrom agentflow.gate import ACCEPTANCE_TEST_DIR, Gate\nfrom agentflow.models import structured\nfrom agentflow.schemas import GeneratedTest, Spec, Task\n\nlog = logging.getLogger(__name__)\nATTEMPTS = 3\n\nSYSTEM = \"\"\"You are a senior test engineer writing the acceptance test for a task BEFORE it is implemented.\n\nThe test is the contract the coder will implement against. Derive every assertion from the task's\nDefinition of Done and the spec. Import and call ONLY the names, modules and signatures given in the\ntask's Interface — never invent others, because the coder will implement exactly that interface.\nThe test must fail now (the code does not exist yet) and pass once the task is done correctly; a test\nthat would already pass is worthless.\n\n## Framework rules\n{rules}\"\"\""
+ },
+ {
+  "path": "agentflow/agents/test_generator.py",
+  "index": 1,
+  "start": 33,
+  "end": 55,
+  "kind": "code",
+  "content": "## Framework rules\n{rules}\"\"\"\n\n# Emitting a whole source file inside a JSON tool argument is the most fragile step in the\n# pipeline: one bad escape makes the call unparseable. Retry with an explicit hint.\nRETRY_HINT = HumanMessage(\n    \"Your previous response could not be parsed. Emit the tool call again and be strict about JSON \"\n    'escaping inside \"content\": backslashes as \\\\\\\\, newlines as \\\\n.'\n)\n\n\nasync def generate_test(\n    task: Task,\n    spec: Spec,\n    gate: Gate,\n    workspace: Path,\n    *,\n    existing_files: dict[str, str] | None = None,\n    previous_test: str | None = None,\n    ruling: str | None = None,\n    attempted_code: dict[str, str] | None = None,\n) -> str:\n    \"\"\"Write the acceptance test into the workspace (before the code); returns its path."
+ },
+ {
+  "path": "agentflow/agents/test_generator.py",
+  "index": 2,
+  "start": 57,
+  "end": 80,
+  "kind": "code",
+  "content": "`existing_files`: current code of the files the task changes — behaviour to preserve.\n    `previous_test` + `ruling`: a rewrite requested by the red check or the referee.\n    `attempted_code`: what the coder wrote against the previous test (referee rewrites only);\n    shown as evidence, never as the specification.\n    \"\"\"\n    files = \"\\n\\n\".join(f\"### {p}\\n```\\n{c}\\n```\" for p, c in (attempted_code or {}).items())\n    body = (\n        f\"## Specification\\n**Title:** {spec.title}\\n**Goal:** {spec.goal}\\n**Acceptance criteria:**\\n\"\n        + \"\\n\".join(f\"- {c}\" for c in spec.acceptance_criteria)\n        + f\"\\n\\n## Task\\n**ID:** {task.id}\\n**Title:** {task.title}\\n**Description:** {task.description}\\n\"\n        f\"**Target files:** {', '.join(task.target_files)}\\n**Definition of Done:** {task.definition_of_done}\\n\"\n        + (f\"**Interface (binding):**\\n{task.interface}\\n\" if task.interface else \"\")\n        + \"\\n\"\n        + (\n            \"## Current code of the files this task changes\\n\"\n            \"Existing behaviour shown here must stay as it is unless the task says otherwise; never assert a \"\n            \"different return value or signature for an API the task does not change.\\n\\n\"\n            + \"\\n\\n\".join(f\"### {p}\\n```\\n{c}\\n```\" for p, c in existing_files.items())\n            + \"\\n\\n\"\n            if existing_files\n            else \"\"\n        )\n        + (\n            \"## Code the coder wrote against the previous test\\n\""
+ },
+ {
+  "path": "agentflow/agents/test_generator.py",
+  "index": 3,
+  "start": 76,
+  "end": 94,
+  "kind": "code",
+  "content": "if existing_files\n            else \"\"\n        )\n        + (\n            \"## Code the coder wrote against the previous test\\n\"\n            \"Evidence only — it may be wrong. Assert what the Definition of Done requires.\\n\\n\"\n            f\"{files}\\n\\n\"\n            if files\n            else \"\"\n        )\n        + (\n            f\"## Rewrite required\\nThe previous test was judged incorrect:\\n{ruling}\\n\\n\"\n            f\"Previous test:\\n```\\n{previous_test}\\n```\\n\"\n            if ruling\n            else \"\"\n        )\n    )\n    messages = [SystemMessage(SYSTEM.format(rules=gate.test_prompt_rules())), HumanMessage(body)]\n    runnable = structured(get_settings().test_generator_model, GeneratedTest)"
+ },
+ {
+  "path": "agentflow/agents/test_generator.py",
+  "index": 4,
+  "start": 96,
+  "end": 118,
+  "kind": "code",
+  "content": "last_error: Exception | None = None\n    for attempt in range(1, ATTEMPTS + 1):\n        try:\n            result: GeneratedTest = await runnable.ainvoke(\n                messages if attempt == 1 else [*messages, RETRY_HINT],\n                config={\"tags\": [\"test-generator\", f\"task:{task.id}\"]},\n            )\n            break\n        except Exception as exc:  # noqa: BLE001 — parse errors surface as many types\n            last_error = exc\n            log.warning(\"test generation for %s failed (%s/%s): %s\", task.id, attempt, ATTEMPTS, exc)\n    else:\n        raise RuntimeError(f\"test generation failed for {task.id}\") from last_error\n\n    name = Path(result.file_name).name\n    if not name.endswith(gate.test_file_suffix):\n        name = Path(name).stem.split(\".\")[0] + gate.test_file_suffix\n    if gate.language == \"python\" and not name.startswith(\"test_\"):\n        name = \"test_\" + name\n    rel = f\"{ACCEPTANCE_TEST_DIR}/{name}\"\n    (workspace / rel).parent.mkdir(parents=True, exist_ok=True)\n    (workspace / rel).write_text(result.content)\n    return rel"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 0,
+  "start": 1,
+  "end": 39,
+  "kind": "code",
+  "content": "\"\"\"REST API + webhooks. Event-driven: every write endpoint only enqueues a job.\"\"\"\n\nfrom __future__ import annotations\n\nimport contextlib\nimport logging\nimport uuid\nfrom collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\nfrom typing import Annotated, Any\n\nfrom arq import create_pool\nfrom arq.connections import RedisSettings\nfrom fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response\nfrom fastapi.middleware.cors import CORSMiddleware\nfrom prometheus_client import CONTENT_TYPE_LATEST, generate_latest\nfrom pydantic import BaseModel, Field, ValidationError\n\nfrom agentflow.config import TargetRepo, WorkflowConfig, get_settings\nfrom agentflow.integrations import github, telegram\nfrom agentflow.observability import APPROVALS, HTTP_REQUESTS, setup_logging\nfrom agentflow.rag.embeddings import get_embeddings\nfrom agentflow.rag.retriever import rrf_merge\nfrom agentflow.rag.store import Hit\nfrom agentflow.runner import open_persistence, snapshot, validate_decision\nfrom agentflow.schemas import FailureAction\n\nlog = logging.getLogger(\"agentflow.api\")\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI) -> AsyncIterator[None]:\n    setup_logging()\n    s = get_settings()\n    app.state.queue = await create_pool(RedisSettings.from_dsn(s.redis_url))\n    async with open_persistence() as p:\n        app.state.persistence = p\n        yield\n    await app.state.queue.aclose()"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 1,
+  "start": 42,
+  "end": 56,
+  "kind": "code",
+  "content": "app = FastAPI(title=\"agentflow\", version=\"0.1.0\", lifespan=lifespan)\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=[o.strip() for o in get_settings().cors_origins.split(\",\") if o.strip()],\n    allow_methods=[\"GET\", \"POST\"],\n    allow_headers=[\"*\"],\n)\n\n\n@app.middleware(\"http\")\nasync def count_requests(request: Request, call_next):\n    response = await call_next(request)\n    route = request.scope.get(\"route\")\n    HTTP_REQUESTS.labels(getattr(route, \"path\", \"unmatched\"), response.status_code).inc()\n    return response"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 2,
+  "start": 59,
+  "end": 65,
+  "kind": "code",
+  "content": "def require_token(authorization: Annotated[str | None, Header()] = None) -> None:\n    token = get_settings().api_token\n    if token and authorization != f\"Bearer {token}\":\n        raise HTTPException(401, \"invalid or missing bearer token\")\n\n\nAuth = Depends(require_token)"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 3,
+  "start": 68,
+  "end": 87,
+  "kind": "code",
+  "content": "class StartRun(BaseModel):\n    prompt: str = Field(min_length=3)\n    repo: str | None = Field(default=None, description=\"owner/name; omit for in-place mode on local_path\")\n    base_branch: str = \"main\"\n    local_path: str | None = None\n    max_review_cycles: int = 4\n    max_gate_failures: int = 5\n    enable_lint: bool = True\n\n\nclass Approval(BaseModel):\n    approved: bool\n    feedback: str | None = None\n\n\nclass Decision(BaseModel):\n    \"\"\"Answer to a task that ran out of budget (the run is paused at `task_failed`).\"\"\"\n\n    action: FailureAction\n    hint: str | None = None"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 4,
+  "start": 90,
+  "end": 110,
+  "kind": "code",
+  "content": "class ResumeRejected(Exception):\n    def __init__(self, status: int, detail: str):\n        self.status, self.detail = status, detail\n\n\nasync def _enqueue_resume(request: Request, thread_id: str, decision: dict[str, Any], channel: str = \"api\") -> None:\n    \"\"\"Queue a resume for the checkpoint the run is paused at, after checking the decision\n    fits the question being asked. The job id is derived from that checkpoint, so a\n    double-clicked button (or API + Telegram racing) resumes once.\"\"\"\n    snap = await snapshot(request.app.state.persistence.graph, thread_id)\n    if snap.interrupt is None:\n        raise ResumeRejected(409, f\"run is not waiting for a decision (status: {snap.status})\")\n    try:\n        decision = validate_decision(snap.interrupt, decision)\n    except (ValueError, ValidationError) as exc:\n        raise ResumeRejected(422, str(exc)) from exc\n    label = decision.get(\"action\") or (\"approve\" if decision.get(\"approved\") else \"reject\")\n    APPROVALS.labels(label, channel).inc()\n    await request.app.state.queue.enqueue_job(\n        \"resume_run_job\", thread_id, decision, _job_id=f\"resume:{thread_id}:{snap.checkpoint_id}\"\n    )"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 5,
+  "start": 113,
+  "end": 142,
+  "kind": "code",
+  "content": "@app.post(\"/runs\", status_code=202, dependencies=[Auth])\nasync def create_run(body: StartRun, request: Request) -> dict[str, str]:\n    cfg = WorkflowConfig(\n        target_repo=TargetRepo.parse(body.repo, body.base_branch) if body.repo else None,\n        local_path=body.local_path,\n        max_review_cycles=body.max_review_cycles,\n        max_gate_failures=body.max_gate_failures,\n        enable_lint=body.enable_lint,\n    )\n    thread_id = f\"run-{uuid.uuid4().hex[:12]}\"\n    await request.app.state.queue.enqueue_job(\"start_run_job\", body.prompt, cfg.model_dump(), thread_id)\n    return {\"thread_id\": thread_id, \"status\": \"queued\"}\n\n\n@app.get(\"/runs/{thread_id}\", dependencies=[Auth])\nasync def get_run(thread_id: str, request: Request) -> dict[str, Any]:\n    snap = await snapshot(request.app.state.persistence.graph, thread_id)\n    if not snap.values:\n        raise HTTPException(404, \"unknown run (or not started yet)\")\n    return snap.to_json()\n\n\n@app.post(\"/runs/{thread_id}/approval\", status_code=202, dependencies=[Auth])\nasync def approve(thread_id: str, body: Approval, request: Request) -> dict[str, str]:\n    \"\"\"Approve or reject the spec / plan a run is paused on.\"\"\"\n    try:\n        await _enqueue_resume(request, thread_id, body.model_dump())\n    except ResumeRejected as exc:\n        raise HTTPException(exc.status, exc.detail) from exc\n    return {\"thread_id\": thread_id, \"status\": \"resuming\"}"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 6,
+  "start": 145,
+  "end": 152,
+  "kind": "code",
+  "content": "@app.post(\"/runs/{thread_id}/decision\", status_code=202, dependencies=[Auth])\nasync def decide(thread_id: str, body: Decision, request: Request) -> dict[str, str]:\n    \"\"\"Resolve a task that ran out of budget: retry (with a hint), replan, skip or abort.\"\"\"\n    try:\n        await _enqueue_resume(request, thread_id, body.model_dump())\n    except ResumeRejected as exc:\n        raise HTTPException(exc.status, exc.detail) from exc\n    return {\"thread_id\": thread_id, \"status\": \"resuming\"}"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 7,
+  "start": 155,
+  "end": 180,
+  "kind": "code",
+  "content": "@app.post(\"/webhooks/github\", status_code=202)\nasync def github_webhook(\n    request: Request,\n    x_github_event: Annotated[str | None, Header()] = None,\n    x_hub_signature_256: Annotated[str | None, Header()] = None,\n) -> dict[str, str]:\n    s = get_settings()\n    raw = await request.body()\n    if not github.verify_signature(s.github_webhook_secret, raw, x_hub_signature_256):\n        raise HTTPException(401, \"bad signature\")\n    payload = await request.json()\n    # Trigger: an issue gets the configured label → the issue becomes the prompt.\n    if x_github_event != \"issues\" or payload.get(\"action\") != \"labeled\":\n        return {\"status\": \"ignored\"}\n    if payload.get(\"label\", {}).get(\"name\") != s.github_trigger_label:\n        return {\"status\": \"ignored\"}\n    issue, repo = payload[\"issue\"], payload[\"repository\"]\n    cfg = WorkflowConfig(\n        target_repo=TargetRepo.parse(repo[\"full_name\"], repo.get(\"default_branch\", \"main\")),\n    )\n    thread_id = f\"gh-{repo['name']}-{issue['number']}-{uuid.uuid4().hex[:6]}\"\n    prompt = f\"{issue['title']}\\n\\n{issue.get('body') or ''}\"\n    await request.app.state.queue.enqueue_job(\n        \"start_run_job\", prompt, cfg.model_dump(), thread_id, issue[\"number\"], \"github\", _job_id=thread_id\n    )\n    return {\"status\": \"queued\", \"thread_id\": thread_id}"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 8,
+  "start": 183,
+  "end": 211,
+  "kind": "code",
+  "content": "TELEGRAM_ACTIONS: dict[str, dict[str, Any]] = {\n    \"approve\": {\"approved\": True},\n    \"reject\": {\"approved\": False},\n    **{a: {\"action\": a} for a in (\"retry\", \"replan\", \"skip\", \"abort\")},\n}\nTELEGRAM_REPLIES = {\n    \"approve\": \"Approved ✅\",\n    \"reject\": \"Rejected ❌\",\n    \"retry\": \"Retrying 🔁\",\n    \"replan\": \"Re-planning 🗺\",\n    \"skip\": \"Skipped ⏭\",\n    \"abort\": \"Stopped 🛑\",\n}\nTEXT_COMMANDS = {\n    \"/reject\": lambda g: {\"approved\": False, \"feedback\": g},\n    \"/hint\": lambda g: {\"action\": \"retry\", \"hint\": g},\n    \"/replan\": lambda g: {\"action\": \"replan\", \"hint\": g},\n}\n\n\n@app.post(\"/webhooks/telegram\")\nasync def telegram_webhook(\n    request: Request,\n    x_telegram_bot_api_secret_token: Annotated[str | None, Header()] = None,\n) -> dict[str, str]:\n    s = get_settings()\n    if s.telegram_webhook_secret and x_telegram_bot_api_secret_token != s.telegram_webhook_secret:\n        raise HTTPException(401, \"bad secret\")\n    update = await request.json()"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 9,
+  "start": 213,
+  "end": 236,
+  "kind": "code",
+  "content": "# Inline buttons: \"<action>|<thread>\" — approve/reject for spec & plan,\n    # retry/replan/skip/abort for a task that ran out of budget.\n    if cb := update.get(\"callback_query\"):\n        action, _, thread_id = (cb.get(\"data\") or \"\").partition(\"|\")\n        if thread_id and action in TELEGRAM_ACTIONS:\n            try:\n                await _enqueue_resume(request, thread_id, TELEGRAM_ACTIONS[action], \"telegram\")\n                reply = TELEGRAM_REPLIES[action]\n            except ResumeRejected as exc:\n                reply = \"Nothing to answer\" if exc.status == 409 else exc.detail[:150]\n            await telegram.answer_callback(cb[\"id\"], reply)\n        return {\"status\": \"ok\"}\n\n    # Text commands carrying guidance:\n    #   /reject <thread> <what to change>      (spec / plan)\n    #   /hint   <thread> <what to do instead>  (retry a failed task)\n    #   /replan <thread> <how to restructure>  (re-plan around a failed task)\n    text = (update.get(\"message\") or {}).get(\"text\", \"\")\n    command, *rest = text.split(maxsplit=2) if text.startswith(\"/\") else [\"\"]\n    if command in TEXT_COMMANDS and rest:\n        thread_id, guidance = rest[0], rest[1] if len(rest) > 1 else None\n        with contextlib.suppress(ResumeRejected):\n            await _enqueue_resume(request, thread_id, TEXT_COMMANDS[command](guidance), \"telegram\")\n    return {\"status\": \"ok\"}"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 10,
+  "start": 239,
+  "end": 253,
+  "kind": "code",
+  "content": "def _hit_json(h: Hit) -> dict[str, Any]:\n    return {\n        \"path\": h.path,\n        \"start_line\": h.start_line,\n        \"end_line\": h.end_line,\n        \"kind\": h.kind,\n        \"score\": round(h.score, 5),\n        \"snippet\": h.content[:600],\n    }\n\n\n@app.get(\"/repos\", dependencies=[Auth])\nasync def list_repos(request: Request) -> dict[str, list[str]]:\n    \"\"\"Repositories that have a vector index (one per target repo the workflow has touched).\"\"\"\n    return {\"repos\": await request.app.state.persistence.chunk_store.repos()}"
+ },
+ {
+  "path": "agentflow/api/app.py",
+  "index": 11,
+  "start": 256,
+  "end": 288,
+  "kind": "code",
+  "content": "@app.get(\"/search\", dependencies=[Auth])\nasync def search(\n    request: Request,\n    repo: str,\n    q: Annotated[str, Query(min_length=2)],\n    k: Annotated[int, Query(ge=1, le=20)] = 5,\n) -> dict[str, Any]:\n    \"\"\"The retrieval the agents use, with its two halves exposed: dense (embeddings),\n    lexical (full-text) and their Reciprocal Rank Fusion — handy for seeing why a chunk won.\"\"\"\n    store = request.app.state.persistence.chunk_store\n    embeddings = get_embeddings()\n    dense = await store.search_vector(repo, await embeddings.aembed_query(q), 20, None)\n    lexical = await store.search_text(repo, q, 20, None)\n    dense_view, lexical_view = [_hit_json(h) for h in dense[:k]], [_hit_json(h) for h in lexical[:k]]\n    hybrid = rrf_merge([dense, lexical], k)  # mutates scores, so render the halves first\n    return {\n        \"repo\": repo,\n        \"query\": q,\n        \"embeddings\": type(embeddings).__name__,\n        \"dense\": dense_view,\n        \"lexical\": lexical_view,\n        \"hybrid\": [_hit_json(h) for h in hybrid],\n    }\n\n\n@app.get(\"/healthz\")\nasync def healthz() -> dict[str, str]:\n    return {\"status\": \"ok\"}\n\n\n@app.get(\"/metrics\")\nasync def metrics() -> Response:\n    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)"
+ },
+ {
+  "path": "agentflow/cli.py",
+  "index": 0,
+  "start": 1,
+  "end": 30,
+  "kind": "code",
+  "content": "\"\"\"Command-line interface. Runs the graph in-process with interactive approvals.\n\nagentflow run \"Add JWT login\" --path ../myrepo          # in-place, local commits only\nagentflow run \"Add JWT login\" --repo octo/shop --postgres\nagentflow search ../myrepo \"where are passwords hashed\"\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nfrom pathlib import Path\nfrom typing import Annotated, Any\n\nimport typer\nfrom rich.console import Console\nfrom rich.markdown import Markdown\nfrom rich.panel import Panel\nfrom rich.table import Table\n\nfrom agentflow.config import TargetRepo, WorkflowConfig\nfrom agentflow.graph.escalation import OPTIONS, dossier_text\nfrom agentflow.observability import setup_logging\nfrom agentflow.runner import RunSnapshot, open_persistence, resume_run, snapshot, start_run\n\napp = typer.Typer(no_args_is_help=True, add_completion=False)\nconsole = Console()\n\n\nasync def _print_event(event: dict[str, Any]) -> None:\n    console.print(f\"[dim]•[/dim] {event.get('message', event)}\")"
+ },
+ {
+  "path": "agentflow/cli.py",
+  "index": 1,
+  "start": 33,
+  "end": 50,
+  "kind": "code",
+  "content": "def _show_interrupt(snap: RunSnapshot) -> None:\n    assert snap.interrupt\n    if snap.interrupt[\"type\"] == \"spec_approval\":\n        s = snap.interrupt[\"spec\"]\n        body = (\n            f\"## {s['title']} (v{s['version']})\\n\\n**Goal:** {s['goal']}\\n\\n**Acceptance criteria**\\n\"\n            + \"\\n\".join(f\"- {c}\" for c in s[\"acceptance_criteria\"])\n            + f\"\\n\\n**Technical notes:** {s['technical_notes']}\\n\\n**Out of scope**\\n\"\n            + \"\\n\".join(f\"- {c}\" for c in s[\"out_of_scope\"])\n        )\n        console.print(Panel(Markdown(body), title=\"Spec\"))\n    else:\n        table = Table(title=\"Task plan\")\n        for col in (\"id\", \"title\", \"after\", \"definition of done\"):\n            table.add_column(col)\n        for t in snap.interrupt[\"tasks\"]:\n            table.add_row(t[\"id\"], t[\"title\"], \", \".join(t[\"depends_on\"]), t[\"definition_of_done\"])\n        console.print(table)"
+ },
+ {
+  "path": "agentflow/cli.py",
+  "index": 2,
+  "start": 53,
+  "end": 78,
+  "kind": "code",
+  "content": "def _ask_failure(snap: RunSnapshot) -> dict[str, Any]:\n    \"\"\"A task ran out of budget: show the dossier and ask what to do.\"\"\"\n    assert snap.interrupt\n    console.print(Panel(dossier_text(snap.interrupt[\"dossier\"]), title=\"A task needs you\", border_style=\"red\"))\n    options = snap.interrupt[\"options\"]\n    for key in options:\n        console.print(f\"  [bold]{key}[/bold] — {OPTIONS[key]}\")\n    action = typer.prompt(\"Decision\", default=\"retry\" if \"retry\" in options else options[0])\n    while action not in options:\n        action = typer.prompt(f\"Choose one of {', '.join(options)}\")\n    hint = typer.prompt(\"Guidance (optional)\", default=\"\") if action in (\"retry\", \"replan\") else \"\"\n    return {\"action\": action, \"hint\": hint or None}\n\n\nasync def _loop(p, snap: RunSnapshot) -> RunSnapshot:\n    while snap.interrupt:\n        if snap.interrupt[\"type\"] == \"task_failed\":\n            snap = await resume_run(p, snap.thread_id, _ask_failure(snap), on_event=_print_event)\n            continue\n        _show_interrupt(snap)\n        answer = typer.prompt(\"Approve? [y / feedback text]\", default=\"y\")\n        approved = answer.strip().lower() in (\"y\", \"yes\")\n        snap = await resume_run(\n            p, snap.thread_id, approved=approved, feedback=None if approved else answer, on_event=_print_event\n        )\n    return snap"
+ },
+ {
+  "path": "agentflow/cli.py",
+  "index": 3,
+  "start": 81,
+  "end": 113,
+  "kind": "code",
+  "content": "def _summary(snap: RunSnapshot) -> None:\n    data = snap.to_json()\n    color = \"green\" if snap.status == \"completed\" else \"red\"\n    console.print(f\"\\n[bold {color}]{snap.status}[/] — thread {snap.thread_id}\")\n    for t in data[\"tasks\"]:\n        console.print(f\"  {'✅' if t['status'] == 'completed' else '❌'} {t['id']}: {t['title']}\")\n    if data[\"pull_request\"]:\n        console.print(f\"  PR: {data['pull_request']['url']}\")\n\n\n@app.command()\ndef run(\n    prompt: str,\n    repo: Annotated[str | None, typer.Option(help=\"owner/name — clone, code, open a PR\")] = None,\n    path: Annotated[Path, typer.Option(help=\"local repo for in-place mode\")] = Path(\".\"),\n    base_branch: str = \"main\",\n    postgres: Annotated[bool, typer.Option(help=\"persist to Postgres (resumable) instead of memory\")] = False,\n) -> None:\n    \"\"\"Run the full workflow, approving the spec and plan interactively.\"\"\"\n    setup_logging(\"WARNING\", json_logs=False)\n    cfg = WorkflowConfig(\n        target_repo=TargetRepo.parse(repo, base_branch) if repo else None, local_path=str(path.resolve())\n    )\n\n    async def go() -> None:\n        async with open_persistence(in_memory=not postgres) as p:\n            snap = await start_run(p, prompt, cfg, on_event=_print_event)\n            _summary(await _loop(p, snap))\n\n    asyncio.run(go())\n\n\n@app.command()"
+ },
+ {
+  "path": "agentflow/cli.py",
+  "index": 4,
+  "start": 114,
+  "end": 152,
+  "kind": "code",
+  "content": "def resume(thread_id: str) -> None:\n    \"\"\"Continue a Postgres-backed run that is waiting for approval.\"\"\"\n    setup_logging(\"WARNING\", json_logs=False)\n\n    async def go() -> None:\n        async with open_persistence() as p:\n            _summary(await _loop(p, await snapshot(p.graph, thread_id)))\n\n    asyncio.run(go())\n\n\n@app.command()\ndef search(path: Path, query: str, k: int = 5) -> None:\n    \"\"\"Index a local repo in memory and run a hybrid search — a quick look at what agents retrieve.\"\"\"\n    from agentflow.rag.embeddings import get_embeddings\n    from agentflow.rag.indexer import index_repo\n    from agentflow.rag.retriever import HybridRetriever\n    from agentflow.rag.store import InMemoryStore\n\n    async def go() -> None:\n        store, emb = InMemoryStore(), get_embeddings()\n        stats = await index_repo(path.resolve(), \"cli\", store, emb)\n        console.print(f\"[dim]indexed {stats.files_seen} files / {stats.chunks_embedded} chunks[/dim]\")\n        for h in await HybridRetriever(store, emb, \"cli\").search(query, k=k):\n            console.print(f\"[bold]{h.path}[/bold]:{h.start_line}-{h.end_line}  [dim]rrf={h.score:.4f}[/dim]\")\n\n    asyncio.run(go())\n\n\n@app.command()\ndef serve(host: str = \"0.0.0.0\", port: int = 8000) -> None:\n    \"\"\"Start the REST API (the worker runs separately: `arq agentflow.worker.WorkerSettings`).\"\"\"\n    import uvicorn\n\n    uvicorn.run(\"agentflow.api.app:app\", host=host, port=port)\n\n\nif __name__ == \"__main__\":\n    app()"
+ },
+ {
+  "path": "agentflow/config.py",
+  "index": 0,
+  "start": 1,
+  "end": 28,
+  "kind": "code",
+  "content": "\"\"\"Runtime configuration: environment-backed settings plus per-run workflow knobs.\"\"\"\n\nfrom __future__ import annotations\n\nfrom functools import lru_cache\nfrom typing import Literal\n\nfrom pydantic import BaseModel, Field\nfrom pydantic_settings import BaseSettings, SettingsConfigDict\n\n\nclass TargetRepo(BaseModel):\n    \"\"\"The repo the workflow clones, codes in, and opens a PR against.\"\"\"\n\n    owner: str\n    repo: str\n    base_branch: str = \"main\"\n\n    @classmethod\n    def parse(cls, value: str, base_branch: str = \"main\") -> TargetRepo:\n        owner, _, repo = value.partition(\"/\")\n        if not owner or not repo:\n            raise ValueError(f'Invalid repo \"{value}\" — expected owner/repo')\n        return cls(owner=owner, repo=repo, base_branch=base_branch)\n\n    @property\n    def full_name(self) -> str:\n        return f\"{self.owner}/{self.repo}\""
+ },
+ {
+  "path": "agentflow/config.py",
+  "index": 1,
+  "start": 31,
+  "end": 52,
+  "kind": "code",
+  "content": "class WorkflowConfig(BaseModel):\n    \"\"\"Per-run budgets. Gate failures and review rejections are counted apart:\n    the gate is objective and cheap to re-check, the reviewer is a judgement call\n    and the component most prone to rejecting correct work. Sharing one budget let\n    a few mechanical failures use up the allowance before the code was ever judged.\"\"\"\n\n    max_coder_fix_attempts: int = 2\n    max_review_cycles: int = 4\n    max_gate_failures: int = 5\n    # Reviewer outages are not the task's fault, so they don't consume review cycles —\n    # but uncapped, an outage (or an exhausted API balance) loops coder→reviewer forever.\n    max_reviewer_malfunctions: int = 3\n    # When a task exhausts a budget: \"ask\" pauses the run and asks a human (retry with a\n    # hint / replan / skip / abort); \"skip\" is the unattended behaviour — fail the task and\n    # skip only the tasks that depend on it.\n    on_task_failure: Literal[\"ask\", \"skip\"] = \"ask\"\n    max_escalations_per_task: int = 2  # beyond this a task is skipped without asking again\n    max_replans: int = 2\n    enable_lint: bool = True\n    # None = in-place mode: operate on a local directory, no clone, no PR.\n    target_repo: TargetRepo | None = None\n    local_path: str | None = None"
+ },
+ {
+  "path": "agentflow/config.py",
+  "index": 2,
+  "start": 55,
+  "end": 93,
+  "kind": "code",
+  "content": "class Settings(BaseSettings):\n    model_config = SettingsConfigDict(env_file=\".env\", extra=\"ignore\")\n\n    anthropic_api_key: str = \"\"\n    deepseek_api_key: str = \"\"\n    deepseek_base_url: str = \"https://api.deepseek.com\"\n    voyage_api_key: str = \"\"\n    # OpenAI-compatible proxy to Claude (e.g. cursor-proxy): models named cpx* go through it.\n    claude_proxy_url: str = \"http://127.0.0.1:8787/v1\"\n    claude_proxy_key: str = \"\"\n\n    orchestrator_model: str = \"claude-opus-5\"\n    reviewer_model: str = \"claude-opus-5\"\n    test_generator_model: str = \"claude-opus-5\"\n    coder_model: str = \"deepseek-v4-flash\"\n    fallback_model: str = \"claude-sonnet-5\"\n\n    embedding_model: str = \"voyage-code-3\"\n    embedding_dim: int = 1024\n\n    database_url: str = \"postgresql://agentflow:agentflow@localhost:5432/agentflow\"\n    redis_url: str = \"redis://localhost:6379\"\n\n    github_token: str = \"\"\n    github_webhook_secret: str = \"\"\n    github_trigger_label: str = \"agentflow\"\n\n    telegram_bot_token: str = \"\"\n    telegram_chat_id: str = \"\"\n    telegram_webhook_secret: str = \"\"\n\n    cors_origins: str = \"http://localhost:5173,http://127.0.0.1:5173\"  # the guide app's dev server\n    api_token: str = Field(default=\"\", description=\"Bearer token for the REST API; empty disables auth\")\n    recursion_limit: int = 500\n\n\n@lru_cache\ndef get_settings() -> Settings:\n    return Settings()"
+ },
+ {
+  "path": "agentflow/gate/__init__.py",
+  "index": 0,
+  "start": 1,
+  "end": 29,
+  "kind": "code",
+  "content": "\"\"\"Pluggable auto gate. `detect_gate` picks the strategy from the repo's manifests.\"\"\"\n\nfrom __future__ import annotations\n\nfrom pathlib import Path\n\nfrom agentflow.gate.base import ACCEPTANCE_TEST_DIR, Gate\nfrom agentflow.gate.python import PythonGate\nfrom agentflow.gate.typescript import TypeScriptGate\n\n__all__ = [\"ACCEPTANCE_TEST_DIR\", \"Gate\", \"detect_gate\", \"gate_for\"]\n\n_GATES: dict[str, type] = {\"python\": PythonGate, \"typescript\": TypeScriptGate}\n\n\ndef gate_for(language: str) -> Gate:\n    return _GATES[language]()\n\n\ndef detect_gate(workspace: Path, hint_files: list[str] | None = None) -> Gate:\n    \"\"\"Manifests win; for an empty repo fall back to the extensions the plan targets.\"\"\"\n    if (workspace / \"package.json\").exists() or (workspace / \"tsconfig.json\").exists():\n        return TypeScriptGate()\n    if any((workspace / m).exists() for m in (\"pyproject.toml\", \"requirements.txt\", \"setup.py\")):\n        return PythonGate()\n    exts = {Path(f).suffix for f in hint_files or []}\n    if exts & {\".ts\", \".tsx\"} and not exts & {\".py\"}:\n        return TypeScriptGate()\n    return PythonGate()"
+ },
+ {
+  "path": "agentflow/gate/base.py",
+  "index": 0,
+  "start": 1,
+  "end": 32,
+  "kind": "code",
+  "content": "\"\"\"Deterministic auto gate: typecheck + tests + lint, run before any LLM review.\n\nA gate is a strategy per target-repo language. Everything it reports is fed back to\nthe coder verbatim, so each implementation works hard to (a) keep the *reason* a\ncheck failed, not only its name, and (b) never fail on a condition no source edit\ncan clear — those wedge a task until its budget runs out.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport os\nimport re\nfrom dataclasses import dataclass\nfrom pathlib import Path\nfrom typing import Protocol\n\nfrom agentflow.schemas import GateResult\n\nACCEPTANCE_TEST_DIR = \"tests/acceptance\"\n\n\ndef lintable(workspace: Path, paths: list[str], suffixes: tuple[str, ...]) -> list[str]:\n    return [\n        p for p in paths if p.endswith(suffixes) and not p.startswith(ACCEPTANCE_TEST_DIR) and (workspace / p).exists()\n    ]\n\n\n_ANSI = re.compile(r\"\\x1b\\[[0-9;]*m\")\n\n\n@dataclass"
+ },
+ {
+  "path": "agentflow/gate/base.py",
+  "index": 1,
+  "start": 33,
+  "end": 71,
+  "kind": "code",
+  "content": "class CommandResult:\n    ok: bool\n    code: int\n    output: str\n\n\nasync def run_command(\n    args: list[str], cwd: Path, timeout: float = 600, env: dict[str, str] | None = None\n) -> CommandResult:\n    \"\"\"Run a command, merging stdout+stderr. Test runners and type checkers report\n    diagnostics on stdout; reading only stderr once told the coder a task failed\n    without saying why.\"\"\"\n    try:\n        proc = await asyncio.create_subprocess_exec(\n            *args,\n            cwd=cwd,\n            stdout=asyncio.subprocess.PIPE,\n            stderr=asyncio.subprocess.STDOUT,\n            env={**os.environ, **env} if env else None,\n        )\n    except FileNotFoundError as exc:\n        return CommandResult(False, 127, f\"{args[0]}: command not found ({exc})\")\n    try:\n        out, _ = await asyncio.wait_for(proc.communicate(), timeout)\n    except TimeoutError:\n        proc.kill()\n        return CommandResult(False, -1, f\"{' '.join(args)} timed out after {timeout}s\")\n    text = _ANSI.sub(\"\", out.decode(errors=\"replace\"))\n    return CommandResult(proc.returncode == 0, proc.returncode or 0, text)\n\n\ndef tail(output: str, n: int = 20) -> list[str]:\n    return [line for line in output.splitlines() if line.strip()][-n:]\n\n\ndef with_fallback(lines: list[str], raw: str) -> list[str]:\n    \"\"\"Never hand the coder an empty error list: if the filter matched nothing\n    (e.g. a runner that failed to start), fall back to the raw tail.\"\"\"\n    return lines or tail(raw)"
+ },
+ {
+  "path": "agentflow/gate/base.py",
+  "index": 2,
+  "start": 74,
+  "end": 79,
+  "kind": "code",
+  "content": "def summarize(errors: dict[str, list[str]]) -> GateResult:\n    errors = {k: v for k, v in errors.items() if v}\n    if not errors:\n        return GateResult(passed=True)\n    summary = \"\\n\\n\".join(f\"{name} ({len(lines)}):\\n\" + \"\\n\".join(lines[:5]) for name, lines in errors.items())\n    return GateResult(passed=False, errors=errors, summary=summary)"
+ },
+ {
+  "path": "agentflow/gate/base.py",
+  "index": 3,
+  "start": 82,
+  "end": 99,
+  "kind": "code",
+  "content": "class Gate(Protocol):\n    language: str\n    test_file_suffix: str\n\n    def test_prompt_rules(self) -> str:\n        \"\"\"Framework, import-path and mocking rules injected into the test generator.\"\"\"\n        ...\n\n    async def run(\n        self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None\n    ) -> GateResult:\n        \"\"\"Run the checks. `test_paths` scopes the run to this task's acceptance test\n        plus those of completed tasks (regression); None runs the whole suite.\n\n        `lint_paths` scopes lint to the files the task wrote. Linting the whole repo failed\n        tasks on pre-existing violations and on the generated acceptance test, neither of\n        which the coder is allowed to touch — the task could never pass.\"\"\"\n        ..."
+ },
+ {
+  "path": "agentflow/gate/python.py",
+  "index": 0,
+  "start": 1,
+  "end": 31,
+  "kind": "code",
+  "content": "\"\"\"Gate for Python target repos: compile/mypy + pytest + ruff.\"\"\"\n\nfrom __future__ import annotations\n\nimport hashlib\nimport re\nimport shutil\nimport tempfile\nfrom pathlib import Path\n\nfrom agentflow.gate.base import (\n    ACCEPTANCE_TEST_DIR,\n    lintable,\n    run_command,\n    summarize,\n    tail,\n    with_fallback,\n)\nfrom agentflow.schemas import GateResult\n\nVENV = \".venv\"\nSTAMP = \".agentflow-install-stamp\"\nNO_TESTS_COLLECTED = 5  # pytest exit code\n\n\ndef fresh_bytecode_env() -> dict[str, str]:\n    \"\"\"Bytecode caches are validated by source mtime (1 s resolution) and size. The coder\n    often rewrites a file within the same second at the same size (`a - b` → `a + b`), and\n    Python then runs the stale .pyc — the gate judges code that no longer exists. A fresh\n    cache prefix per gate run means no cached bytecode is ever reused.\"\"\"\n    return {\"PYTHONPYCACHEPREFIX\": tempfile.mkdtemp(prefix=\"agentflow-pyc-\")}"
+ },
+ {
+  "path": "agentflow/gate/python.py",
+  "index": 1,
+  "start": 34,
+  "end": 51,
+  "kind": "code",
+  "content": "def extract_pytest_failures(raw: str, per_failure: int = 6) -> list[str]:\n    \"\"\"Keep the *reason* each test failed: the FAILED/ERROR marker, the `E ` assertion\n    lines, and exception lines. Test titles alone made the coder re-guess the same fix.\"\"\"\n    lines = raw.splitlines()\n    keep: set[int] = set()\n    for i, line in enumerate(lines):\n        if line.startswith((\"FAILED\", \"ERROR\")) or line.lstrip().startswith(\"E \"):\n            keep.add(i)\n        elif re.match(r\"^\\s*[A-Za-z]*(Error|Exception)\\b\", line[:2000]):\n            keep.update(range(i, min(len(lines), i + per_failure)))\n    return [lines[i] for i in sorted(keep) if lines[i].strip()]\n\n\ndef _has_mypy_config(ws: Path) -> bool:\n    if (ws / \"mypy.ini\").exists() or (ws / \".mypy.ini\").exists():\n        return True\n    pyproject = ws / \"pyproject.toml\"\n    return pyproject.exists() and \"[tool.mypy]\" in pyproject.read_text(errors=\"ignore\")"
+ },
+ {
+  "path": "agentflow/gate/python.py",
+  "index": 2,
+  "start": 54,
+  "end": 64,
+  "kind": "code",
+  "content": "class PythonGate:\n    language = \"python\"\n    test_file_suffix = \".py\"\n\n    def test_prompt_rules(self) -> str:\n        return f\"\"\"- Use pytest. Plain `assert` statements, fixtures over setup methods.\n- Mock ALL external I/O (HTTP, DB, filesystem outside tmp_path) with unittest.mock / monkeypatch.\n- Each test is deterministic and named for the scenario: test_returns_404_when_user_missing.\n- The file is saved to `{ACCEPTANCE_TEST_DIR}/`. Import the code under test by its package path\n  as installed from the repo root (e.g. `from mypkg.users import get_user`), never relative imports.\n- Cover: happy path, at least one error case, at least one edge case.\"\"\""
+ },
+ {
+  "path": "agentflow/gate/python.py",
+  "index": 3,
+  "start": 66,
+  "end": 89,
+  "kind": "code",
+  "content": "async def _ensure_env(self, ws: Path) -> str | None:\n        \"\"\"Install the project once per dependency-manifest revision. A fresh project has a\n        manifest but no environment, and every check would fail on a missing module\n        instead of on a real defect.\"\"\"\n        manifests = [p for p in (\"pyproject.toml\", \"requirements.txt\", \"requirements-dev.txt\") if (ws / p).exists()]\n        digest = hashlib.sha256(b\"\".join((ws / p).read_bytes() for p in manifests)).hexdigest()\n        stamp = ws / VENV / STAMP\n        if stamp.exists() and stamp.read_text() == digest:\n            return None\n        if not (ws / VENV).exists():\n            await run_command([\"uv\", \"venv\", VENV, \"-q\"], ws)\n        py = str(ws / VENV / \"bin\" / \"python\")\n        install = [\"uv\", \"pip\", \"install\", \"-q\", \"--python\", py, \"pytest\", \"ruff\", \"mypy\"]\n        if (ws / \"pyproject.toml\").exists():\n            install += [\"-e\", \".\"]\n        for req in (\"requirements.txt\", \"requirements-dev.txt\"):\n            if (ws / req).exists():\n                install += [\"-r\", req]\n        result = await run_command(install, ws)\n        if not result.ok:\n            # Don't raise: a bad dependency list is something the coder can fix, so report it.\n            return \"Dependency install failed:\\n\" + \"\\n\".join(tail(result.output, 8))\n        stamp.write_text(digest)\n        return None"
+ },
+ {
+  "path": "agentflow/gate/python.py",
+  "index": 4,
+  "start": 91,
+  "end": 125,
+  "kind": "code",
+  "content": "async def run(\n        self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None\n    ) -> GateResult:\n        install_error = await self._ensure_env(workspace)\n        bin_ = workspace / VENV / \"bin\"\n        env = fresh_bytecode_env()\n        try:\n            return await self._checks(workspace, bin_, env, install_error, test_paths, enable_lint, lint_paths)\n        finally:\n            shutil.rmtree(env[\"PYTHONPYCACHEPREFIX\"], ignore_errors=True)\n\n    async def _checks(\n        self,\n        workspace: Path,\n        bin_: Path,\n        env: dict[str, str],\n        install_error: str | None,\n        test_paths: list[str] | None,\n        enable_lint: bool,\n        lint_paths: list[str] | None,\n    ) -> GateResult:\n\n        if _has_mypy_config(workspace):\n            types = await run_command([str(bin_ / \"mypy\"), \".\", \"--exclude\", ACCEPTANCE_TEST_DIR], workspace, env=env)\n            type_errors = (\n                []\n                if types.ok\n                else with_fallback([line for line in types.output.splitlines() if \": error:\" in line], types.output)\n            )\n        else:\n            # No type-checker configured: still catch syntax errors, the analogue of tsc.\n            types = await run_command(\n                [str(bin_ / \"python\"), \"-m\", \"compileall\", \"-q\", \"-x\", r\"\\.venv\", \".\"], workspace, env=env\n            )\n            type_errors = [] if types.ok else tail(types.output)"
+ },
+ {
+  "path": "agentflow/gate/python.py",
+  "index": 5,
+  "start": 127,
+  "end": 158,
+  "kind": "code",
+  "content": "test_args = [str(bin_ / \"pytest\"), \"-q\", \"-rfE\", \"--no-header\", \"-p\", \"no:cacheprovider\"]\n        test_args += [p for p in (test_paths or []) if (workspace / p).exists()]\n        tests = await run_command(test_args, workspace, env=env)\n        # Exit 5 = nothing collected. Normal for a scaffolding task with no tests yet;\n        # a failure only when this task's own acceptance test was supposed to run.\n        tests_ok = tests.ok or (tests.code == NO_TESTS_COLLECTED and not test_paths)\n        test_errors = [] if tests_ok else with_fallback(extract_pytest_failures(tests.output), tests.output)\n\n        lint_errors: list[str] = []\n        targets = [\".\"] if lint_paths is None else lintable(workspace, lint_paths, (\".py\",))\n        if enable_lint and targets:\n            lint = await run_command(\n                [\n                    str(bin_ / \"ruff\"),\n                    \"check\",\n                    \"--output-format=concise\",\n                    \"--extend-exclude\",\n                    ACCEPTANCE_TEST_DIR,\n                    *targets,\n                ],\n                workspace,\n            )\n            lint_errors = [] if lint.ok else tail(lint.output)\n\n        return summarize(\n            {\n                \"Dependency install\": [install_error] if install_error else [],\n                \"Type/compile errors\": type_errors,\n                \"Test failures\": test_errors,\n                \"Lint errors\": lint_errors,\n            }\n        )"
+ },
+ {
+  "path": "agentflow/gate/typescript.py",
+  "index": 0,
+  "start": 1,
+  "end": 39,
+  "kind": "code",
+  "content": "\"\"\"Gate for TypeScript target repos: tsc + vitest + eslint (port of the original TS gate).\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport hashlib\nimport os\nimport re\nfrom pathlib import Path\n\nfrom agentflow.gate.base import (\n    ACCEPTANCE_TEST_DIR,\n    CommandResult,\n    lintable,\n    run_command,\n    summarize,\n    tail,\n    with_fallback,\n)\nfrom agentflow.schemas import GateResult\n\nSTAMP = \"node_modules/.agentflow-install-stamp\"\n# The gate owns its vitest config. The coder repeatedly narrowed `include` in the\n# project's vitest.config.ts to a directory it had invented, silently filtering out\n# the acceptance tests — vitest then ran zero files and no source edit could clear it.\nGATE_VITEST_CONFIG = \"vitest.agentflow.config.ts\"\nESLINT_CONFIGS = (\n    \"eslint.config.js\",\n    \"eslint.config.mjs\",\n    \"eslint.config.cjs\",\n    \"eslint.config.ts\",\n    \".eslintrc\",\n    \".eslintrc.js\",\n    \".eslintrc.cjs\",\n    \".eslintrc.json\",\n    \".eslintrc.yml\",\n    \".eslintrc.yaml\",\n)\n_OK = CommandResult(True, 0, \"\")"
+ },
+ {
+  "path": "agentflow/gate/typescript.py",
+  "index": 1,
+  "start": 42,
+  "end": 65,
+  "kind": "code",
+  "content": "def extract_vitest_failures(raw: str, per_failure: int = 6, max_line: int = 2000) -> list[str]:\n    \"\"\"Marker lines plus the diagnostics that follow them. Deliberately no alternation\n    regex over whole lines: one with `expected .+ to ` backtracked quadratically and\n    took seconds on a single 60k-char assertion diff.\"\"\"\n    lines = raw.splitlines()\n    keep: set[int] = set()\n    for i, line in enumerate(lines):\n        if \"FAIL\" in line or \"✗\" in line or \"×\" in line:\n            keep.update(range(i, min(len(lines), i + 1 + per_failure)))\n        head = line[:max_line]\n        if (\n            re.match(r\"^\\s*[A-Za-z]*Error\\b\", head)\n            or \"Unhandled error\" in head\n            or (\"expected \" in head and \" to \" in head)\n        ):\n            keep.add(i)\n    return [lines[i] for i in sorted(keep) if lines[i].strip()]\n\n\ndef _has_eslint(ws: Path) -> bool:\n    if any((ws / c).exists() for c in ESLINT_CONFIGS):\n        return True\n    pkg = ws / \"package.json\"\n    return pkg.exists() and '\"eslintConfig\"' in pkg.read_text(errors=\"ignore\")"
+ },
+ {
+  "path": "agentflow/gate/typescript.py",
+  "index": 2,
+  "start": 68,
+  "end": 93,
+  "kind": "code",
+  "content": "class TypeScriptGate:\n    language = \"typescript\"\n    test_file_suffix = \".test.ts\"\n\n    def test_prompt_rules(self) -> str:\n        return f\"\"\"- Use vitest: `import {{ describe, it, expect, vi }} from \"vitest\"`. ESM imports only.\n- Mock ALL external dependencies (API calls, file I/O, DB) with `vi.mock()`.\n- Test names describe the scenario: \"returns 404 when user not found\".\n- The file is saved to `{ACCEPTANCE_TEST_DIR}/<name>.test.ts`, TWO directories below the root.\n  Import sources with `../../src/...` — `../src/...` resolves to tests/src and every test fails to load.\n- Cover: happy path, at least one error case, at least one edge case.\"\"\"\n\n    async def _ensure_deps(self, ws: Path) -> str | None:\n        pkg = ws / \"package.json\"\n        if not pkg.exists():\n            return None\n        digest = hashlib.sha256(pkg.read_bytes()).hexdigest()\n        stamp = ws / STAMP\n        if stamp.exists() and stamp.read_text() == digest:\n            return None\n        result = await run_command([\"npm\", \"install\", \"--no-audit\", \"--no-fund\"], ws)\n        if not result.ok:\n            return \"npm install failed:\\n\" + \"\\n\".join(tail(result.output, 8))\n        stamp.parent.mkdir(parents=True, exist_ok=True)\n        stamp.write_text(digest)\n        return None"
+ },
+ {
+  "path": "agentflow/gate/typescript.py",
+  "index": 3,
+  "start": 95,
+  "end": 108,
+  "kind": "code",
+  "content": "async def run(\n        self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None\n    ) -> GateResult:\n        install_error = await self._ensure_deps(workspace)\n        (workspace / GATE_VITEST_CONFIG).write_text(\n            'import { defineConfig } from \"vitest/config\";\\n\\n'\n            \"export default defineConfig({\\n\"\n            '  test: { include: [\"tests/**/*.test.ts\", \"src/**/*.test.ts\"] },\\n'\n            \"});\\n\"\n        )\n        test_args = [\"npx\", \"vitest\", \"run\", \"--config\", GATE_VITEST_CONFIG, \"--reporter=verbose\"]\n        test_args += [os.path.normpath(p) for p in (test_paths or [])]\n        targets = [\"src\"] if lint_paths is None else lintable(workspace, lint_paths, (\".ts\", \".tsx\"))\n        lint_on = enable_lint and bool(targets) and _has_eslint(workspace)"
+ },
+ {
+  "path": "agentflow/gate/typescript.py",
+  "index": 4,
+  "start": 110,
+  "end": 139,
+  "kind": "code",
+  "content": "tsc, tests, lint = await asyncio.gather(\n            run_command([\"npx\", \"tsc\", \"--noEmit\"], workspace),\n            run_command(test_args, workspace),\n            run_command([\"npx\", \"eslint\", *targets, \"--max-warnings\", \"0\"], workspace) if lint_on else _done(),\n        )\n        # TS18003 \"No inputs were found\": a scaffolding task has no sources yet. That is a\n        # project-shape condition, not a defect, and wedged every run's first task.\n        if not tsc.ok and \"error TS18003\" in tsc.output:\n            tsc = _OK\n        # eslint without the TS parser reports \"Parsing error\" on every file — unfixable\n        # by editing code, and tsc already covers syntax.\n        if not lint.ok and re.search(r\"Parsing error|Cannot find module '@typescript-eslint\", lint.output):\n            lint = _OK\n\n        return summarize(\n            {\n                \"Dependency install\": [install_error] if install_error else [],\n                \"TypeScript errors\": []\n                if tsc.ok\n                else with_fallback(\n                    [line for line in tsc.output.splitlines() if re.search(r\"error TS\\d+\", line)], tsc.output\n                ),\n                \"Test failures\": [] if tests.ok else with_fallback(extract_vitest_failures(tests.output), tests.output),\n                \"Lint errors\": [] if lint.ok else tail(lint.output),\n            }\n        )\n\n\nasync def _done() -> CommandResult:\n    return _OK"
+ },
+ {
+  "path": "agentflow/graph/build.py",
+  "index": 0,
+  "start": 1,
+  "end": 40,
+  "kind": "code",
+  "content": "\"\"\"Graph assembly: nodes, conditional edges, retry/timeout policies, persistence.\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Any\n\nfrom langgraph.checkpoint.base import BaseCheckpointSaver\nfrom langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer\nfrom langgraph.graph import END, START, StateGraph\nfrom langgraph.graph.state import CompiledStateGraph\nfrom langgraph.runtime import get_runtime\nfrom langgraph.store.base import BaseStore\nfrom langgraph.types import RetryPolicy\n\nfrom agentflow.config import WorkflowConfig\nfrom agentflow.graph import nodes, routing\nfrom agentflow.graph.context import Deps\nfrom agentflow.graph.state import WorkflowState\n\n# Checkpoints store our Pydantic models; allow-list them explicitly for msgpack.\nSERDE = JsonPlusSerializer(\n    allowed_msgpack_modules=[\n        (\"agentflow.schemas\", name)\n        for name in (\n            \"Spec\",\n            \"Task\",\n            \"CoderResult\",\n            \"ReviewCycle\",\n            \"ReviewResult\",\n            \"PullRequest\",\n            \"Stall\",\n            \"GateResult\",\n            \"FailureDecision\",\n        )\n    ]\n)\n\n# Transient infra errors (rate limits, timeouts, 5xx) are retried at node level on top\n# of the per-call client retries and model fallbacks. Programming errors are not.\nLLM_RETRY = RetryPolicy(max_attempts=3, initial_interval=2.0, backoff_factor=3.0)"
+ },
+ {
+  "path": "agentflow/graph/build.py",
+  "index": 1,
+  "start": 43,
+  "end": 65,
+  "kind": "code",
+  "content": "def build_graph(\n    checkpointer: BaseCheckpointSaver | None = None,\n    store: BaseStore | None = None,\n) -> CompiledStateGraph[Any, Any, Any, Any]:\n    g = StateGraph(WorkflowState, context_schema=Deps)\n\n    g.add_node(\"prepare_workspace\", nodes.prepare_workspace, retry_policy=LLM_RETRY)\n    g.add_node(\"generate_spec\", nodes.generate_spec, retry_policy=LLM_RETRY, timeout=600)\n    g.add_node(\"await_spec_approval\", nodes.await_spec_approval)\n    g.add_node(\"generate_tasks\", nodes.generate_tasks, retry_policy=LLM_RETRY, timeout=600)\n    g.add_node(\"await_task_approval\", nodes.await_task_approval)\n    g.add_node(\"select_next_task\", nodes.select_next_task)\n    g.add_node(\"run_coder\", nodes.run_coder, timeout=1800)  # failures are handled as attempts, not retries\n    g.add_node(\"generate_task_test\", nodes.generate_task_test, retry_policy=LLM_RETRY, timeout=600)\n    g.add_node(\"run_review\", nodes.run_review, retry_policy=LLM_RETRY, timeout=1800)\n    g.add_node(\"adjudicate\", nodes.adjudicate, timeout=600)\n    g.add_node(\"complete_task\", nodes.complete_task, retry_policy=LLM_RETRY)\n    g.add_node(\"escalate\", nodes.escalate)\n    g.add_node(\"replan\", nodes.replan, retry_policy=LLM_RETRY, timeout=600)\n    g.add_node(\"handle_failure\", nodes.handle_failure)\n    g.add_node(\"create_pr\", nodes.create_pr, retry_policy=LLM_RETRY, timeout=1800)\n    g.add_node(\"notify\", nodes.notify)\n    g.add_node(\"finalize\", nodes.finalize)"
+ },
+ {
+  "path": "agentflow/graph/build.py",
+  "index": 2,
+  "start": 67,
+  "end": 90,
+  "kind": "code",
+  "content": "g.add_edge(START, \"prepare_workspace\")\n    g.add_edge(\"prepare_workspace\", \"generate_spec\")\n    g.add_edge(\"generate_spec\", \"await_spec_approval\")\n    g.add_conditional_edges(\"await_spec_approval\", routing.after_spec_approval, [\"generate_tasks\", \"generate_spec\"])\n    g.add_edge(\"generate_tasks\", \"await_task_approval\")\n    g.add_conditional_edges(\"await_task_approval\", routing.after_task_approval, [\"select_next_task\", \"generate_tasks\"])\n    g.add_conditional_edges(\"select_next_task\", routing.after_task_selection, [\"generate_task_test\", \"create_pr\"])\n    g.add_edge(\"generate_task_test\", \"run_coder\")\n    g.add_conditional_edges(\"run_coder\", _with_config(routing.after_coder), [\"run_review\", \"run_coder\", \"escalate\"])\n    g.add_conditional_edges(\n        \"run_review\",\n        _with_config(routing.after_review),\n        [\"complete_task\", \"run_coder\", \"escalate\", \"adjudicate\"],\n    )\n    g.add_conditional_edges(\"adjudicate\", routing.after_adjudication, [\"run_coder\", \"escalate\"])\n    g.add_conditional_edges(\"escalate\", routing.after_escalation, [\"run_coder\", \"replan\", \"handle_failure\"])\n    g.add_edge(\"replan\", \"select_next_task\")\n    g.add_edge(\"complete_task\", \"select_next_task\")\n    g.add_conditional_edges(\"handle_failure\", routing.after_failure, [\"select_next_task\", END])\n    g.add_edge(\"create_pr\", \"notify\")\n    g.add_edge(\"notify\", \"finalize\")\n    g.add_edge(\"finalize\", END)\n\n    return g.compile(checkpointer=checkpointer, store=store, name=\"agentflow\")"
+ },
+ {
+  "path": "agentflow/graph/build.py",
+  "index": 3,
+  "start": 93,
+  "end": 101,
+  "kind": "code",
+  "content": "def _with_config(route):\n    \"\"\"Routers that need the run's WorkflowConfig read it from the runtime context.\"\"\"\n\n    def wrapped(state: WorkflowState) -> str:\n        cfg: WorkflowConfig = get_runtime(Deps).context.config\n        return route(state, cfg)\n\n    wrapped.__name__ = route.__name__\n    return wrapped"
+ },
+ {
+  "path": "agentflow/graph/context.py",
+  "index": 0,
+  "start": 1,
+  "end": 26,
+  "kind": "code",
+  "content": "\"\"\"Runtime dependencies injected into every node via LangGraph's `context`.\n\nKeeps nodes free of globals: tests pass in-memory stores and fake embeddings; the\nAPI/worker pass pgvector and Voyage. Context is not checkpointed, so a resumed run\nsimply receives a fresh one.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\n\nfrom langchain_core.embeddings import Embeddings\n\nfrom agentflow.config import WorkflowConfig\nfrom agentflow.rag.retriever import HybridRetriever\nfrom agentflow.rag.store import ChunkStore\n\n\n@dataclass\nclass Deps:\n    chunk_store: ChunkStore\n    embeddings: Embeddings\n    config: WorkflowConfig = field(default_factory=WorkflowConfig)\n\n    def retriever(self, repo_id: str) -> HybridRetriever:\n        return HybridRetriever(self.chunk_store, self.embeddings, repo_id)"
+ },
+ {
+  "path": "agentflow/graph/escalation.py",
+  "index": 0,
+  "start": 1,
+  "end": 20,
+  "kind": "code",
+  "content": "\"\"\"Escalation: what a human sees, and what each decision does, when a task runs out of budget.\n\nSilently skipping a failed task (and everything depending on it) hid the most important\nmoment of a run: the point where the agent had reached the limit of what it could do on\nits own. Production coding harnesses treat budget exhaustion as stop-and-escalate, handing\na person the evidence. The dossier is that evidence.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Any\n\nfrom agentflow.graph.state import WorkflowState, task_by_id\n\nOPTIONS = {\n    \"retry\": \"Retry the task with your hint (budgets reset)\",\n    \"replan\": \"Re-plan the remaining work around this failure\",\n    \"skip\": \"Skip this task and the tasks that depend on it\",\n    \"abort\": \"Stop the run\",\n}"
+ },
+ {
+  "path": "agentflow/graph/escalation.py",
+  "index": 1,
+  "start": 23,
+  "end": 51,
+  "kind": "code",
+  "content": "def build_dossier(state: WorkflowState, task_id: str) -> dict[str, Any]:\n    task = task_by_id(state, task_id)\n    stall = state.get(\"stalls\", {}).get(task_id)\n    review = state.get(\"review_results\", {}).get(task_id)\n    coder = state.get(\"task_results\", {}).get(task_id)\n    history = state.get(\"review_history\", {}).get(task_id, [])\n    change_requests = [r for c in history[-3:] for r in c.change_requests][-5:]\n    failures = list(dict.fromkeys(stall.history)) if stall and stall.history else []\n    if coder and not coder.success and coder.error:\n        failures.append(f\"coder error: {coder.error}\")\n    if not failures and review and review.cycles:\n        failures.append(review.cycles[-1].comments)\n    return {\n        \"task\": {\n            \"id\": task.id,\n            \"title\": task.title,\n            \"definition_of_done\": task.definition_of_done,\n            \"interface\": task.interface,\n        },\n        \"attempts\": {\n            \"coder_crashes\": task.coder_fix_attempts,\n            \"gate_failures\": task.gate_failures,\n            \"review_rejections\": task.review_cycles,\n            \"reviewer_malfunctions\": task.reviewer_malfunctions,\n            \"referee_consulted\": bool(state.get(\"adjudicated\", {}).get(task_id)),\n        },\n        \"recent_failures\": [f[:600] for f in failures[-4:]],\n        \"open_change_requests\": [r[:300] for r in change_requests],\n        \"files_written\": sorted(coder.written_files) if coder else [],"
+ },
+ {
+  "path": "agentflow/graph/escalation.py",
+  "index": 2,
+  "start": 50,
+  "end": 57,
+  "kind": "code",
+  "content": "\"open_change_requests\": [r[:300] for r in change_requests],\n        \"files_written\": sorted(coder.written_files) if coder else [],\n        \"acceptance_test\": state.get(\"tests\", {}).get(task_id),\n        \"completed_tasks\": [t.id for t in state.get(\"tasks\", []) if t.status == \"completed\"],\n        \"dependents\": [t.id for t in state.get(\"tasks\", []) if task_id in t.depends_on],\n        \"branch\": state.get(\"branch\"),\n        \"workspace\": state.get(\"workspace\"),\n    }"
+ },
+ {
+  "path": "agentflow/graph/escalation.py",
+  "index": 3,
+  "start": 60,
+  "end": 84,
+  "kind": "code",
+  "content": "def options_for(state: WorkflowState, max_replans: int) -> list[str]:\n    opts = list(OPTIONS)\n    if state.get(\"replans\", 0) >= max_replans:\n        opts.remove(\"replan\")\n    return opts\n\n\ndef dossier_text(d: dict[str, Any]) -> str:\n    \"\"\"Compact human-readable form (Telegram, CLI).\"\"\"\n    a = d[\"attempts\"]\n    lines = [\n        f\"Task `{d['task']['id']}` — {d['task']['title']}\",\n        f\"Attempts: {a['gate_failures']} gate failure(s), {a['review_rejections']} review rejection(s), \"\n        f\"{a['coder_crashes']} coder crash(es), {a['reviewer_malfunctions']} reviewer malfunction(s)\"\n        + (\", referee consulted\" if a[\"referee_consulted\"] else \"\"),\n        \"\",\n        \"Recent failures:\",\n        *[f\"• {f.splitlines()[0][:200]}\" for f in d[\"recent_failures\"]],\n    ]\n    if d[\"open_change_requests\"]:\n        lines += [\"\", \"Reviewer asked for:\", *[f\"• {r[:200]}\" for r in d[\"open_change_requests\"][:3]]]\n    if d[\"dependents\"]:\n        lines += [\"\", f\"Blocked if skipped: {', '.join(d['dependents'])}\"]\n    lines += [\"\", f\"Partial work: {', '.join(d['files_written']) or 'none'} on branch {d['branch']}\"]\n    return \"\\n\".join(lines)"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 0,
+  "start": 1,
+  "end": 33,
+  "kind": "code",
+  "content": "\"\"\"Graph nodes: spec → plan → (code → test → gate → review)* → PR.\n\nPorted from the TypeScript pipeline with its hard-won edge cases intact; comments\nexplain the failure each rule exists to prevent.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport contextlib\nimport logging\nimport time\nfrom pathlib import Path\n\nfrom langgraph.runtime import Runtime\nfrom langgraph.types import interrupt\n\nfrom agentflow.agents import coder, orchestrator, reviewer, test_generator\nfrom agentflow.config import get_settings\nfrom agentflow.gate import Gate, detect_gate\nfrom agentflow.graph import escalation\nfrom agentflow.graph.context import Deps\nfrom agentflow.graph.routing import dependents_of, next_runnable, next_stall\nfrom agentflow.graph.state import WorkflowState, replace_task, task_by_id\nfrom agentflow.integrations import github, telegram\nfrom agentflow.integrations import workspace as ws\nfrom agentflow.memory.lessons import recall_lessons, remember_review_feedback\nfrom agentflow.models import text_model, text_of\nfrom agentflow.rag.indexer import index_repo\nfrom agentflow.rag.retriever import pack_context\nfrom agentflow.schemas import ApprovalDecision, CoderResult, FailureDecision, ReviewCycle, ReviewResult, Stall, Task\n\nlog = logging.getLogger(\"agentflow.graph\")"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 1,
+  "start": 36,
+  "end": 49,
+  "kind": "code",
+  "content": "def progress(runtime: Runtime[Deps], message: str, **data: object) -> None:\n    \"\"\"Log and stream a progress event (visible to API clients via stream_mode=\"custom\").\"\"\"\n    log.info(message, extra={\"data\": data})\n    with contextlib.suppress(Exception):  # no stream consumer attached\n        runtime.stream_writer({\"message\": message, **data})\n\n\ndef _ws(state: WorkflowState) -> Path:\n    return Path(state[\"workspace\"])\n\n\ndef _gate(state: WorkflowState) -> Gate:\n    hints = [f for t in state.get(\"tasks\", []) for f in t.target_files]\n    return detect_gate(_ws(state), hints)"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 2,
+  "start": 52,
+  "end": 85,
+  "kind": "code",
+  "content": "def _read(path: Path) -> str:\n    try:\n        return path.read_text()\n    except OSError:\n        return \"\"\n\n\nasync def _repo_context(runtime: Runtime[Deps], state: WorkflowState, query: str, budget: int) -> str:\n    retriever = runtime.context.retriever(state[\"repo_id\"])\n    code = await retriever.search(query, k=10, kind=\"code\")\n    docs = await retriever.search(query, k=4, kind=\"doc\")\n    return pack_context(docs + code, budget_tokens=budget)\n\n\n# ─── Setup ───────────────────────────────────────────────────────────────────\n\n\nasync def prepare_workspace(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    cfg = runtime.context.config\n    branch = f\"agentflow/{int(time.time())}\"\n    path = await asyncio.to_thread(ws.prepare_workspace, cfg.target_repo, branch, cfg.local_path)\n    repo_id = ws.repo_id(cfg.target_repo, path)\n    stats = await index_repo(path, repo_id, runtime.context.chunk_store, runtime.context.embeddings)\n    progress(runtime, f\"workspace ready, indexed {stats.files_seen} files\", repo=repo_id, **vars(stats))\n    return {\n        \"workspace\": str(path),\n        \"branch\": branch,\n        \"repo_id\": repo_id,\n        \"index_stats\": vars(stats),\n        \"status\": \"speccing\",\n    }\n\n\n# ─── Spec & plan (human-in-the-loop) ─────────────────────────────────────────"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 3,
+  "start": 85,
+  "end": 95,
+  "kind": "code",
+  "content": "# ─── Spec & plan (human-in-the-loop) ─────────────────────────────────────────\n\n\nasync def generate_spec(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    context = await _repo_context(runtime, state, state[\"user_prompt\"], budget=6000)\n    feedback = state.get(\"spec_feedback\")\n    spec = await orchestrator.generate_spec(\n        state[\"user_prompt\"], context, previous=state.get(\"spec\") if feedback else None, feedback=feedback\n    )\n    progress(runtime, f\"spec v{spec.version}: {spec.title}\")\n    return {\"spec\": spec, \"status\": \"spec_review\"}"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 4,
+  "start": 98,
+  "end": 128,
+  "kind": "code",
+  "content": "def await_spec_approval(state: WorkflowState) -> dict:\n    spec = state[\"spec\"]\n    assert spec\n    raw = interrupt({\"type\": \"spec_approval\", \"spec\": spec.model_dump()})\n    decision = ApprovalDecision.model_validate(raw)\n    if not decision.approved:\n        return {\"spec_approved\": False, \"spec_feedback\": decision.feedback or \"Rejected without comment.\"}\n    return {\"spec_approved\": True, \"spec_feedback\": None, \"status\": \"planning\"}\n\n\nasync def generate_tasks(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    spec = state[\"spec\"]\n    assert spec\n    context = await _repo_context(runtime, state, f\"{spec.goal}\\n{spec.technical_notes}\", budget=5000)\n    feedback = state.get(\"tasks_feedback\")\n    tasks = await orchestrator.generate_tasks(\n        spec, context, previous=state.get(\"tasks\") if feedback else None, feedback=feedback\n    )\n    progress(runtime, f\"planned {len(tasks)} tasks\", tasks=[t.id for t in tasks])\n    return {\"tasks\": tasks, \"status\": \"task_review\"}\n\n\ndef await_task_approval(state: WorkflowState) -> dict:\n    raw = interrupt({\"type\": \"tasks_approval\", \"tasks\": [t.model_dump() for t in state[\"tasks\"]]})\n    decision = ApprovalDecision.model_validate(raw)\n    if not decision.approved:\n        return {\"tasks_approved\": False, \"tasks_feedback\": decision.feedback or \"Rejected without comment.\"}\n    return {\"tasks_approved\": True, \"tasks_feedback\": None, \"status\": \"coding\"}\n\n\n# ─── Task loop ───────────────────────────────────────────────────────────────"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 5,
+  "start": 131,
+  "end": 160,
+  "kind": "code",
+  "content": "def select_next_task(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    tasks = state[\"tasks\"]\n    nxt = next_runnable(tasks)\n    if nxt is None:\n        return {\"current_task_id\": None}\n    done = sum(t.status == \"completed\" for t in tasks)\n    progress(runtime, f\"[{done + 1}/{len(tasks)}] {nxt.id}: {nxt.title}\", task=nxt.id)\n    return {\"current_task_id\": nxt.id, \"tasks\": replace_task(tasks, nxt.id, status=\"coding\")}\n\n\nasync def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    task, spec, root = task_by_id(state, task_id), state[\"spec\"], _ws(state)\n    assert spec\n\n    query = f\"{task.title}\\n{task.description}\\nFiles: {' '.join(task.target_files)}\"\n    retrieved = await _repo_context(runtime, state, query, budget=6000)\n    lessons = await recall_lessons(runtime.store, state[\"repo_id\"], query)\n    test_path = state.get(\"tests\", {}).get(task_id)\n    ctx = coder.CoderContext(\n        task=task,\n        spec=spec,\n        workspace=root,\n        language=_gate(state).language,\n        test_content=_read(root / test_path) if test_path else \"\",\n        retrieved_context=retrieved,\n        lessons=lessons,\n        human_hint=state.get(\"hints\", {}).get(task_id) or None,\n    )"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 6,
+  "start": 162,
+  "end": 172,
+  "kind": "code",
+  "content": "# Two failure sources feed a retry: the coder itself erroring out, and the coder\n    # succeeding while gate/reviewer rejected the output. Without the latter the coder\n    # restarted from a blank slate and re-emitted the same rejected code every cycle.\n    prior = state.get(\"task_results\", {}).get(task_id)\n    prior_review = state.get(\"review_results\", {}).get(task_id)\n    feedback = None\n    if prior and not prior.success and prior.error:\n        feedback = prior.error\n    elif prior_review and not prior_review.approved and prior_review.cycles:\n        last = prior_review.cycles[-1]\n        feedback = \"\\n\".join([last.comments, *last.change_requests]) or \"The previous attempt was rejected.\""
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 7,
+  "start": 174,
+  "end": 188,
+  "kind": "code",
+  "content": "result = await coder.run_coder(ctx, runtime.context.retriever(state[\"repo_id\"]), feedback)\n    # Carry forward everything written for this task: a fix attempt rewrites one or two\n    # files, and replacing the set shrank the review diff until the reviewer rejected\n    # the task for \"missing\" files that were on disk all along.\n    merged = CoderResult(\n        task_id=task_id,\n        success=result.success,\n        error=result.error,\n        written_files={**(prior.written_files if prior else {}), **result.written_files},\n    )\n    update: dict = {\"task_results\": {task_id: merged}}\n    if not result.success:\n        update[\"tasks\"] = replace_task(state[\"tasks\"], task_id, coder_fix_attempts=task.coder_fix_attempts + 1)\n    progress(runtime, f\"coder {'wrote' if result.success else 'failed'}: {list(result.written_files)}\", task=task_id)\n    return update"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 8,
+  "start": 191,
+  "end": 200,
+  "kind": "code",
+  "content": "async def generate_task_test(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    \"\"\"Write the task's acceptance test before any code, from its interface and Definition of\n    Done. The test must then fail (red): a test that passes before the code exists asserts\n    nothing the task adds, so it is regenerated once with that feedback.\"\"\"\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    if state.get(\"tests\", {}).get(task_id):\n        return {}  # keep the target stable across the coder→gate→review retry loop\n    task, spec, root, gate = task_by_id(state, task_id), state[\"spec\"], _ws(state), _gate(state)\n    assert spec"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 9,
+  "start": 202,
+  "end": 223,
+  "kind": "code",
+  "content": "# The generator must still see the code the task modifies: a draft once asserted that an\n    # untouched insert() returns a dict instead of its id, and coder and reviewer then\n    # ping-ponged over it until the budget ran out.\n    existing = _current_target_files(task, root)\n    rel = await test_generator.generate_test(task, spec, gate, root, existing_files=existing)\n    if await _passes(gate, root, rel):\n        progress(runtime, f\"{rel} passes before any code exists — regenerating\", task=task_id)\n        rel = await test_generator.generate_test(\n            task,\n            spec,\n            gate,\n            root,\n            existing_files=existing,\n            previous_test=_read(root / rel),\n            ruling=\"This test already passes although the task is not implemented yet, so it verifies nothing \"\n            \"the task adds. Assert the new behaviour from the Definition of Done.\",\n        )\n        if await _passes(gate, root, rel):\n            # Can be legitimate (e.g. a pure refactor); keep it rather than loop.\n            progress(runtime, f\"{rel} still green before implementation — keeping it\", task=task_id)\n    progress(runtime, f\"acceptance test written: {rel}\", task=task_id)\n    return {\"tests\": {task_id: rel}}"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 10,
+  "start": 226,
+  "end": 246,
+  "kind": "code",
+  "content": "def _current_target_files(task: Task, root: Path) -> dict[str, str]:\n    return {p: _read(root / p) for p in task.target_files if (root / p).is_file()}\n\n\nasync def _passes(gate: Gate, root: Path, test_rel: str) -> bool:\n    \"\"\"Red check: run only this test; lint is irrelevant before code exists.\"\"\"\n    return (await gate.run(root, [test_rel], enable_lint=False)).passed\n\n\nasync def run_review(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    cfg = runtime.context.config\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    task, spec, root = task_by_id(state, task_id), state[\"spec\"], _ws(state)\n    assert spec\n    tests = state.get(\"tests\", {})\n    own_test = tests.get(task_id)\n    # Re-run the tests of already-completed tasks: this is what catches a later task\n    # quietly breaking an earlier one while it is still the change under review.\n    regression = [tests[t.id] for t in state[\"tasks\"] if t.status == \"completed\" and t.id in tests]\n    test_paths = [own_test, *regression] if own_test else None"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 11,
+  "start": 248,
+  "end": 273,
+  "kind": "code",
+  "content": "written = list(state[\"task_results\"][task_id].written_files)\n    gate = await _gate(state).run(root, test_paths, cfg.enable_lint, lint_paths=written)\n    if not gate.passed:\n        cycle = ReviewCycle(verdict=\"failed\", comments=gate.summary, change_requests=[gate.summary])\n    else:\n        diff = await asyncio.to_thread(ws.stage_and_diff, root, written)\n        cycle = await reviewer.review_diff(\n            task, spec, _read(root / own_test) if own_test else \"\", diff, runtime.context.retriever(state[\"repo_id\"])\n        )\n\n    approved = cycle.verdict == \"approved\"\n    gate_failed = cycle.verdict == \"failed\"\n    rejected = not approved and not gate_failed and not cycle.reviewer_malfunction\n    tasks = replace_task(\n        state[\"tasks\"],\n        task_id,\n        gate_failures=task.gate_failures + int(gate_failed),\n        review_cycles=task.review_cycles + int(rejected),\n        reviewer_malfunctions=task.reviewer_malfunctions + int(cycle.reviewer_malfunction),\n    )\n\n    # An attempt failing exactly like the previous one is not converging; track it so\n    # the budget isn't spent on a loop that has already shown it repeats itself.\n    signature = \" \".join(cycle.comments.split())[:300]\n    stall = next_stall(state.get(\"stalls\", {}).get(task_id), signature, approved)\n    repeats = stall.repeats"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 12,
+  "start": 275,
+  "end": 292,
+  "kind": "code",
+  "content": "budget = (\n        f\"gate {task.gate_failures + 1}/{cfg.max_gate_failures}\"\n        if gate_failed\n        else f\"review {task.review_cycles + int(rejected)}/{cfg.max_review_cycles}\"\n    )\n    progress(\n        runtime,\n        f\"{task_id}: {cycle.verdict} ({budget}{f', repeat x{repeats + 1}' if repeats else ''}) \"\n        f\"— {cycle.comments.splitlines()[0][:160] if cycle.comments else ''}\",\n        task=task_id,\n        verdict=cycle.verdict,\n    )\n    return {\n        \"review_results\": {task_id: ReviewResult(task_id=task_id, approved=approved, cycles=[cycle])},\n        \"review_history\": {task_id: [cycle]},\n        \"tasks\": tasks,\n        \"stalls\": {task_id: stall},\n    }"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 13,
+  "start": 295,
+  "end": 317,
+  "kind": "code",
+  "content": "async def adjudicate(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    \"\"\"Called once per task when the same failure keeps repeating: is the test or the\n    code at fault? A test contradicting its own task is unsatisfiable, so every\n    remaining attempt would be wasted. If the test is wrong, regenerate it with the\n    ruling as feedback and give the coder a fresh run.\"\"\"\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    task, spec, root = task_by_id(state, task_id), state[\"spec\"], _ws(state)\n    assert spec\n    test_rel = state[\"tests\"][task_id]\n    test_content = _read(root / test_rel)\n    try:\n        # Every distinct recent failure, so an oscillation (test fails ↔ reviewer rejects the\n        # change that made it pass) is visible to the referee as the contradiction it is.\n        recent = list(dict.fromkeys(state[\"stalls\"][task_id].history))\n        ruling = await reviewer.adjudicate(task, spec, test_content, \"\\n\\n---\\n\\n\".join(recent))\n    except Exception as exc:  # noqa: BLE001 — referee unavailable: the failure stands\n        progress(runtime, f\"referee unavailable: {exc}\", task=task_id)\n        return {\"adjudicated\": {task_id: True}}\n\n    if ruling.culprit == \"code\":\n        progress(runtime, f\"{task_id}: referee says the code is at fault\", task=task_id)\n        return {\"adjudicated\": {task_id: True}}  # stall left intact → handle_failure"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 14,
+  "start": 319,
+  "end": 345,
+  "kind": "code",
+  "content": "progress(runtime, f\"{task_id}: referee says the test is at fault — regenerating\", task=task_id)\n    rel = await test_generator.generate_test(\n        task,\n        spec,\n        _gate(state),\n        root,\n        existing_files=_current_target_files(task, root),\n        previous_test=test_content,\n        ruling=ruling.reasoning,\n        attempted_code=state[\"task_results\"][task_id].written_files,\n    )\n    return {\n        \"adjudicated\": {task_id: True},\n        \"tests\": {task_id: rel},\n        \"stalls\": {task_id: Stall()},\n        \"review_results\": {task_id: ReviewResult(task_id=task_id, approved=False)},\n    }\n\n\nasync def complete_task(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    task, root = task_by_id(state, task_id), _ws(state)\n    # The acceptance test belongs in the same commit as the code: otherwise the PR\n    # ships code with no tests and workspace cleanup deletes them unrecoverably.\n    paths = [*state[\"task_results\"][task_id].written_files, state.get(\"tests\", {}).get(task_id, \"\")]\n    await asyncio.to_thread(ws.commit, root, [p for p in paths if p], f\"feat({task_id}): {task.title}\")"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 15,
+  "start": 347,
+  "end": 371,
+  "kind": "code",
+  "content": "# Re-index so the next task can retrieve what this one just wrote.\n    await index_repo(root, state[\"repo_id\"], runtime.context.chunk_store, runtime.context.embeddings)\n    # Review feedback that was followed by an approved fix is validated knowledge.\n    if runtime.store is not None:\n        saved = await remember_review_feedback(\n            runtime.store, state[\"repo_id\"], task, state.get(\"review_history\", {}).get(task_id, [])\n        )\n        if saved:\n            progress(runtime, f\"stored {saved} lesson(s) from review feedback\", task=task_id)\n    return {\"tasks\": replace_task(state[\"tasks\"], task_id, status=\"completed\")}\n\n\nasync def escalate(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    \"\"\"A task ran out of budget. Ask a human what to do — retry with a hint, re-plan, skip,\n    or stop — instead of silently skipping it and everything that depends on it.\n\n    Unattended runs (on_task_failure=\"skip\") and tasks already escalated\n    max_escalations_per_task times keep the old behaviour: skip without asking.\n    \"\"\"\n    cfg = runtime.context.config\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    count = state.get(\"escalations\", {}).get(task_id, 0)\n    if cfg.on_task_failure == \"skip\" or count >= cfg.max_escalations_per_task:\n        return {\"failure_decisions\": {task_id: FailureDecision(action=\"skip\", auto=True)}}"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 16,
+  "start": 373,
+  "end": 379,
+  "kind": "code",
+  "content": "dossier = escalation.build_dossier(state, task_id)\n    options = escalation.options_for(state, cfg.max_replans)\n    raw = interrupt({\"type\": \"task_failed\", \"task_id\": task_id, \"dossier\": dossier, \"options\": options})\n    decision = FailureDecision.model_validate(raw)\n    if decision.action not in options:\n        decision = FailureDecision(action=\"skip\", hint=f\"'{decision.action}' was not available\")\n    progress(runtime, f\"{task_id}: human chose {decision.action}\", task=task_id, hint=decision.hint)"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 17,
+  "start": 381,
+  "end": 406,
+  "kind": "code",
+  "content": "update: dict = {\n        \"failure_decisions\": {task_id: decision},\n        \"escalations\": {task_id: count + 1},\n    }\n    if decision.action == \"retry\":\n        # A fresh budget with the human's guidance; the acceptance test stays (the referee\n        # or the hint can still change course), the partial code stays on disk.\n        task = task_by_id(state, task_id)\n        update |= {\n            \"tasks\": replace_task(\n                state[\"tasks\"],\n                task_id,\n                coder_fix_attempts=0,\n                gate_failures=0,\n                review_cycles=0,\n                reviewer_malfunctions=0,\n                status=\"coding\",\n            ),\n            \"stalls\": {task_id: Stall()},\n            \"adjudicated\": {task_id: False},\n            \"review_results\": {task_id: ReviewResult(task_id=task_id, approved=False)},\n            \"hints\": {task_id: decision.hint or \"\"},\n        }\n        if task.coder_fix_attempts and (result := state.get(\"task_results\", {}).get(task_id)):\n            update[\"task_results\"] = {task_id: result.model_copy(update={\"error\": None})}\n    return update"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 18,
+  "start": 409,
+  "end": 421,
+  "kind": "code",
+  "content": "async def replan(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    \"\"\"Rewrite the not-yet-done part of the plan around the failure. Completed tasks and their\n    commits are untouched; replacement tasks get fresh ids so no per-task state leaks in.\"\"\"\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    spec = state[\"spec\"]\n    assert spec\n    tasks = state[\"tasks\"]\n    failed = task_by_id(state, task_id)\n    completed = [t for t in tasks if t.status == \"completed\"]\n    remaining = [t for t in tasks if t.status in (\"pending\", \"coding\") and t.id != task_id]\n    decision = state.get(\"failure_decisions\", {}).get(task_id)\n    context = await _repo_context(runtime, state, f\"{failed.title}\\n{failed.description}\", budget=4000)"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 19,
+  "start": 423,
+  "end": 452,
+  "kind": "code",
+  "content": "new = await orchestrator.replan_tasks(\n        spec,\n        completed,\n        failed,\n        remaining,\n        escalation.build_dossier(state, task_id),\n        decision.hint if decision else None,\n        context,\n    )\n    used = {t.id for t in tasks} | set(state.get(\"task_results\", {})) | set(state.get(\"tests\", {}))\n    renames: dict[str, str] = {}\n    for t in new:\n        if t.id in used:\n            fresh, n = f\"{t.id}-r\", 2\n            while fresh in used:\n                fresh, n = f\"{t.id}-r{n}\", n + 1\n            renames[t.id] = fresh\n            used.add(fresh)\n    for t in new:\n        t.id = renames.get(t.id, t.id)\n        t.depends_on = [renames.get(d, d) for d in t.depends_on]\n        t.status = \"pending\"\n    plan = orchestrator.validate_plan([*completed, *new])\n    progress(runtime, f\"re-planned: {[t.id for t in new]}\", replaced=[task_id, *[t.id for t in remaining]])\n    return {\n        \"tasks\": plan,\n        \"current_task_id\": None,\n        \"replans\": state.get(\"replans\", 0) + 1,\n        \"failed_tasks\": {task_id: f\"Replaced by re-plan: {', '.join(t.id for t in new)}\"},\n    }"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 20,
+  "start": 455,
+  "end": 475,
+  "kind": "code",
+  "content": "async def handle_failure(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    task_id = state.get(\"current_task_id\")\n    tasks = state[\"tasks\"]\n    task = task_by_id(state, task_id) if task_id else None\n    coder_result = state.get(\"task_results\", {}).get(task_id or \"\")\n    review = state.get(\"review_results\", {}).get(task_id or \"\")\n    last = review.cycles[-1] if review and review.cycles else None\n    stall = state.get(\"stalls\", {}).get(task_id or \"\")\n\n    if coder_result and not coder_result.success:\n        reason = f\"coder failed after {task.coder_fix_attempts if task else 0} attempts: {coder_result.error}\"\n    elif last and task:\n        # Report the running totals across every pass, not just the last pass's cycles.\n        reason = (\n            f\"{last.verdict} after {task.gate_failures} gate failure(s), {task.review_cycles} review cycle(s) \"\n            f\"and {task.reviewer_malfunctions} reviewer malfunction(s)\"\n            + (\" — stalled, repeating the same failure\" if stall and stall.repeats >= 2 else \"\")\n            + f\": {last.comments}\"\n        )\n    else:\n        reason = state.get(\"error\") or \"unknown\""
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 21,
+  "start": 477,
+  "end": 495,
+  "kind": "code",
+  "content": "decision = state.get(\"failure_decisions\", {}).get(task_id or \"\")\n    if decision and decision.action == \"abort\":\n        reason = f\"Stopped by a human after: {reason}\"\n        open_tasks = [t for t in tasks if t.status not in (\"completed\", \"failed\")]\n        failed = {t.id: (reason if t.id == task_id else \"Not started — run stopped by a human\") for t in open_tasks}\n        tasks = [t.model_copy(update={\"status\": \"failed\"}) if t.id in failed else t for t in tasks]\n        progress(runtime, f\"run stopped by a human at {task_id}\", task=task_id)\n        spec = state.get(\"spec\")\n        await telegram.send_message(f\"🛑 *Run stopped*\\n\\n*Feature:* {spec.title if spec else '?'}\\n{reason[:1500]}\")\n        return {\"status\": \"failed\", \"error\": reason, \"tasks\": tasks, \"failed_tasks\": failed}\n\n    # Skip only the subtree that needed this task. Aborting the whole run threw away\n    # every completed, reviewed task; unrelated work is worth finishing.\n    blocked = dependents_of(task_id, tasks) if task_id else []\n    failed = {task_id: reason} if task_id else {}\n    failed |= {b: f'Skipped — depends on failed task \"{task_id}\"' for b in blocked}\n    casualties = {task_id, *blocked}\n    tasks = [t.model_copy(update={\"status\": \"failed\"}) if t.id in casualties else t for t in tasks]\n    progress(runtime, f\"task {task_id} failed: {reason[:300]}\", task=task_id, skipped=blocked)"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 22,
+  "start": 497,
+  "end": 525,
+  "kind": "code",
+  "content": "if not any(t.status == \"completed\" for t in tasks) and not any(t.status == \"pending\" for t in tasks):\n        # Nothing salvageable → no PR. The workspace is kept for diagnosis.\n        spec = state.get(\"spec\")\n        title = spec.title if spec else \"?\"\n        await telegram.send_message(f\"❌ *Workflow failed*\\n\\n*Feature:* {title}\\n*Reason:* {reason[:1500]}\")\n        return {\"status\": \"failed\", \"error\": reason, \"tasks\": tasks, \"failed_tasks\": failed}\n    return {\"tasks\": tasks, \"failed_tasks\": failed, \"current_task_id\": None}\n\n\n# ─── Delivery ────────────────────────────────────────────────────────────────\n\n\nasync def create_pr(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    cfg = runtime.context.config\n    if cfg.target_repo is None:\n        progress(runtime, \"in-place mode: commits made locally, no PR\")\n        return {\"status\": \"notifying\"}\n    root, spec = _ws(state), state[\"spec\"]\n    assert spec\n\n    # The per-task gate only runs that task's tests; an unconditional full-suite run\n    # lets the PR state plainly whether everything builds and passes together.\n    final = await _gate(state).run(root, None, cfg.enable_lint)\n    verification = (\n        \"✅ Full typecheck and test suite pass.\"\n        if final.passed\n        else f\"⚠️ Final verification did not fully pass:\\n\\n```\\n{final.summary[:1500]}\\n```\"\n    )\n    await asyncio.to_thread(ws.push, root, state[\"branch\"])"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 23,
+  "start": 527,
+  "end": 549,
+  "kind": "code",
+  "content": "done = [t.title for t in state[\"tasks\"] if t.status == \"completed\"]\n    description = text_of(\n        await text_model(get_settings().orchestrator_model).ainvoke(\n            f\"Write a concise GitHub PR description.\\nTitle: {spec.title}\\nGoal: {spec.goal}\\n\"\n            f\"Tasks completed: {', '.join(done)}\",\n            config={\"tags\": [\"pr-description\"]},\n        )\n    )\n    failed = state.get(\"failed_tasks\", {})\n    incomplete = (\n        f\"\\n\\n---\\n\\n### ⚠️ Incomplete tasks ({len(failed)})\\n\\n\"\n        + \"\\n\".join(f\"- **{k}** — {v.splitlines()[0]}\" for k, v in failed.items())\n        if failed\n        else \"\"\n    )\n    issue = state.get(\"issue_number\")\n    closes = f\"\\n\\nCloses #{issue}\" if issue else \"\"\n    body = f\"{description}{incomplete}\\n\\n---\\n\\n### Verification\\n\\n{verification}{closes}\"\n    pr = await github.open_pull_request(cfg.target_repo, state[\"branch\"], spec.title, body)\n    if issue:\n        await github.comment_on_issue(cfg.target_repo, issue, f\"🤖 Opened {pr.url}\")\n    progress(runtime, f\"opened PR #{pr.number}\", url=pr.url)\n    return {\"pull_request\": pr, \"status\": \"notifying\"}"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 24,
+  "start": 552,
+  "end": 563,
+  "kind": "code",
+  "content": "async def notify(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    spec, pr, failed = state[\"spec\"], state.get(\"pull_request\"), state.get(\"failed_tasks\", {})\n    lines = [f\"✅ *Workflow completed*\\n\\n*Feature:* {spec.title if spec else '?'}\"]\n    if failed:\n        lines.append(f\"*Incomplete:* {', '.join(failed)}\")\n    if pr:\n        lines.append(f\"*Pull request:* {pr.url}\")\n    try:\n        await telegram.send_message(\"\\n\".join(lines))\n    except Exception as exc:  # noqa: BLE001 — a notification must never fail the run\n        log.warning(\"notification failed: %s\", exc)\n    return {}"
+ },
+ {
+  "path": "agentflow/graph/nodes.py",
+  "index": 25,
+  "start": 566,
+  "end": 568,
+  "kind": "code",
+  "content": "def finalize(state: WorkflowState, runtime: Runtime[Deps]) -> dict:\n    ws.cleanup_workspace(_ws(state), runtime.context.config.target_repo)\n    return {\"status\": \"completed\"}"
+ },
+ {
+  "path": "agentflow/graph/routing.py",
+  "index": 0,
+  "start": 1,
+  "end": 34,
+  "kind": "code",
+  "content": "\"\"\"Conditional edges. Pure functions of state + config, unit-tested in isolation.\"\"\"\n\nfrom __future__ import annotations\n\nfrom langgraph.graph import END\n\nfrom agentflow.config import WorkflowConfig\nfrom agentflow.graph.state import WorkflowState, task_by_id\nfrom agentflow.schemas import Stall, Task\n\nSTALL_REPEATS = 2  # the same failure for the third time within the window\nSTALL_WINDOW = 6\n\n\ndef next_stall(prior: Stall | None, signature: str, approved: bool) -> Stall:\n    \"\"\"Track recurring failures over a window, not only consecutive ones.\n\n    A live run oscillated: the test failed (A), the coder changed an API to satisfy it, the\n    reviewer rejected that change (B), the coder reverted (A again)… A, B, A, B never repeats\n    back-to-back, so a consecutive-only check never sent the task to the referee and the\n    budgets ran out. Counting occurrences in a window catches both shapes.\n    \"\"\"\n    if approved:\n        return Stall()\n    history = [*(prior.history if prior else []), signature][-STALL_WINDOW:]\n    return Stall(signature=signature, repeats=history[:-1].count(signature), history=history)\n\n\ndef after_spec_approval(state: WorkflowState) -> str:\n    return \"generate_tasks\" if state.get(\"spec_approved\") else \"generate_spec\"\n\n\ndef after_task_approval(state: WorkflowState) -> str:\n    return \"select_next_task\" if state.get(\"tasks_approved\") else \"generate_tasks\""
+ },
+ {
+  "path": "agentflow/graph/routing.py",
+  "index": 1,
+  "start": 33,
+  "end": 52,
+  "kind": "code",
+  "content": "def after_task_approval(state: WorkflowState) -> str:\n    return \"select_next_task\" if state.get(\"tasks_approved\") else \"generate_tasks\"\n\n\ndef after_task_selection(state: WorkflowState) -> str:\n    \"\"\"Each task starts with its acceptance test, written before any code.\"\"\"\n    return \"generate_task_test\" if state.get(\"current_task_id\") else \"create_pr\"\n\n\ndef after_coder(state: WorkflowState, config: WorkflowConfig) -> str:\n    \"\"\"The test was written before the code, so a successful attempt goes straight to the\n    gate; the test stays fixed while the coder works against it.\"\"\"\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    result = state.get(\"task_results\", {}).get(task_id)\n    if result and result.success:\n        return \"run_review\"\n    if task_by_id(state, task_id).coder_fix_attempts >= config.max_coder_fix_attempts:\n        return \"escalate\"\n    return \"run_coder\""
+ },
+ {
+  "path": "agentflow/graph/routing.py",
+  "index": 2,
+  "start": 55,
+  "end": 79,
+  "kind": "code",
+  "content": "def after_review(state: WorkflowState, config: WorkflowConfig) -> str:\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    task = task_by_id(state, task_id)\n    review = state.get(\"review_results\", {}).get(task_id)\n    if review and review.approved:\n        return \"complete_task\"\n    if (\n        task.review_cycles >= config.max_review_cycles\n        or task.gate_failures >= config.max_gate_failures\n        or task.reviewer_malfunctions >= config.max_reviewer_malfunctions\n    ):\n        return \"escalate\"\n    # Repeating the same failure: remaining attempts would go the same way. Give the\n    # referee one chance to spot an unsatisfiable test before writing the task off.\n    stall = state.get(\"stalls\", {}).get(task_id)\n    if stall and stall.repeats >= STALL_REPEATS:\n        return \"escalate\" if state.get(\"adjudicated\", {}).get(task_id) else \"adjudicate\"\n    return \"run_coder\"\n\n\ndef after_adjudication(state: WorkflowState) -> str:\n    \"\"\"The referee clears the stall only when it rewrote a faulty test.\"\"\"\n    stall = state.get(\"stalls\", {}).get(state[\"current_task_id\"] or \"\")\n    return \"escalate\" if stall and stall.repeats >= STALL_REPEATS else \"run_coder\""
+ },
+ {
+  "path": "agentflow/graph/routing.py",
+  "index": 3,
+  "start": 82,
+  "end": 111,
+  "kind": "code",
+  "content": "def after_escalation(state: WorkflowState) -> str:\n    \"\"\"retry → back to the coder with a fresh budget; replan → rewrite the remaining plan;\n    skip / abort → handle_failure (which skips the subtree or stops the run).\"\"\"\n    decision = state.get(\"failure_decisions\", {}).get(state[\"current_task_id\"] or \"\")\n    action = decision.action if decision else \"skip\"\n    return {\"retry\": \"run_coder\", \"replan\": \"replan\"}.get(action, \"handle_failure\")\n\n\ndef after_failure(state: WorkflowState) -> str:\n    return END if state.get(\"status\") == \"failed\" else \"select_next_task\"\n\n\ndef next_runnable(tasks: list[Task]) -> Task | None:\n    done = {t.id for t in tasks if t.status == \"completed\"}\n    return next((t for t in tasks if t.status == \"pending\" and all(d in done for d in t.depends_on)), None)\n\n\ndef dependents_of(task_id: str, tasks: list[Task]) -> list[str]:\n    \"\"\"Every open task that needs `task_id`, directly or transitively.\"\"\"\n    blocked: set[str] = set()\n    grew = True\n    while grew:\n        grew = False\n        for t in tasks:\n            if t.id in blocked or t.id == task_id or t.status in (\"completed\", \"failed\"):\n                continue\n            if any(d == task_id or d in blocked for d in t.depends_on):\n                blocked.add(t.id)\n                grew = True\n    return sorted(blocked)"
+ },
+ {
+  "path": "agentflow/graph/state.py",
+  "index": 0,
+  "start": 1,
+  "end": 23,
+  "kind": "code",
+  "content": "\"\"\"Graph state. Per-task maps merge on update so a node returns only the keys it changed.\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Annotated, Any, Literal, TypedDict\n\nfrom agentflow.schemas import CoderResult, FailureDecision, PullRequest, ReviewCycle, ReviewResult, Spec, Stall, Task\n\nStatus = Literal[\n    \"speccing\", \"spec_review\", \"planning\", \"task_review\", \"coding\", \"pr\", \"notifying\", \"completed\", \"failed\"\n]\n\n\ndef merge(left: dict | None, right: dict | None) -> dict:\n    return {**(left or {}), **(right or {})}\n\n\ndef append_per_key(left: dict | None, right: dict | None) -> dict:\n    \"\"\"task_id → list, concatenated. A None value clears that task's list.\"\"\"\n    out = dict(left or {})\n    for key, items in (right or {}).items():\n        out[key] = [] if items is None else [*out.get(key, []), *items]\n    return out"
+ },
+ {
+  "path": "agentflow/graph/state.py",
+  "index": 1,
+  "start": 26,
+  "end": 60,
+  "kind": "code",
+  "content": "class WorkflowState(TypedDict, total=False):\n    # input\n    user_prompt: str\n    issue_number: int | None  # set when the run was triggered from a GitHub issue\n    run_config: dict[str, Any]  # WorkflowConfig at start; resumes rebuild Deps from it\n\n    # workspace\n    workspace: str\n    branch: str\n    repo_id: str\n    index_stats: dict[str, Any]\n\n    # spec / plan lifecycle (human-in-the-loop)\n    spec: Spec | None\n    spec_approved: bool\n    spec_feedback: str | None\n    tasks: list[Task]\n    tasks_approved: bool\n    tasks_feedback: str | None\n\n    # execution\n    current_task_id: str | None\n    tests: Annotated[dict[str, str], merge]  # task_id → repo-relative acceptance test path\n    task_results: Annotated[dict[str, CoderResult], merge]\n    review_results: Annotated[dict[str, ReviewResult], merge]\n    review_history: Annotated[dict[str, list[ReviewCycle]], append_per_key]\n    stalls: Annotated[dict[str, Stall], merge]\n    adjudicated: Annotated[dict[str, bool], merge]  # at most one referee ruling per task\n    failed_tasks: Annotated[dict[str, str], merge]  # task_id → reason (for PR body + notification)\n\n    # escalation (human decisions when a task runs out of budget)\n    failure_decisions: Annotated[dict[str, FailureDecision], merge]  # task_id → latest decision\n    escalations: Annotated[dict[str, int], merge]  # task_id → times escalated\n    hints: Annotated[dict[str, str], merge]  # task_id → human guidance for the coder\n    replans: int"
+ },
+ {
+  "path": "agentflow/graph/state.py",
+  "index": 2,
+  "start": 62,
+  "end": 65,
+  "kind": "code",
+  "content": "# output\n    pull_request: PullRequest | None\n    status: Status\n    error: str | None"
+ },
+ {
+  "path": "agentflow/graph/state.py",
+  "index": 3,
+  "start": 68,
+  "end": 73,
+  "kind": "code",
+  "content": "def task_by_id(state: WorkflowState, task_id: str) -> Task:\n    return next(t for t in state.get(\"tasks\", []) if t.id == task_id)\n\n\ndef replace_task(tasks: list[Task], task_id: str, **changes: Any) -> list[Task]:\n    return [t.model_copy(update=changes) if t.id == task_id else t for t in tasks]"
+ },
+ {
+  "path": "agentflow/integrations/github.py",
+  "index": 0,
+  "start": 1,
+  "end": 42,
+  "kind": "code",
+  "content": "\"\"\"GitHub: pull requests, issue comments, webhook signature verification.\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport hashlib\nimport hmac\n\nfrom github import Auth, Github\n\nfrom agentflow.config import TargetRepo, get_settings\nfrom agentflow.schemas import PullRequest\n\n\ndef _client() -> Github:\n    return Github(auth=Auth.Token(get_settings().github_token))\n\n\nasync def open_pull_request(target: TargetRepo, head: str, title: str, body: str) -> PullRequest:\n    def _create() -> PullRequest:\n        pr = (\n            _client().get_repo(target.full_name).create_pull(title=title, body=body, head=head, base=target.base_branch)\n        )\n        return PullRequest(number=pr.number, url=pr.html_url, title=pr.title, branch=head)\n\n    return await asyncio.to_thread(_create)\n\n\nasync def comment_on_issue(target: TargetRepo, issue_number: int, body: str) -> None:\n    def _comment() -> None:\n        _client().get_repo(target.full_name).get_issue(issue_number).create_comment(body)\n\n    await asyncio.to_thread(_comment)\n\n\ndef verify_signature(secret: str, body: bytes, signature_header: str | None) -> bool:\n    if not secret:\n        return True  # verification disabled (local dev)\n    if not signature_header or not signature_header.startswith(\"sha256=\"):\n        return False\n    expected = \"sha256=\" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()\n    return hmac.compare_digest(expected, signature_header)"
+ },
+ {
+  "path": "agentflow/integrations/telegram.py",
+  "index": 0,
+  "start": 1,
+  "end": 33,
+  "kind": "code",
+  "content": "\"\"\"Telegram: run notifications and inline Approve/Reject buttons for HITL checkpoints.\n\nButton presses arrive at POST /webhooks/telegram and resume the paused graph thread.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom typing import Any\n\nimport httpx\n\nfrom agentflow.config import get_settings\n\nlog = logging.getLogger(__name__)\nAPI = \"https://api.telegram.org/bot{token}/{method}\"\n\n\nasync def _call(method: str, payload: dict[str, Any]) -> httpx.Response | None:\n    s = get_settings()\n    if not s.telegram_bot_token or not s.telegram_chat_id:\n        log.info(\"telegram not configured; skipping %s\", method)\n        return None\n    # A notification must never fail the job that sends it: a transient network error once\n    # made a worker job \"fail\" after the run had already paused correctly, and the human was\n    # never told. Retry once, then log and move on.\n    for attempt in (1, 2):\n        try:\n            async with httpx.AsyncClient(timeout=15) as client:\n                return await client.post(API.format(token=s.telegram_bot_token, method=method), json=payload)\n        except httpx.HTTPError as exc:\n            log.warning(\"telegram %s attempt %s failed: %s\", method, attempt, type(exc).__name__)\n    return None"
+ },
+ {
+  "path": "agentflow/integrations/telegram.py",
+  "index": 1,
+  "start": 36,
+  "end": 66,
+  "kind": "code",
+  "content": "async def send_message(text: str, buttons: list[list[dict[str, str]]] | None = None) -> None:\n    payload: dict[str, Any] = {\n        \"chat_id\": get_settings().telegram_chat_id,\n        \"text\": text[:4000],\n        \"parse_mode\": \"Markdown\",\n    }\n    if buttons:\n        payload[\"reply_markup\"] = {\"inline_keyboard\": buttons}\n    resp = await _call(\"sendMessage\", payload)\n    # Failure messages embed raw tool output (stray * and _) that Telegram rejects as bad\n    # Markdown with a 400 — losing exactly the message that mattered. Resend as plain text.\n    if resp is not None and resp.status_code == 400:\n        payload.pop(\"parse_mode\")\n        resp = await _call(\"sendMessage\", payload)\n    if resp is not None and resp.status_code >= 400:\n        log.warning(\"telegram error %s: %s\", resp.status_code, resp.text[:300])\n\n\nasync def request_approval(thread_id: str, kind: str, summary: str) -> None:\n    await send_message(\n        f\"🟡 *Approval needed* — {kind}\\n\\n{summary}\\n\\nthread: `{thread_id}`\",\n        buttons=[\n            [\n                {\"text\": \"✅ Approve\", \"callback_data\": f\"approve|{thread_id}\"},\n                {\"text\": \"❌ Reject\", \"callback_data\": f\"reject|{thread_id}\"},\n            ]\n        ],\n    )\n\n\nFAILURE_BUTTONS = {\"retry\": \"🔁 Retry\", \"replan\": \"🗺 Re-plan\", \"skip\": \"⏭ Skip\", \"abort\": \"🛑 Stop\"}"
+ },
+ {
+  "path": "agentflow/integrations/telegram.py",
+  "index": 2,
+  "start": 66,
+  "end": 80,
+  "kind": "code",
+  "content": "FAILURE_BUTTONS = {\"retry\": \"🔁 Retry\", \"replan\": \"🗺 Re-plan\", \"skip\": \"⏭ Skip\", \"abort\": \"🛑 Stop\"}\n\n\nasync def request_failure_decision(thread_id: str, dossier_text: str, options: list[str]) -> None:\n    \"\"\"A task ran out of budget: show the evidence and ask what to do.\"\"\"\n    await send_message(\n        f\"🔴 *A task needs you*\\n\\n{dossier_text}\\n\\n\"\n        f\"Add guidance with `/hint {thread_id} <what to do differently>` (retries) or \"\n        f\"`/replan {thread_id} <how to restructure>`.\\nthread: `{thread_id}`\",\n        buttons=[[{\"text\": FAILURE_BUTTONS[o], \"callback_data\": f\"{o}|{thread_id}\"} for o in options]],\n    )\n\n\nasync def answer_callback(callback_id: str, text: str) -> None:\n    await _call(\"answerCallbackQuery\", {\"callback_query_id\": callback_id, \"text\": text})"
+ },
+ {
+  "path": "agentflow/integrations/workspace.py",
+  "index": 0,
+  "start": 1,
+  "end": 18,
+  "kind": "code",
+  "content": "\"\"\"Workspace isolation and git operations.\n\nWith a target repo, the run clones it into a fresh temp dir on a new branch; the\ncoder, gate and reviewer all operate there, never in this tool's own checkout.\nIn-place mode uses a local directory (no clone, no push).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport shutil\nimport tempfile\nfrom pathlib import Path, PurePosixPath\n\nfrom git import Repo\n\nfrom agentflow.config import TargetRepo, get_settings\n\nWORKSPACE_ROOT = Path(tempfile.gettempdir()) / \"agentflow\""
+ },
+ {
+  "path": "agentflow/integrations/workspace.py",
+  "index": 1,
+  "start": 21,
+  "end": 50,
+  "kind": "code",
+  "content": "class PathEscapeError(ValueError):\n    pass\n\n\ndef resolve_in_workspace(workspace: Path, file_path: str) -> tuple[Path, str]:\n    \"\"\"Map a model-supplied path onto the workspace, refusing anything outside it.\n\n    Joining blindly is unsafe twice over: an absolute path gets concatenated (mirroring\n    /var/folders/... inside the repo) and `../` escapes the workspace. This writes\n    model-generated content to disk, so escapes are refused with a message the model\n    can act on rather than silently remapped.\n    \"\"\"\n    root = workspace.resolve()\n    candidate = Path(file_path)\n    candidate = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()\n    try:\n        rel = candidate.relative_to(root)\n    except ValueError:\n        rel = None\n    if rel is None or str(rel) in (\"\", \".\"):\n        raise PathEscapeError(\n            f'Refusing to access \"{file_path}\": path must be relative to the project root and stay '\n            f'inside it (e.g. \"src/config.py\")'\n        )\n    return candidate, PurePosixPath(rel).as_posix()\n\n\ndef repo_id(target: TargetRepo | None, workspace: Path) -> str:\n    \"\"\"Stable key for the vector index and lessons namespace.\"\"\"\n    return target.full_name if target else f\"local:{workspace.resolve()}\""
+ },
+ {
+  "path": "agentflow/integrations/workspace.py",
+  "index": 2,
+  "start": 53,
+  "end": 83,
+  "kind": "code",
+  "content": "def prepare_workspace(target: TargetRepo | None, branch: str, local_path: str | None = None) -> Path:\n    if target is None:\n        return Path(local_path or \".\").resolve()\n    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)\n    dest = Path(tempfile.mkdtemp(prefix=\"run-\", dir=WORKSPACE_ROOT))\n    token = get_settings().github_token\n    auth = f\"x-access-token:{token}@\" if token else \"\"\n    # Token lives in .git/config of the temp workspace until cleanup; never logged.\n    url = f\"https://{auth}github.com/{target.full_name}.git\"\n    repo = Repo.clone_from(url, dest, branch=target.base_branch, depth=1, single_branch=True)\n    repo.git.checkout(\"-b\", branch)\n    return dest\n\n\ndef cleanup_workspace(workspace: Path, target: TargetRepo | None) -> None:\n    if target is not None:  # never delete the caller's own directory in in-place mode\n        shutil.rmtree(workspace, ignore_errors=True)\n\n\ndef stage_and_diff(workspace: Path, paths: list[str]) -> str:\n    \"\"\"New files are untracked and `git diff` ignores them, so the reviewer once saw an\n    empty diff and rejected every task. Stage exactly the task's files (never `add -A`,\n    which sweeps in .venv/node_modules) and diff the index.\"\"\"\n    repo = Repo(workspace)\n    existing = [p for p in paths if (workspace / p).exists()]\n    if existing:\n        repo.index.add(existing)\n    try:\n        return repo.git.diff(\"--cached\", \"HEAD\")\n    except Exception:  # no HEAD yet in a brand-new repo\n        return repo.git.diff(\"--cached\")"
+ },
+ {
+  "path": "agentflow/integrations/workspace.py",
+  "index": 3,
+  "start": 86,
+  "end": 99,
+  "kind": "code",
+  "content": "def commit(workspace: Path, paths: list[str], message: str) -> bool:\n    repo = Repo(workspace)\n    existing = [p for p in paths if (workspace / p).exists()]\n    if not existing:\n        return False\n    repo.index.add(existing)\n    if repo.head.is_valid() and not repo.index.diff(\"HEAD\"):\n        return False  # nothing changed\n    repo.index.commit(message)\n    return True\n\n\ndef push(workspace: Path, branch: str) -> None:\n    Repo(workspace).git.push(\"-u\", \"origin\", branch)"
+ },
+ {
+  "path": "agentflow/mcp_server.py",
+  "index": 0,
+  "start": 1,
+  "end": 33,
+  "kind": "code",
+  "content": "\"\"\"MCP server: lets any MCP client (Claude Desktop, Claude Code, IDEs) drive agentflow.\n\nTools: start a run, inspect it, approve/reject a checkpoint, and search an indexed\nrepository with the same hybrid retriever the agents use.\n\n    uv run agentflow-mcp                      # stdio\n    uv run agentflow-mcp --http               # streamable HTTP on :8001\n\"\"\"\n\nfrom __future__ import annotations\n\nimport sys\nimport uuid\nfrom typing import Any\n\nfrom arq import create_pool\nfrom arq.connections import RedisSettings\nfrom mcp.server.mcpserver import MCPServer\n\nfrom agentflow.config import TargetRepo, WorkflowConfig, get_settings\nfrom agentflow.rag.embeddings import get_embeddings\nfrom agentflow.rag.retriever import HybridRetriever, pack_context\nfrom agentflow.rag.store import PgVectorStore\nfrom agentflow.runner import open_persistence, snapshot, validate_decision\n\nmcp = MCPServer(\n    \"agentflow\",\n    instructions=\"Start and supervise autonomous coding runs; search indexed repositories.\",\n)\n\n\nasync def _queue():\n    return await create_pool(RedisSettings.from_dsn(get_settings().redis_url))"
+ },
+ {
+  "path": "agentflow/mcp_server.py",
+  "index": 1,
+  "start": 32,
+  "end": 60,
+  "kind": "code",
+  "content": "async def _queue():\n    return await create_pool(RedisSettings.from_dsn(get_settings().redis_url))\n\n\n@mcp.tool()\nasync def start_run(prompt: str, repo: str | None = None, base_branch: str = \"main\") -> dict[str, str]:\n    \"\"\"Start a coding run. `repo` is owner/name (a PR is opened there); omit it for a local in-place run.\"\"\"\n    cfg = WorkflowConfig(target_repo=TargetRepo.parse(repo, base_branch) if repo else None)\n    thread_id = f\"mcp-{uuid.uuid4().hex[:12]}\"\n    q = await _queue()\n    await q.enqueue_job(\"start_run_job\", prompt, cfg.model_dump(), thread_id, None, \"mcp\")\n    await q.aclose()\n    return {\"thread_id\": thread_id, \"status\": \"queued\"}\n\n\n@mcp.tool()\nasync def get_run(thread_id: str) -> dict[str, Any]:\n    \"\"\"Current status of a run: spec, tasks, pending approval, PR link.\"\"\"\n    async with open_persistence() as p:\n        return (await snapshot(p.graph, thread_id)).to_json()\n\n\n@mcp.tool()\nasync def review_checkpoint(thread_id: str, approved: bool, feedback: str | None = None) -> dict[str, str]:\n    \"\"\"Approve or reject the spec/plan a run is waiting on. Rejections should carry feedback.\"\"\"\n    q = await _queue()\n    await q.enqueue_job(\"resume_run_job\", thread_id, {\"approved\": approved, \"feedback\": feedback})\n    await q.aclose()\n    return {\"thread_id\": thread_id, \"status\": \"resuming\"}"
+ },
+ {
+  "path": "agentflow/mcp_server.py",
+  "index": 2,
+  "start": 63,
+  "end": 84,
+  "kind": "code",
+  "content": "@mcp.tool()\nasync def resolve_failed_task(thread_id: str, action: str, hint: str | None = None) -> dict[str, str]:\n    \"\"\"A run is paused because a task ran out of budget (get_run shows the dossier).\n    action: \"retry\" (fresh budget; put what to do differently in `hint`), \"replan\" (rewrite the\n    remaining plan; `hint` says how), \"skip\" (drop it and its dependents) or \"abort\" (stop the run).\"\"\"\n    async with open_persistence() as p:\n        snap = await snapshot(p.graph, thread_id)\n    if snap.interrupt is None or snap.interrupt.get(\"type\") != \"task_failed\":\n        return {\"thread_id\": thread_id, \"status\": \"not waiting on a failed task\"}\n    decision = validate_decision(snap.interrupt, {\"action\": action, \"hint\": hint})\n    q = await _queue()\n    await q.enqueue_job(\"resume_run_job\", thread_id, decision, _job_id=f\"resume:{thread_id}:{snap.checkpoint_id}\")\n    await q.aclose()\n    return {\"thread_id\": thread_id, \"status\": \"resuming\"}\n\n\n@mcp.tool()\nasync def search_codebase(repo: str, query: str, k: int = 8) -> str:\n    \"\"\"Hybrid (vector + keyword) search over an indexed repository, e.g. repo=\"octo/shop\".\"\"\"\n    s = get_settings()\n    retriever = HybridRetriever(PgVectorStore(s.database_url, s.embedding_dim), get_embeddings(), repo)\n    return pack_context(await retriever.search(query, k=k), budget_tokens=6000) or \"No results.\""
+ },
+ {
+  "path": "agentflow/mcp_server.py",
+  "index": 3,
+  "start": 87,
+  "end": 95,
+  "kind": "code",
+  "content": "def main() -> None:\n    if \"--http\" in sys.argv:\n        mcp.run(\"streamable-http\", port=8001)\n    else:\n        mcp.run(\"stdio\")\n\n\nif __name__ == \"__main__\":\n    main()"
+ },
+ {
+  "path": "agentflow/memory/lessons.py",
+  "index": 0,
+  "start": 1,
+  "end": 18,
+  "kind": "code",
+  "content": "\"\"\"Long-term memory: review feedback that cost a task a cycle, recalled for later tasks.\n\nPer-run state lives in the checkpointer and dies with the thread. Lessons live in the\nLangGraph Store, namespaced by repository, so a mistake the reviewer caught in one\nrun (\"use the repo's `Result` type, don't raise\") is in the coder's prompt next run.\nSearch is semantic: the Store is created with an embedding index.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport hashlib\nfrom datetime import UTC, datetime\n\nfrom langgraph.store.base import BaseStore\n\nfrom agentflow.schemas import ReviewCycle, Task\n\nMAX_LESSONS_PER_TASK = 3"
+ },
+ {
+  "path": "agentflow/memory/lessons.py",
+  "index": 1,
+  "start": 21,
+  "end": 50,
+  "kind": "code",
+  "content": "def _ns(repo: str) -> tuple[str, ...]:\n    return (\"lessons\", repo.replace(\".\", \"_\"))\n\n\nasync def remember_review_feedback(store: BaseStore, repo: str, task: Task, cycles: list[ReviewCycle]) -> int:\n    \"\"\"Record reviewer judgements (not gate output, not reviewer malfunctions).\"\"\"\n    saved = 0\n    for cycle in cycles:\n        if cycle.verdict != \"changes_requested\" or cycle.reviewer_malfunction:\n            continue\n        for request in cycle.change_requests[:MAX_LESSONS_PER_TASK]:\n            key = hashlib.sha1(request.encode()).hexdigest()[:16]\n            await store.aput(\n                _ns(repo),\n                key,\n                {\n                    \"text\": request,\n                    \"task\": task.title,\n                    \"created_at\": datetime.now(UTC).isoformat(),\n                },\n            )\n            saved += 1\n    return saved\n\n\nasync def recall_lessons(store: BaseStore | None, repo: str, query: str, limit: int = 5) -> list[str]:\n    if store is None:\n        return []\n    items = await store.asearch(_ns(repo), query=query, limit=limit)\n    return [f\"{i.value['text']} (from task: {i.value.get('task', '?')})\" for i in items]"
+ },
+ {
+  "path": "agentflow/models.py",
+  "index": 0,
+  "start": 1,
+  "end": 23,
+  "kind": "code",
+  "content": "\"\"\"Chat model factory with provider fallbacks and transport-level retries.\n\nEach role (orchestrator, test generator, coder, reviewer) is configured by model\nname. Structured calls get a `.with_fallbacks()` chain so an outage or rate limit on\none provider degrades to another instead of failing the run; the tool-using coder\nagent gets the equivalent through `ModelFallbackMiddleware` (see agents/coder.py).\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Any\n\nfrom langchain_anthropic import ChatAnthropic\nfrom langchain_core.language_models import BaseChatModel\nfrom langchain_core.runnables import Runnable\nfrom langchain_openai import ChatOpenAI\n\nfrom agentflow.config import get_settings\n\n# Opus runs adaptive thinking; a non-streaming request whose max_tokens implies it\n# could exceed 10 minutes is refused by the SDK. 16k is verified for both plain and\n# structured (forced tool_choice) calls.\nDEFAULT_MAX_TOKENS = 16_000"
+ },
+ {
+  "path": "agentflow/models.py",
+  "index": 1,
+  "start": 26,
+  "end": 57,
+  "kind": "code",
+  "content": "def chat_model(\n    name: str,\n    *,\n    temperature: float | None = None,\n    max_tokens: int = DEFAULT_MAX_TOKENS,\n    forces_tool_choice: bool = False,\n) -> BaseChatModel:\n    s = get_settings()\n    if name.startswith(\"claude-\"):\n        kwargs: dict[str, Any] = {\"model\": name, \"max_tokens\": max_tokens, \"max_retries\": 3}\n        if s.anthropic_api_key:  # from .env via pydantic-settings; the SDK itself only reads os.environ\n            kwargs[\"api_key\"] = s.anthropic_api_key\n        if temperature is not None and \"opus\" not in name:  # opus thinking rejects temperature\n            kwargs[\"temperature\"] = temperature\n        return ChatAnthropic(**kwargs)\n    if name.startswith(\"cpx\"):\n        # Claude through an OpenAI-compatible proxy (cpxopus / cpxsonnet / cpxhaiku), which\n        # translates chat.completions — tools and tool_choice included — into Anthropic messages.\n        return ChatOpenAI(\n            model=name,\n            temperature=temperature if \"opus\" not in name else None,\n            max_tokens=max_tokens,  # type: ignore[call-arg]\n            api_key=s.claude_proxy_key or \"unset\",  # type: ignore[arg-type]\n            base_url=s.claude_proxy_url,\n            max_retries=3,\n        )\n    if name.startswith(\"deepseek-\"):\n        return ChatOpenAI(\n            model=name,\n            temperature=temperature,\n            max_tokens=max_tokens,  # type: ignore[call-arg]\n            api_key=s.deepseek_api_key or \"unset\",  # type: ignore[arg-type]"
+ },
+ {
+  "path": "agentflow/models.py",
+  "index": 2,
+  "start": 56,
+  "end": 66,
+  "kind": "code",
+  "content": "max_tokens=max_tokens,  # type: ignore[call-arg]\n            api_key=s.deepseek_api_key or \"unset\",  # type: ignore[arg-type]\n            base_url=s.deepseek_base_url,\n            max_retries=3,\n            # DeepSeek's thinking mode rejects a forced tool_choice, which is what\n            # with_structured_output(method=\"function_calling\") sends. Non-OpenAI params\n            # must travel in extra_body: model_kwargs reach create() as kwargs and the SDK\n            # raises TypeError, which took down every structured DeepSeek call.\n            extra_body={\"thinking\": {\"type\": \"disabled\"}} if forces_tool_choice else None,\n        )\n    raise ValueError(f\"Unknown model: {name}\")"
+ },
+ {
+  "path": "agentflow/models.py",
+  "index": 3,
+  "start": 69,
+  "end": 96,
+  "kind": "code",
+  "content": "def _fallback_name(primary: str, fallback: str | None) -> str | None:\n    fb = fallback if fallback is not None else get_settings().fallback_model\n    return fb if fb and fb != primary else None\n\n\ndef structured(name: str, schema: type, *, fallback: str | None = None) -> Runnable:\n    \"\"\"Structured-output runnable: primary model, then fallback model on error.\n\n    Fallbacks are attached *after* with_structured_output — a RunnableWithFallbacks\n    has no with_structured_output of its own.\n    \"\"\"\n\n    def make(model_name: str) -> Runnable:\n        model = chat_model(model_name, forces_tool_choice=True)\n        # No custom tool `name`: ChatOpenAI forwards unknown kwargs to create(), which\n        # rejects them. The tool is named after the Pydantic class on every provider.\n        return model.with_structured_output(schema, method=\"function_calling\")\n\n    primary = make(name)\n    fb = _fallback_name(name, fallback)\n    return primary.with_fallbacks([make(fb)]) if fb else primary\n\n\ndef text_model(name: str, *, fallback: str | None = None) -> Runnable:\n    \"\"\"Free-form text model with a fallback chain.\"\"\"\n    primary = chat_model(name)\n    fb = _fallback_name(name, fallback)\n    return primary.with_fallbacks([chat_model(fb)]) if fb else primary"
+ },
+ {
+  "path": "agentflow/models.py",
+  "index": 4,
+  "start": 99,
+  "end": 105,
+  "kind": "code",
+  "content": "def text_of(message: Any) -> str:\n    \"\"\"Text of an AIMessage. Opus returns a block list (thinking + text); reading only\n    the string case once shipped every PR with a placeholder body.\"\"\"\n    content = getattr(message, \"content\", message)\n    if isinstance(content, str):\n        return content\n    return \"\".join(b.get(\"text\", \"\") for b in content if isinstance(b, dict) and b.get(\"type\") == \"text\")"
+ },
+ {
+  "path": "agentflow/observability.py",
+  "index": 0,
+  "start": 1,
+  "end": 18,
+  "kind": "code",
+  "content": "\"\"\"JSON logs, Prometheus metrics and LangSmith trace metadata in one place.\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport logging\nimport sys\nimport time\n\nfrom prometheus_client import Counter, Histogram\n\nRUNS_STARTED = Counter(\"agentflow_runs_started_total\", \"Workflow runs started\", [\"trigger\"])\nRUNS_FINISHED = Counter(\"agentflow_runs_finished_total\", \"Runs reaching a terminal or paused state\", [\"status\"])\nAPPROVALS = Counter(\"agentflow_approvals_total\", \"Human approval decisions\", [\"decision\", \"channel\"])\nJOB_SECONDS = Histogram(\n    \"agentflow_job_seconds\", \"Worker job wall time\", [\"job\"], buckets=(1, 5, 30, 60, 300, 900, 1800, 3600, 7200)\n)\nHTTP_REQUESTS = Counter(\"agentflow_http_requests_total\", \"API requests\", [\"route\", \"status\"])"
+ },
+ {
+  "path": "agentflow/observability.py",
+  "index": 1,
+  "start": 21,
+  "end": 44,
+  "kind": "code",
+  "content": "class JsonFormatter(logging.Formatter):\n    def format(self, record: logging.LogRecord) -> str:\n        payload = {\n            \"ts\": time.strftime(\"%Y-%m-%dT%H:%M:%S\", time.gmtime(record.created)),\n            \"level\": record.levelname.lower(),\n            \"logger\": record.name,\n            \"msg\": record.getMessage(),\n        }\n        data = getattr(record, \"data\", None)\n        if data:\n            payload[\"data\"] = data\n        if record.exc_info:\n            payload[\"exc\"] = self.formatException(record.exc_info)\n        return json.dumps(payload, default=str)\n\n\ndef setup_logging(level: str = \"INFO\", json_logs: bool = True) -> None:\n    handler = logging.StreamHandler(sys.stdout)\n    handler.setFormatter(JsonFormatter() if json_logs else logging.Formatter(\"%(levelname)s %(name)s: %(message)s\"))\n    root = logging.getLogger()\n    root.handlers[:] = [handler]\n    root.setLevel(level)\n    for noisy in (\"httpx\", \"httpcore\", \"urllib3\"):\n        logging.getLogger(noisy).setLevel(logging.WARNING)"
+ },
+ {
+  "path": "agentflow/rag/chunking.py",
+  "index": 0,
+  "start": 1,
+  "end": 38,
+  "kind": "code",
+  "content": "\"\"\"Code-aware chunking with line ranges and a contextual header per chunk.\n\nSplitting on language boundaries (class/def/function) keeps a chunk semantically\nwhole; the `path` header is embedded with the body so a query like \"where is auth\nconfigured\" can match on the file name even when the body never says \"auth\".\n\"\"\"\n\nfrom __future__ import annotations\n\nimport hashlib\nimport subprocess\nfrom dataclasses import dataclass, field\nfrom pathlib import Path\n\nfrom langchain_text_splitters import Language, RecursiveCharacterTextSplitter\n\nCHUNK_SIZE = 1500\nCHUNK_OVERLAP = 150\nMAX_FILE_BYTES = 200_000\n\nLANGUAGE_BY_EXT: dict[str, Language] = {\n    \".py\": Language.PYTHON,\n    \".ts\": Language.TS,\n    \".tsx\": Language.TS,\n    \".js\": Language.JS,\n    \".jsx\": Language.JS,\n    \".go\": Language.GO,\n    \".rs\": Language.RUST,\n    \".java\": Language.JAVA,\n    \".md\": Language.MARKDOWN,\n}\nTEXT_EXTS = {\".json\", \".toml\", \".yaml\", \".yml\", \".txt\", \".cfg\", \".ini\", \".sql\", \".sh\", \".css\", \".html\"}\nDOC_EXTS = {\".md\", \".rst\", \".txt\"}\nSKIP_DIRS = {\".git\", \"node_modules\", \".venv\", \"venv\", \"__pycache__\", \"dist\", \"build\", \".mypy_cache\", \".next\"}\nSKIP_FILES = {\"package-lock.json\", \"uv.lock\", \"poetry.lock\", \"yarn.lock\", \"pnpm-lock.yaml\"}\n\n\n@dataclass"
+ },
+ {
+  "path": "agentflow/rag/chunking.py",
+  "index": 1,
+  "start": 39,
+  "end": 80,
+  "kind": "code",
+  "content": "class Chunk:\n    path: str\n    index: int\n    content: str\n    start_line: int\n    end_line: int\n    kind: str  # \"code\" | \"doc\"\n    file_hash: str\n    metadata: dict = field(default_factory=dict)\n\n    @property\n    def id(self) -> str:\n        return f\"{self.path}#{self.index}\"\n\n    def embedding_text(self) -> str:\n        return f\"File: {self.path} (lines {self.start_line}-{self.end_line})\\n\\n{self.content}\"\n\n\ndef file_hash(data: bytes) -> str:\n    return hashlib.sha256(data).hexdigest()\n\n\ndef list_files(root: Path) -> list[str]:\n    \"\"\"Repo-relative paths worth indexing. Uses git when available so .gitignore holds.\"\"\"\n    try:\n        out = subprocess.run(\n            [\"git\", \"ls-files\", \"--cached\", \"--others\", \"--exclude-standard\"],\n            cwd=root,\n            capture_output=True,\n            text=True,\n            check=True,\n        ).stdout.splitlines()\n    except (subprocess.CalledProcessError, FileNotFoundError):\n        out = [str(p.relative_to(root)) for p in root.rglob(\"*\") if p.is_file()]\n    keep = []\n    for rel in out:\n        p = Path(rel)\n        if any(part in SKIP_DIRS for part in p.parts) or p.name in SKIP_FILES:\n            continue\n        if p.suffix in LANGUAGE_BY_EXT or p.suffix in TEXT_EXTS:\n            keep.append(rel)\n    return sorted(keep)"
+ },
+ {
+  "path": "agentflow/rag/chunking.py",
+  "index": 2,
+  "start": 83,
+  "end": 114,
+  "kind": "code",
+  "content": "def _splitter(suffix: str) -> RecursiveCharacterTextSplitter:\n    lang = LANGUAGE_BY_EXT.get(suffix)\n    if lang is not None:\n        return RecursiveCharacterTextSplitter.from_language(lang, chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)\n    return RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)\n\n\ndef chunk_file(path: str, text: str, digest: str) -> list[Chunk]:\n    suffix = Path(path).suffix\n    kind = \"doc\" if suffix in DOC_EXTS else \"code\"\n    pieces = _splitter(suffix).split_text(text)\n    chunks: list[Chunk] = []\n    cursor = 0\n    for i, piece in enumerate(pieces):\n        # Locate each piece to recover its line range; overlap means it may start\n        # before the previous piece ended, so search from a little behind the cursor.\n        pos = text.find(piece, max(0, cursor - CHUNK_OVERLAP * 2))\n        if pos == -1:\n            pos = cursor\n        start = text.count(\"\\n\", 0, pos) + 1\n        end = start + piece.count(\"\\n\")\n        cursor = pos + len(piece)\n        chunks.append(Chunk(path, i, piece, start, end, kind, digest))\n    return chunks\n\n\ndef read_and_chunk(root: Path, rel: str) -> tuple[str, list[Chunk]] | None:\n    data = (root / rel).read_bytes()\n    if len(data) > MAX_FILE_BYTES or b\"\\x00\" in data[:4096]:\n        return None\n    digest = file_hash(data)\n    return digest, chunk_file(rel, data.decode(\"utf-8\", errors=\"replace\"), digest)"
+ },
+ {
+  "path": "agentflow/rag/embeddings.py",
+  "index": 0,
+  "start": 1,
+  "end": 19,
+  "kind": "code",
+  "content": "\"\"\"Embedding model selection. Voyage `voyage-code-3` is trained on code and uses\nseparate document/query input types, which matters for asymmetric code search.\"\"\"\n\nfrom __future__ import annotations\n\nfrom langchain_core.embeddings import DeterministicFakeEmbedding, Embeddings\n\nfrom agentflow.config import get_settings\n\n\ndef get_embeddings() -> Embeddings:\n    s = get_settings()\n    if s.voyage_api_key:\n        from langchain_voyageai import VoyageAIEmbeddings\n\n        return VoyageAIEmbeddings(model=s.embedding_model, api_key=s.voyage_api_key, batch_size=64)  # type: ignore[arg-type]\n    # No key: deterministic hash vectors keep the pipeline runnable offline. Dense\n    # scores are meaningless then, but hybrid search still works through FTS.\n    return DeterministicFakeEmbedding(size=s.embedding_dim)"
+ },
+ {
+  "path": "agentflow/rag/indexer.py",
+  "index": 0,
+  "start": 1,
+  "end": 22,
+  "kind": "code",
+  "content": "\"\"\"Incremental repo indexer: only files whose content hash changed are re-embedded.\n\nRuns once when a workspace is prepared and again after every completed task, so a\nlater task can retrieve code an earlier task just wrote.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom dataclasses import dataclass\nfrom pathlib import Path\n\nfrom langchain_core.embeddings import Embeddings\n\nfrom agentflow.rag.chunking import Chunk, list_files, read_and_chunk\nfrom agentflow.rag.store import ChunkStore\n\nlog = logging.getLogger(__name__)\nEMBED_BATCH = 64\n\n\n@dataclass"
+ },
+ {
+  "path": "agentflow/rag/indexer.py",
+  "index": 1,
+  "start": 23,
+  "end": 54,
+  "kind": "code",
+  "content": "class IndexStats:\n    files_seen: int = 0\n    files_embedded: int = 0\n    files_deleted: int = 0\n    chunks_embedded: int = 0\n\n\nasync def index_repo(root: Path, repo: str, store: ChunkStore, embeddings: Embeddings) -> IndexStats:\n    stats = IndexStats()\n    stored = await store.file_hashes(repo)\n    current: dict[str, tuple[str, list[Chunk]]] = {}\n    for rel in list_files(root):\n        result = read_and_chunk(root, rel)\n        if result:\n            current[rel] = result\n    stats.files_seen = len(current)\n\n    gone = [p for p in stored if p not in current]\n    changed = [p for p, (digest, _) in current.items() if stored.get(p) != digest]\n    # Changed files are deleted first: a file that shrank leaves stale tail chunks otherwise.\n    await store.delete_paths(repo, gone + changed)\n    stats.files_deleted = len(gone)\n\n    pending = [ch for p in changed for ch in current[p][1]]\n    for i in range(0, len(pending), EMBED_BATCH):\n        batch = pending[i : i + EMBED_BATCH]\n        vectors = await embeddings.aembed_documents([c.embedding_text() for c in batch])\n        await store.upsert(repo, batch, vectors)\n    stats.files_embedded = len(changed)\n    stats.chunks_embedded = len(pending)\n    log.info(\"indexed %s: %s\", repo, stats)\n    return stats"
+ },
+ {
+  "path": "agentflow/rag/retriever.py",
+  "index": 0,
+  "start": 1,
+  "end": 36,
+  "kind": "code",
+  "content": "\"\"\"Hybrid retrieval (dense + lexical, fused with Reciprocal Rank Fusion) and\ntoken-budgeted context packing.\n\nDense search finds code by meaning (\"where are users persisted\"); lexical search\nfinds exact identifiers (`resolve_in_workspace`) that embeddings blur. RRF merges\nthe two rankings without having to calibrate their incompatible scores.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections import defaultdict\nfrom dataclasses import dataclass\n\nimport tiktoken\nfrom langchain_core.embeddings import Embeddings\n\nfrom agentflow.rag.store import ChunkStore, Hit\n\nRRF_K = 60\n_enc = tiktoken.get_encoding(\"cl100k_base\")\n\n\ndef rrf_merge(rankings: list[list[Hit]], k: int) -> list[Hit]:\n    scores: dict[str, float] = defaultdict(float)\n    by_id: dict[str, Hit] = {}\n    for ranking in rankings:\n        for rank, hit in enumerate(ranking):\n            scores[hit.id] += 1.0 / (RRF_K + rank + 1)\n            by_id.setdefault(hit.id, hit)\n    fused = sorted(by_id.values(), key=lambda h: -scores[h.id])\n    for h in fused:\n        h.score = scores[h.id]\n    return fused[:k]\n\n\n@dataclass"
+ },
+ {
+  "path": "agentflow/rag/retriever.py",
+  "index": 1,
+  "start": 37,
+  "end": 74,
+  "kind": "code",
+  "content": "class HybridRetriever:\n    store: ChunkStore\n    embeddings: Embeddings\n    repo: str\n    candidates: int = 20\n\n    async def search(self, query: str, k: int = 8, kind: str | None = None) -> list[Hit]:\n        vector = await self.embeddings.aembed_query(query)\n        dense = await self.store.search_vector(self.repo, vector, self.candidates, kind)\n        lexical = await self.store.search_text(self.repo, query, self.candidates, kind)\n        return rrf_merge([dense, lexical], k)\n\n\ndef count_tokens(text: str) -> int:\n    return len(_enc.encode(text, disallowed_special=()))\n\n\ndef pack_context(hits: list[Hit], budget_tokens: int = 6000) -> str:\n    \"\"\"Render hits as fenced snippets, best first, until the budget is spent.\n    Adjacent chunks of the same file are merged so the model sees contiguous code.\"\"\"\n    by_path: dict[str, list[Hit]] = defaultdict(list)\n    order: list[str] = []\n    for h in hits:\n        if h.path not in by_path:\n            order.append(h.path)\n        by_path[h.path].append(h)\n\n    out: list[str] = []\n    used = 0\n    for path in order:\n        for h in sorted(by_path[path], key=lambda x: x.start_line):\n            block = f\"### {path} (lines {h.start_line}-{h.end_line})\\n```\\n{h.content}\\n```\"\n            cost = count_tokens(block)\n            if used + cost > budget_tokens:\n                return \"\\n\\n\".join(out)\n            out.append(block)\n            used += cost\n    return \"\\n\\n\".join(out)"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 0,
+  "start": 1,
+  "end": 48,
+  "kind": "code",
+  "content": "\"\"\"Chunk storage with two search modes: dense (pgvector cosine) and lexical (Postgres FTS).\n\nA hand-written table rather than a generic vector-store wrapper, because hybrid\nsearch needs the full-text index next to the embedding, and incremental indexing\nneeds per-file hashes — neither of which a generic wrapper exposes.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport math\nimport re\nfrom collections import Counter\nfrom dataclasses import dataclass\nfrom typing import Any, Protocol\n\nfrom psycopg import AsyncConnection\nfrom psycopg.rows import dict_row\n\nfrom agentflow.rag.chunking import Chunk\n\n\n@dataclass\nclass Hit:\n    path: str\n    index: int\n    content: str\n    start_line: int\n    end_line: int\n    kind: str\n    score: float = 0.0\n\n    @property\n    def id(self) -> str:\n        return f\"{self.path}#{self.index}\"\n\n\nclass ChunkStore(Protocol):\n    async def setup(self) -> None: ...\n    async def file_hashes(self, repo: str) -> dict[str, str]: ...\n    async def repos(self) -> list[str]: ...\n    async def delete_paths(self, repo: str, paths: list[str]) -> None: ...\n    async def upsert(self, repo: str, chunks: list[Chunk], vectors: list[list[float]]) -> None: ...\n    async def search_vector(self, repo: str, vector: list[float], k: int, kind: str | None) -> list[Hit]: ...\n    async def search_text(self, repo: str, query: str, k: int, kind: str | None) -> list[Hit]: ...\n\n\ndef _vec(v: list[float]) -> str:\n    return \"[\" + \",\".join(f\"{x:.7f}\" for x in v) + \"]\""
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 1,
+  "start": 51,
+  "end": 60,
+  "kind": "code",
+  "content": "class PgVectorStore:\n    def __init__(self, dsn: str, dim: int = 1024, table: str = \"code_chunks\"):\n        if not table.isidentifier():\n            raise ValueError(f\"bad table name {table!r}\")\n        self.dsn = dsn\n        self.dim = dim\n        self.table = table\n\n    async def _conn(self) -> AsyncConnection[Any]:\n        return await AsyncConnection.connect(self.dsn, autocommit=True, row_factory=dict_row)  # type: ignore[arg-type]"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 2,
+  "start": 62,
+  "end": 86,
+  "kind": "code",
+  "content": "async def setup(self) -> None:\n        async with await self._conn() as c:\n            await c.execute(\"CREATE EXTENSION IF NOT EXISTS vector\")\n            await c.execute(\n                f\"\"\"\n                CREATE TABLE IF NOT EXISTS {self.table} (\n                    repo        text NOT NULL,\n                    path        text NOT NULL,\n                    chunk_index int  NOT NULL,\n                    kind        text NOT NULL,\n                    content     text NOT NULL,\n                    start_line  int  NOT NULL,\n                    end_line    int  NOT NULL,\n                    file_hash   text NOT NULL,\n                    embedding   vector({self.dim}) NOT NULL,\n                    tsv tsvector GENERATED ALWAYS AS (\n                        to_tsvector('english', regexp_replace(path || ' ' || content, '[_./-]', ' ', 'g'))\n                    ) STORED,\n                    PRIMARY KEY (repo, path, chunk_index)\n                )\"\"\"\n            )\n            await c.execute(\n                f\"CREATE INDEX IF NOT EXISTS {self.table}_hnsw ON {self.table} USING hnsw (embedding vector_cosine_ops)\"\n            )\n            await c.execute(f\"CREATE INDEX IF NOT EXISTS {self.table}_tsv ON {self.table} USING gin (tsv)\")"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 3,
+  "start": 88,
+  "end": 104,
+  "kind": "code",
+  "content": "async def file_hashes(self, repo: str) -> dict[str, str]:\n        async with await self._conn() as c:\n            rows = await (\n                await c.execute(f\"SELECT DISTINCT path, file_hash FROM {self.table} WHERE repo = %s\", (repo,))\n            ).fetchall()\n        return {r[\"path\"]: r[\"file_hash\"] for r in rows}  # type: ignore[call-overload]\n\n    async def repos(self) -> list[str]:\n        async with await self._conn() as c:\n            rows = await (await c.execute(f\"SELECT DISTINCT repo FROM {self.table} ORDER BY repo\")).fetchall()\n        return [r[\"repo\"] for r in rows]  # type: ignore[call-overload]\n\n    async def delete_paths(self, repo: str, paths: list[str]) -> None:\n        if not paths:\n            return\n        async with await self._conn() as c:\n            await c.execute(f\"DELETE FROM {self.table} WHERE repo = %s AND path = ANY(%s)\", (repo, paths))"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 4,
+  "start": 106,
+  "end": 121,
+  "kind": "code",
+  "content": "async def upsert(self, repo: str, chunks: list[Chunk], vectors: list[list[float]]) -> None:\n        if not chunks:\n            return\n        async with await self._conn() as c, c.cursor() as cur:\n            await cur.executemany(\n                f\"\"\"INSERT INTO {self.table}\n                   (repo, path, chunk_index, kind, content, start_line, end_line, file_hash, embedding)\n                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)\n                   ON CONFLICT (repo, path, chunk_index) DO UPDATE SET\n                     kind=EXCLUDED.kind, content=EXCLUDED.content, start_line=EXCLUDED.start_line,\n                     end_line=EXCLUDED.end_line, file_hash=EXCLUDED.file_hash, embedding=EXCLUDED.embedding\"\"\",\n                [\n                    (repo, ch.path, ch.index, ch.kind, ch.content, ch.start_line, ch.end_line, ch.file_hash, _vec(v))\n                    for ch, v in zip(chunks, vectors, strict=True)\n                ],\n            )"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 5,
+  "start": 123,
+  "end": 151,
+  "kind": "code",
+  "content": "async def search_vector(self, repo: str, vector: list[float], k: int, kind: str | None) -> list[Hit]:\n        async with await self._conn() as c:\n            rows = await (\n                await c.execute(\n                    f\"\"\"SELECT path, chunk_index, content, start_line, end_line, kind,\n                              1 - (embedding <=> %s::vector) AS score\n                       FROM {self.table} WHERE repo = %s AND (%s::text IS NULL OR kind = %s)\n                       ORDER BY embedding <=> %s::vector LIMIT %s\"\"\",\n                    (_vec(vector), repo, kind, kind, _vec(vector), k),\n                )\n            ).fetchall()\n        return [_hit(r) for r in rows]\n\n    async def search_text(self, repo: str, query: str, k: int, kind: str | None) -> list[Hit]:\n        terms = \" | \".join(_tokens(query))\n        if not terms:\n            return []\n        async with await self._conn() as c:\n            rows = await (\n                await c.execute(\n                    f\"\"\"SELECT path, chunk_index, content, start_line, end_line, kind,\n                              ts_rank_cd(tsv, q) AS score\n                       FROM {self.table}, to_tsquery('english', %s) q\n                       WHERE repo = %s AND tsv @@ q AND (%s::text IS NULL OR kind = %s)\n                       ORDER BY score DESC LIMIT %s\"\"\",\n                    (terms, repo, kind, kind, k),\n                )\n            ).fetchall()\n        return [_hit(r) for r in rows]"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 6,
+  "start": 154,
+  "end": 169,
+  "kind": "code",
+  "content": "def _hit(r: Any) -> Hit:\n    return Hit(r[\"path\"], r[\"chunk_index\"], r[\"content\"], r[\"start_line\"], r[\"end_line\"], r[\"kind\"], float(r[\"score\"]))\n\n\ndef _stem(token: str) -> str:\n    for suffix in (\"ing\", \"ed\", \"es\", \"s\"):\n        if token.endswith(suffix) and len(token) - len(suffix) >= 3:\n            return token[: -len(suffix)]\n    return token\n\n\ndef _tokens(text: str) -> list[str]:\n    \"\"\"Identifier-aware tokens: split snake_case, camelCase and paths, then stem lightly\n    so \"passwords hashed\" meets `password_hash`.\"\"\"\n    text = re.sub(r\"([a-z])([A-Z])\", r\"\\1 \\2\", text)\n    return [_stem(t.lower()) for t in re.findall(r\"[A-Za-z0-9]+\", text) if len(t) > 1]"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 7,
+  "start": 172,
+  "end": 201,
+  "kind": "code",
+  "content": "class InMemoryStore:\n    \"\"\"Same contract without Postgres — for tests, evals and quick local runs.\"\"\"\n\n    def __init__(self) -> None:\n        self.rows: dict[tuple[str, str, int], tuple[Chunk, list[float]]] = {}\n\n    async def setup(self) -> None:\n        return None\n\n    async def file_hashes(self, repo: str) -> dict[str, str]:\n        return {ch.path: ch.file_hash for (r, _, _), (ch, _) in self.rows.items() if r == repo}\n\n    async def repos(self) -> list[str]:\n        return sorted({r for r, _, _ in self.rows})\n\n    async def delete_paths(self, repo: str, paths: list[str]) -> None:\n        drop = set(paths)\n        self.rows = {key: v for key, v in self.rows.items() if not (key[0] == repo and key[1] in drop)}\n\n    async def upsert(self, repo: str, chunks: list[Chunk], vectors: list[list[float]]) -> None:\n        for ch, v in zip(chunks, vectors, strict=True):\n            self.rows[(repo, ch.path, ch.index)] = (ch, v)\n\n    def _scoped(self, repo: str, kind: str | None):\n        return [(ch, v) for (r, _, _), (ch, v) in self.rows.items() if r == repo and (kind is None or ch.kind == kind)]\n\n    async def search_vector(self, repo: str, vector: list[float], k: int, kind: str | None) -> list[Hit]:\n        def cos(a: list[float], b: list[float]) -> float:\n            na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(x * x for x in b))\n            return sum(x * y for x, y in zip(a, b, strict=True)) / (na * nb or 1)"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 8,
+  "start": 203,
+  "end": 215,
+  "kind": "code",
+  "content": "scored = sorted(((cos(vector, v), ch) for ch, v in self._scoped(repo, kind)), key=lambda t: -t[0])\n        return [_from_chunk(ch, s) for s, ch in scored[:k]]\n\n    async def search_text(self, repo: str, query: str, k: int, kind: str | None) -> list[Hit]:\n        q = set(_tokens(query))\n        scored = []\n        for ch, _ in self._scoped(repo, kind):\n            counts = Counter(_tokens(ch.path + \" \" + ch.content))\n            score = sum(1 + math.log(counts[t]) for t in q if counts[t])\n            if score:\n                scored.append((score, ch))\n        scored.sort(key=lambda t: -t[0])\n        return [_from_chunk(ch, s) for s, ch in scored[:k]]"
+ },
+ {
+  "path": "agentflow/rag/store.py",
+  "index": 9,
+  "start": 218,
+  "end": 219,
+  "kind": "code",
+  "content": "def _from_chunk(ch: Chunk, score: float) -> Hit:\n    return Hit(ch.path, ch.index, ch.content, ch.start_line, ch.end_line, ch.kind, score)"
+ },
+ {
+  "path": "agentflow/rag/tools.py",
+  "index": 0,
+  "start": 1,
+  "end": 26,
+  "kind": "code",
+  "content": "\"\"\"RAG exposed as tools, so agents decide *when* and *what* to retrieve.\"\"\"\n\nfrom __future__ import annotations\n\nfrom langchain_core.tools import BaseTool, tool\n\nfrom agentflow.rag.retriever import HybridRetriever, pack_context\n\n\ndef make_search_tools(retriever: HybridRetriever) -> list[BaseTool]:\n    @tool\n    async def search_codebase(query: str) -> str:\n        \"\"\"Semantic + keyword search over the repository's source code. Use it to find\n        existing functions, classes, call sites and patterns before writing code.\n        Query with a description (\"where are HTTP errors mapped to responses\") or an\n        identifier (\"resolve_in_workspace\").\"\"\"\n        hits = await retriever.search(query, k=8, kind=\"code\")\n        return pack_context(hits, budget_tokens=4000) or \"No matching code found.\"\n\n    @tool\n    async def search_docs(query: str) -> str:\n        \"\"\"Search the repository's documentation (README, conventions, ADRs, specs).\"\"\"\n        hits = await retriever.search(query, k=5, kind=\"doc\")\n        return pack_context(hits, budget_tokens=3000) or \"No matching documentation found.\"\n\n    return [search_codebase, search_docs]"
+ },
+ {
+  "path": "agentflow/runner.py",
+  "index": 0,
+  "start": 1,
+  "end": 30,
+  "kind": "code",
+  "content": "\"\"\"One entry point for starting, resuming and inspecting runs — shared by the CLI,\nREST API, queue worker and MCP server so they cannot drift apart.\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nimport uuid\nfrom collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\nfrom dataclasses import dataclass\nfrom typing import Any\n\nfrom langchain_core.runnables import RunnableConfig\nfrom langgraph.checkpoint.memory import InMemorySaver\nfrom langgraph.graph.state import CompiledStateGraph\nfrom langgraph.store.memory import InMemoryStore\nfrom langgraph.types import Command\n\nfrom agentflow.config import WorkflowConfig, get_settings\nfrom agentflow.graph.build import SERDE, build_graph\nfrom agentflow.graph.context import Deps\nfrom agentflow.rag.embeddings import get_embeddings\nfrom agentflow.rag.store import ChunkStore, PgVectorStore\nfrom agentflow.rag.store import InMemoryStore as InMemoryChunkStore\nfrom agentflow.schemas import ApprovalDecision, FailureDecision\n\nlog = logging.getLogger(\"agentflow.runner\")\n\n\n@dataclass"
+ },
+ {
+  "path": "agentflow/runner.py",
+  "index": 1,
+  "start": 31,
+  "end": 64,
+  "kind": "code",
+  "content": "class Persistence:\n    graph: CompiledStateGraph\n    chunk_store: ChunkStore\n\n\n@asynccontextmanager\nasync def open_persistence(in_memory: bool = False) -> AsyncIterator[Persistence]:\n    \"\"\"Postgres for checkpoints, long-term memory and vectors — one database, three\n    roles. `in_memory` swaps all three for process-local versions (tests, demos).\"\"\"\n    s = get_settings()\n    embeddings = get_embeddings()\n    index = {\"dims\": s.embedding_dim, \"embed\": embeddings, \"fields\": [\"text\"]}\n    if in_memory:\n        yield Persistence(\n            build_graph(InMemorySaver(serde=SERDE), InMemoryStore(index=index)),  # type: ignore[arg-type]\n            InMemoryChunkStore(),\n        )\n        return\n\n    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver\n    from langgraph.store.postgres.aio import AsyncPostgresStore\n\n    async with (\n        AsyncPostgresSaver.from_conn_string(s.database_url, serde=SERDE) as saver,\n        AsyncPostgresStore.from_conn_string(s.database_url, index=index) as store,  # type: ignore[arg-type]\n    ):\n        await saver.setup()\n        await store.setup()\n        chunks = PgVectorStore(s.database_url, dim=s.embedding_dim)\n        await chunks.setup()\n        yield Persistence(build_graph(saver, store), chunks)\n\n\n@dataclass"
+ },
+ {
+  "path": "agentflow/runner.py",
+  "index": 2,
+  "start": 65,
+  "end": 95,
+  "kind": "code",
+  "content": "class RunSnapshot:\n    thread_id: str\n    status: str\n    interrupt: dict[str, Any] | None\n    values: dict[str, Any]\n    checkpoint_id: str | None = None\n\n    def to_json(self) -> dict[str, Any]:\n        v = self.values\n        return {\n            \"thread_id\": self.thread_id,\n            \"status\": self.status,\n            \"pending_approval\": self.interrupt,\n            \"spec\": v[\"spec\"].model_dump() if v.get(\"spec\") else None,\n            \"tasks\": [\n                {\"id\": t.id, \"title\": t.title, \"status\": t.status, \"depends_on\": t.depends_on}\n                for t in v.get(\"tasks\", [])\n            ],\n            \"failed_tasks\": v.get(\"failed_tasks\", {}),\n            \"pull_request\": v[\"pull_request\"].model_dump() if v.get(\"pull_request\") else None,\n            \"error\": v.get(\"error\"),\n        }\n\n\ndef _config(thread_id: str) -> RunnableConfig:\n    return {\n        \"configurable\": {\"thread_id\": thread_id},\n        \"recursion_limit\": get_settings().recursion_limit,\n        \"tags\": [\"agentflow\"],\n        \"metadata\": {\"thread_id\": thread_id},\n    }"
+ },
+ {
+  "path": "agentflow/runner.py",
+  "index": 3,
+  "start": 98,
+  "end": 122,
+  "kind": "code",
+  "content": "def make_deps(p: Persistence, config: WorkflowConfig) -> Deps:\n    return Deps(chunk_store=p.chunk_store, embeddings=get_embeddings(), config=config)\n\n\nasync def snapshot(graph: CompiledStateGraph, thread_id: str) -> RunSnapshot:\n    st = await graph.aget_state(_config(thread_id))\n    interrupts = [i.value for task in st.tasks for i in task.interrupts]\n    values = st.values or {}\n    status = \"awaiting_approval\" if interrupts else values.get(\"status\", \"unknown\")\n    checkpoint_id = (st.config or {}).get(\"configurable\", {}).get(\"checkpoint_id\")\n    return RunSnapshot(thread_id, status, interrupts[0] if interrupts else None, values, checkpoint_id)\n\n\nasync def start_run(\n    p: Persistence,\n    prompt: str,\n    config: WorkflowConfig,\n    thread_id: str | None = None,\n    issue_number: int | None = None,\n    on_event: Any = None,\n) -> RunSnapshot:\n    thread_id = thread_id or f\"run-{uuid.uuid4().hex[:12]}\"\n    inp = {\"user_prompt\": prompt, \"issue_number\": issue_number, \"run_config\": config.model_dump()}\n    await _drive(p, inp, config, thread_id, on_event)\n    return await snapshot(p.graph, thread_id)"
+ },
+ {
+  "path": "agentflow/runner.py",
+  "index": 4,
+  "start": 125,
+  "end": 148,
+  "kind": "code",
+  "content": "def validate_decision(pending: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:\n    \"\"\"Check a human's answer fits the question the run is paused on.\n\n    spec/plan approvals take {\"approved\", \"feedback\"}; a failed task takes {\"action\", \"hint\"}\n    with action among the options the pause offered.\n    \"\"\"\n    if pending.get(\"type\") == \"task_failed\":\n        d = FailureDecision.model_validate(decision)\n        if d.action not in pending.get(\"options\", []):\n            raise ValueError(f\"'{d.action}' is not an option here; choose one of {pending.get('options')}\")\n        return d.model_dump(exclude={\"auto\"})\n    return ApprovalDecision.model_validate(decision).model_dump()\n\n\nasync def resume_run(\n    p: Persistence,\n    thread_id: str,\n    decision: dict[str, Any] | None = None,\n    *,\n    approved: bool | None = None,\n    feedback: str | None = None,\n    on_event: Any = None,\n) -> RunSnapshot:\n    \"\"\"Answer the question a paused run is waiting on and continue it."
+ },
+ {
+  "path": "agentflow/runner.py",
+  "index": 5,
+  "start": 150,
+  "end": 170,
+  "kind": "code",
+  "content": "`approved`/`feedback` is shorthand for a spec/plan approval decision.\n    \"\"\"\n    if decision is None:\n        if approved is None:\n            raise ValueError(\"pass a decision, or approved=…\")\n        decision = {\"approved\": approved, \"feedback\": feedback}\n    # The run's config was fixed when it started; a resume must not change targets mid-run.\n    current = await snapshot(p.graph, thread_id)\n    if current.interrupt is None:\n        raise ValueError(f\"run {thread_id} is not waiting for a decision (status: {current.status})\")\n    resume = validate_decision(current.interrupt, decision)\n    config = WorkflowConfig.model_validate(current.values[\"run_config\"])\n    await _drive(p, Command(resume=resume), config, thread_id, on_event)\n    return await snapshot(p.graph, thread_id)\n\n\nCRASH_PREFIX = \"Run crashed: \"\n\n\nasync def _drive(p: Persistence, inp: Any, config: WorkflowConfig, thread_id: str, on_event: Any) -> None:\n    \"\"\"Run until the graph finishes or pauses at an interrupt, forwarding progress events."
+ },
+ {
+  "path": "agentflow/runner.py",
+  "index": 6,
+  "start": 172,
+  "end": 185,
+  "kind": "code",
+  "content": "A node that still fails after its retries and fallbacks would otherwise leave the run\n    with no terminal status — pollers wait forever and nobody is told. Record it as failed\n    (routed through handle_failure's edge, which ends the graph) instead of raising.\n    \"\"\"\n    try:\n        async for chunk in p.graph.astream(  # type: ignore[call-overload]\n            inp, _config(thread_id), context=make_deps(p, config), stream_mode=\"custom\"\n        ):\n            if on_event:\n                await on_event(chunk)\n    except Exception as exc:  # noqa: BLE001\n        log.exception(\"run %s crashed\", thread_id)\n        error = f\"{CRASH_PREFIX}{type(exc).__name__}: {str(exc)[:1000]}\"\n        await p.graph.aupdate_state(_config(thread_id), {\"status\": \"failed\", \"error\": error}, as_node=\"handle_failure\")"
+ },
+ {
+  "path": "agentflow/schemas.py",
+  "index": 0,
+  "start": 1,
+  "end": 25,
+  "kind": "code",
+  "content": "\"\"\"Domain models shared by agents, graph nodes, API and MCP server.\"\"\"\n\nfrom __future__ import annotations\n\nfrom datetime import UTC, datetime\nfrom typing import Any, Literal\n\nfrom pydantic import BaseModel, Field, field_validator\n\nTaskStatus = Literal[\"pending\", \"coding\", \"completed\", \"failed\"]\nReviewVerdict = Literal[\"approved\", \"changes_requested\", \"failed\"]\n\n\ndef _now() -> str:\n    return datetime.now(UTC).isoformat()\n\n\ndef _split_lines(value: Any) -> Any:\n    \"\"\"Models occasionally return a bullet-delimited string where a list was asked for.\"\"\"\n    if isinstance(value, str):\n        return [line.lstrip(\"-* \").strip() for line in value.splitlines() if line.strip()]\n    return value\n\n\n# ─── LLM output schemas (structured outputs) ────────────────────────────────"
+ },
+ {
+  "path": "agentflow/schemas.py",
+  "index": 1,
+  "start": 28,
+  "end": 41,
+  "kind": "code",
+  "content": "class SpecDraft(BaseModel):\n    title: str = Field(description=\"Short feature/project title\")\n    goal: str = Field(description=\"What problem this solves and why\")\n    constraints: list[str] = Field(description=\"Tech stack, limitations, non-goals\")\n    # min_length: a model sometimes emits this list as one plain string. The coercion\n    # below rescues bullet-delimited strings, but a single sentence used to slip through\n    # as a one-criterion spec; failing validation makes the orchestrator ask again.\n    acceptance_criteria: list[str] = Field(\n        min_length=2, description=\"Observable, testable outcomes that define success — a JSON array, one per item\"\n    )\n    technical_notes: str = Field(description=\"Patterns to follow, integrations, key architectural notes\")\n    out_of_scope: list[str] = Field(description=\"What is explicitly NOT included\")\n\n    _coerce = field_validator(\"constraints\", \"acceptance_criteria\", \"out_of_scope\", mode=\"before\")(_split_lines)"
+ },
+ {
+  "path": "agentflow/schemas.py",
+  "index": 2,
+  "start": 44,
+  "end": 64,
+  "kind": "code",
+  "content": "class TaskDraft(BaseModel):\n    id: str = Field(description=\"Unique slug, e.g. task-add-auth\")\n    title: str = Field(description=\"Short imperative title\")\n    description: str = Field(description=\"Detailed description of what needs to be built\")\n    target_files: list[str] = Field(description=\"File paths to create or modify, relative to repo root\")\n    definition_of_done: str = Field(description=\"Specific, observable definition of done\")\n    # The contract tests are written against before any code exists. Writing tests first\n    # used to fail because the test generator had to invent names (`addNote` where the spec\n    # said `add`); fixing the names in the plan removes that guesswork.\n    interface: str = Field(\n        default=\"\",\n        description=(\n            \"Exact public contract this task exposes: module path, function/class signatures with \"\n            \"types, return values, exceptions raised. Every name here is binding for tests and code.\"\n        ),\n    )\n    depends_on: list[str] = Field(default_factory=list, description=\"IDs of tasks that must finish first\")\n\n\nclass TaskPlan(BaseModel):\n    tasks: list[TaskDraft]"
+ },
+ {
+  "path": "agentflow/schemas.py",
+  "index": 3,
+  "start": 63,
+  "end": 94,
+  "kind": "code",
+  "content": "class TaskPlan(BaseModel):\n    tasks: list[TaskDraft]\n\n\nclass ReviewDecision(BaseModel):\n    verdict: Literal[\"approved\", \"changes_requested\"]\n    summary: str = Field(description=\"One-paragraph summary of the review\")\n    change_requests: list[str] = Field(\n        default_factory=list, description=\"Specific changes required. Empty if approved.\"\n    )\n\n    @field_validator(\"change_requests\", mode=\"before\")\n    @classmethod\n    def _flatten(cls, value: Any) -> Any:\n        # Asked for strings, models regularly answer with {file, issue} objects or a\n        # JSON-ish string. A formatting quirk must not kill a run holding committed work.\n        value = _split_lines(value)\n        if isinstance(value, list):\n            return [\n                item\n                if isinstance(item, str)\n                else \" — \".join(f\"{k}: {v}\" for k, v in item.items())\n                if isinstance(item, dict)\n                else str(item)\n                for item in value\n            ]\n        return value\n\n\nclass FailureRuling(BaseModel):\n    culprit: Literal[\"test\", \"code\"] = Field(description=\"Which artifact is wrong\")\n    reasoning: str = Field(description=\"Two or three sentences; if the test is wrong, what it should expect\")"
+ },
+ {
+  "path": "agentflow/schemas.py",
+  "index": 4,
+  "start": 97,
+  "end": 145,
+  "kind": "code",
+  "content": "class GeneratedTest(BaseModel):\n    file_name: str = Field(description=\"File name without directory, e.g. test_task_add_auth.py\")\n    content: str = Field(description=\"Full test file content\")\n    coverage: list[str] = Field(description=\"Scenarios covered: happy path, error, edge cases\")\n\n\n# ─── Workflow domain objects ────────────────────────────────────────────────\n\n\nclass Spec(SpecDraft):\n    id: str\n    version: int = 1\n    created_at: str = Field(default_factory=_now)\n\n\nclass Task(TaskDraft):\n    status: TaskStatus = \"pending\"\n    coder_fix_attempts: int = 0\n    review_cycles: int = 0\n    reviewer_malfunctions: int = 0\n    gate_failures: int = 0\n\n\nclass CoderResult(BaseModel):\n    task_id: str\n    success: bool\n    written_files: dict[str, str] = Field(default_factory=dict)\n    error: str | None = None\n\n\nclass GateResult(BaseModel):\n    passed: bool\n    errors: dict[str, list[str]] = Field(default_factory=dict)  # check name → diagnostic lines\n    summary: str = \"All checks passed.\"\n\n\nclass ReviewCycle(BaseModel):\n    verdict: ReviewVerdict\n    comments: str\n    change_requests: list[str] = Field(default_factory=list)\n    diff: str = \"\"\n    # The reviewer itself failed to produce a verdict; must not be charged to the task.\n    reviewer_malfunction: bool = False\n\n\nclass ReviewResult(BaseModel):\n    task_id: str\n    approved: bool\n    cycles: list[ReviewCycle] = Field(default_factory=list)"
+ },
+ {
+  "path": "agentflow/schemas.py",
+  "index": 5,
+  "start": 142,
+  "end": 174,
+  "kind": "code",
+  "content": "class ReviewResult(BaseModel):\n    task_id: str\n    approved: bool\n    cycles: list[ReviewCycle] = Field(default_factory=list)\n\n\nclass PullRequest(BaseModel):\n    number: int\n    url: str\n    title: str\n    branch: str\n\n\nclass Stall(BaseModel):\n    signature: str = \"\"\n    repeats: int = 0  # earlier occurrences of `signature` within the recent window\n    history: list[str] = Field(default_factory=list)  # recent failure signatures, oldest first\n\n\nclass ApprovalDecision(BaseModel):\n    approved: bool\n    feedback: str | None = None\n\n\nFailureAction = Literal[\"retry\", \"replan\", \"skip\", \"abort\"]\n\n\nclass FailureDecision(BaseModel):\n    \"\"\"A human's answer when a task has run out of budget (see graph/escalation.py).\"\"\"\n\n    action: FailureAction\n    hint: str | None = None  # guidance for the coder (retry) or the planner (replan)\n    auto: bool = False  # decided by policy (unattended mode / escalation cap), not a human"
+ },
+ {
+  "path": "agentflow/worker.py",
+  "index": 0,
+  "start": 1,
+  "end": 22,
+  "kind": "code",
+  "content": "\"\"\"arq worker: runs graphs off the request path.\n\nAPI requests, GitHub webhooks and Telegram button presses only enqueue jobs; the\nworker owns the long-running graph execution. When a run pauses at an interrupt,\nthe worker asks for approval on Telegram.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom typing import Any\n\nfrom arq.connections import RedisSettings\nfrom prometheus_client import start_http_server\n\nfrom agentflow.config import WorkflowConfig, get_settings\nfrom agentflow.graph.escalation import dossier_text\nfrom agentflow.integrations import telegram\nfrom agentflow.observability import JOB_SECONDS, RUNS_FINISHED, RUNS_STARTED, setup_logging\nfrom agentflow.runner import CRASH_PREFIX, RunSnapshot, open_persistence, resume_run, start_run\n\nlog = logging.getLogger(\"agentflow.worker\")"
+ },
+ {
+  "path": "agentflow/worker.py",
+  "index": 1,
+  "start": 22,
+  "end": 48,
+  "kind": "code",
+  "content": "log = logging.getLogger(\"agentflow.worker\")\n\n\nasync def _after(snap: RunSnapshot) -> dict[str, Any]:\n    RUNS_FINISHED.labels(snap.status).inc()\n    error = snap.values.get(\"error\") or \"\"\n    if error.startswith(CRASH_PREFIX):\n        spec = snap.values.get(\"spec\")\n        await telegram.send_message(\n            f\"❌ *Run failed* `{snap.thread_id}`\\n*Feature:* {spec.title if spec else '?'}\\n{error}\"\n        )\n    if snap.interrupt:\n        kind = snap.interrupt.get(\"type\", \"approval\")\n        if kind == \"spec_approval\":\n            spec = snap.interrupt[\"spec\"]\n            summary = f\"*{spec['title']}*\\n{spec['goal']}\\n\\n\" + \"\\n\".join(\n                f\"• {c}\" for c in spec[\"acceptance_criteria\"]\n            )\n        else:\n            summary = \"\\n\".join(f\"• `{t['id']}` {t['title']}\" for t in snap.interrupt.get(\"tasks\", []))\n        if kind == \"task_failed\":\n            await telegram.request_failure_decision(\n                snap.thread_id, dossier_text(snap.interrupt[\"dossier\"]), snap.interrupt[\"options\"]\n            )\n        else:\n            await telegram.request_approval(snap.thread_id, kind, summary)\n    return snap.to_json()"
+ },
+ {
+  "path": "agentflow/worker.py",
+  "index": 2,
+  "start": 51,
+  "end": 83,
+  "kind": "code",
+  "content": "async def start_run_job(\n    ctx: dict, prompt: str, config: dict, thread_id: str, issue_number: int | None = None, trigger: str = \"api\"\n) -> dict:\n    RUNS_STARTED.labels(trigger).inc()\n    with JOB_SECONDS.labels(\"start\").time():\n        snap = await start_run(\n            ctx[\"persistence\"],\n            prompt,\n            WorkflowConfig.model_validate(config),\n            thread_id=thread_id,\n            issue_number=issue_number,\n        )\n    return await _after(snap)\n\n\nasync def resume_run_job(ctx: dict, thread_id: str, decision: dict | bool, feedback: str | None = None) -> dict:\n    # Jobs enqueued before decisions became dicts carry (approved, feedback).\n    if isinstance(decision, bool):\n        decision = {\"approved\": decision, \"feedback\": feedback}\n    with JOB_SECONDS.labels(\"resume\").time():\n        snap = await resume_run(ctx[\"persistence\"], thread_id, decision)\n    return await _after(snap)\n\n\nasync def startup(ctx: dict) -> None:\n    setup_logging()\n    start_http_server(9100)  # Prometheus scrape target for the worker\n    ctx[\"_persistence_cm\"] = open_persistence()\n    ctx[\"persistence\"] = await ctx[\"_persistence_cm\"].__aenter__()\n\n\nasync def shutdown(ctx: dict) -> None:\n    await ctx[\"_persistence_cm\"].__aexit__(None, None, None)"
+ },
+ {
+  "path": "agentflow/worker.py",
+  "index": 3,
+  "start": 86,
+  "end": 93,
+  "kind": "code",
+  "content": "class WorkerSettings:\n    functions = [start_run_job, resume_run_job]\n    on_startup = startup\n    on_shutdown = shutdown\n    redis_settings = RedisSettings.from_dsn(get_settings().redis_url)\n    job_timeout = 4 * 3600  # a full run can legitimately take hours\n    max_jobs = 4\n    keep_result = 24 * 3600"
+ }
+]

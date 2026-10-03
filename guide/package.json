@@ -8,9 +8,11 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "rag:index": "node scripts/build_rag_index.ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
     "@xyflow/react": "^12.12.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

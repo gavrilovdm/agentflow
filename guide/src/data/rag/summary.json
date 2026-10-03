@@ -1,0 +1,17 @@
+{
+ "model": "Xenova/gte-small",
+ "summary": {
+  "dense": {
+   "recall": 1,
+   "mrr": 0.975
+  },
+  "lexical": {
+   "recall": 1,
+   "mrr": 0.975
+  },
+  "hybrid": {
+   "recall": 1,
+   "mrr": 0.975
+  }
+ }
+}

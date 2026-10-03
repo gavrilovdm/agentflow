@@ -281,6 +281,21 @@ async def export_retrieval() -> None:
     n = len(golden)
     summary = {m: {"recall": round(t[0] / n, 3), "mrr": round(t[1] / n, 3)} for m, t in totals.items()}
 
+    # The browser playground (guide/scripts/build_rag_index.ts) embeds and searches these
+    # same chunks client-side, so the deployed guide needs no API.
+    corpus = [
+        {
+            "path": ch.path,
+            "index": ch.index,
+            "start": ch.start_line,
+            "end": ch.end_line,
+            "kind": ch.kind,
+            "content": ch.content,
+        }
+        for ch, _ in store.rows.values()  # store order: ties rank the same in TS
+    ]
+    dump("rag/corpus.json", corpus)
+
     sample_path = "agentflow/graph/routing.py"
     text = (ROOT / "src" / sample_path).read_text()
     chunks = [

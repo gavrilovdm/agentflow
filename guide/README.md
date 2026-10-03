@@ -17,8 +17,16 @@ pnpm dev            # http://localhost:5173
 - the PR from GitHub;
 - retrieval rankings over this repo.
 
+**RAG playground in the browser.** With no API around (e.g. the deployed guide), the
+playground searches inside the tab: a 34 MB embedding model (`gte-small`, via
+transformers.js) embeds the query, compares it with prebuilt vectors of this repo's chunks,
+and fuses that with a TypeScript port of the keyword search (`src/lib/rag.ts`, parity-tested
+against the Python rankings). The model downloads from huggingface.co on the first search
+and is cached. After `export_guide_data.py` rewrites `src/data/rag/corpus.json`, rebuild the
+vectors with `pnpm rag:index` (`pnpm rag:index --bench` compares candidate models).
+
 **Live mode.** If the agentflow API is running (`docker compose up`, port 8010), the RAG
-playground queries the real vector index. Run `export_guide_data.py --index-self` once to
+playground queries the real vector index instead. Run `export_guide_data.py --index-self` once to
 index this repository.
 
 **Graph zoom.** The replay graph zooms with pinch or Ctrl+scroll, pans by drag, and has
