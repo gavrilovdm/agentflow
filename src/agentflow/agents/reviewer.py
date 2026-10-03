@@ -13,6 +13,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agentflow.config import get_settings
@@ -44,13 +45,21 @@ forbids: answer "test" and say what it should assert instead.
 Prefer "code" unless the test clearly departs from the specification."""
 
 
+def reviewer_chat_model(name: str) -> BaseChatModel:
+    """The reviewer must end with a structured ReviewDecision, which the agent obtains by
+    forcing a tool call. DeepSeek's thinking mode rejects a forced tool_choice, so it is
+    disabled here — for the primary model *and* the fallback. Building the fallback without
+    it made every review fail (400) the moment the Opus proxy got rate-limited."""
+    return chat_model(name, forces_tool_choice=True)
+
+
 def _middleware(primary: str, fallback: str) -> list[Any]:
     middleware: list[Any] = [
         ModelCallLimitMiddleware(run_limit=8, exit_behavior="end"),
         ModelRetryMiddleware(max_retries=2),
     ]
     if fallback and fallback != primary:
-        middleware.append(ModelFallbackMiddleware(chat_model(fallback)))
+        middleware.append(ModelFallbackMiddleware(reviewer_chat_model(fallback)))
     return middleware
 
 
@@ -59,7 +68,7 @@ async def review_diff(
 ) -> ReviewCycle:
     s = get_settings()
     agent = create_agent(
-        chat_model(s.reviewer_model),
+        reviewer_chat_model(s.reviewer_model),
         tools=make_search_tools(retriever) if retriever else [],
         system_prompt=REVIEW_SYSTEM,
         response_format=ReviewDecision,
