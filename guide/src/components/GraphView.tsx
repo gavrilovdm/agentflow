@@ -1,16 +1,19 @@
 import {
   Background,
   ConnectionMode,
+  ControlButton,
+  Controls,
   Handle,
   MarkerType,
   Position,
   ReactFlow,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { NODES } from '../lib/content'
 import { graph } from '../lib/data'
 import { EDGES, HANDLE_IDS, POSITIONS, SELF_LOOPS, isSpacer, type HandleId } from '../lib/graphLayout'
@@ -57,6 +60,36 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
 
 const nodeTypes = { step: StepNode }
 
+/** Zoom buttons plus fullscreen. Lives inside <ReactFlow> to reach its viewport. */
+function ZoomControls({ frame }: { frame: RefObject<HTMLDivElement | null> }) {
+  const { fitView } = useReactFlow()
+  const [full, setFull] = useState(false)
+  useEffect(() => {
+    const onChange = () => {
+      setFull(document.fullscreenElement === frame.current)
+      // The box just changed size; refit so the diagram fills the new one.
+      requestAnimationFrame(() => fitView({ padding: 0.1 }))
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [frame, fitView])
+  // iPhone Safari has no element fullscreen; pinch-zoom still works there.
+  const canFull = typeof document !== 'undefined' && document.fullscreenEnabled
+  return (
+    <Controls showInteractive={false} fitViewOptions={{ padding: 0.1 }} position="bottom-left">
+      {canFull && (
+        <ControlButton
+          title={full ? 'Exit fullscreen' : 'Fullscreen'}
+          aria-label={full ? 'Exit fullscreen' : 'Fullscreen'}
+          onClick={() => (full ? document.exitFullscreen() : frame.current?.requestFullscreen())}
+        >
+          {full ? '⤡' : '⤢'}
+        </ControlButton>
+      )}
+    </Controls>
+  )
+}
+
 export function GraphView({
   active,
   previous,
@@ -67,6 +100,7 @@ export function GraphView({
   onSelect?: (node: string) => void
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
+  const frame = useRef<HTMLDivElement>(null)
   const focus = hovered ?? active
 
   const edgeList = useMemo(
@@ -149,7 +183,7 @@ export function GraphView({
 
   return (
     // Height follows width at the layout's aspect ratio, so the diagram fills its box.
-    <div style={{ aspectRatio: '780 / 800' }} className="w-full overflow-hidden rounded-xl border border-line bg-panel">
+    <div ref={frame} style={{ aspectRatio: '780 / 800' }} className="graph-frame w-full overflow-hidden rounded-xl border border-line bg-panel">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -157,8 +191,12 @@ export function GraphView({
         connectionMode={ConnectionMode.Loose}
         fitView
         fitViewOptions={{ padding: 0.1 }}
+        minZoom={0.4}
+        maxZoom={3}
         nodesConnectable={false}
         panOnScroll={false}
+        // Plain scroll keeps scrolling the page; pinch or Ctrl+scroll zooms (preventScrolling
+        // off still lets ctrl-wheel through), drag pans, buttons cover the rest.
         zoomOnScroll={false}
         preventScrolling={false}
         onNodeMouseEnter={(_, n) => setHovered(n.id)}
@@ -167,6 +205,10 @@ export function GraphView({
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={20} size={1} color="var(--line)" />
+        <ZoomControls frame={frame} />
+        <div className="pointer-events-none absolute right-2 bottom-2 z-10 text-[11px] text-muted">
+          pinch or Ctrl+scroll to zoom · drag to pan
+        </div>
       </ReactFlow>
     </div>
   )
