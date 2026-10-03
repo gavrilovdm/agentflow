@@ -23,6 +23,7 @@ export interface Task {
   description: string
   target_files: string[]
   definition_of_done: string
+  interface?: string
   depends_on: string[]
   status: string
   coder_fix_attempts: number
@@ -42,6 +43,8 @@ export interface Step {
   started: string
   ended: string
   delta: Record<string, unknown>
+  /** The question a pausing node asked (approval payload, escalation dossier). */
+  interrupt?: Record<string, unknown>
 }
 
 export interface LlmCall {

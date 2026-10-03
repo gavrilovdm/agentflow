@@ -3,16 +3,16 @@
  "embeddings": "DeterministicFakeEmbedding",
  "summary": {
   "dense": {
-   "recall": 0.125,
-   "mrr": 0.126
+   "recall": 0.225,
+   "mrr": 0.199
   },
   "lexical": {
    "recall": 1.0,
-   "mrr": 1.0
+   "mrr": 0.975
   },
   "hybrid": {
-   "recall": 0.875,
-   "mrr": 0.561
+   "recall": 1.0,
+   "mrr": 0.593
   }
  },
  "cases": [
@@ -22,25 +22,25 @@
     "agentflow/models.py"
    ],
    "dense": [
-    "agentflow/rag/chunking.py",
-    "agentflow/api/app.py",
     "agentflow/graph/nodes.py",
-    "agentflow/graph/build.py",
-    "agentflow/runner.py"
+    "agentflow/config.py",
+    "agentflow/rag/chunking.py",
+    "agentflow/observability.py",
+    "agentflow/gate/typescript.py"
    ],
    "lexical": [
     "agentflow/models.py",
     "agentflow/agents/reviewer.py",
-    "agentflow/agents/orchestrator.py",
     "agentflow/agents/test_generator.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/agents/coder.py"
    ],
    "hybrid": [
-    "agentflow/api/app.py",
+    "agentflow/config.py",
     "agentflow/gate/typescript.py",
-    "agentflow/agents/coder.py",
-    "agentflow/rag/chunking.py",
-    "agentflow/models.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/models.py",
+    "agentflow/rag/chunking.py"
    ]
   },
   {
@@ -50,24 +50,24 @@
    ],
    "dense": [
     "agentflow/gate/base.py",
-    "agentflow/agents/test_generator.py",
     "agentflow/runner.py",
-    "agentflow/agents/orchestrator.py",
-    "agentflow/mcp_server.py"
+    "agentflow/agents/reviewer.py",
+    "agentflow/graph/routing.py",
+    "agentflow/cli.py"
    ],
    "lexical": [
     "agentflow/integrations/workspace.py",
     "agentflow/agents/coder.py",
     "agentflow/gate/__init__.py",
-    "agentflow/agents/test_generator.py",
-    "agentflow/graph/nodes.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/gate/base.py"
    ],
    "hybrid": [
     "agentflow/integrations/workspace.py",
     "agentflow/gate/base.py",
-    "agentflow/agents/test_generator.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/runner.py",
-    "agentflow/agents/coder.py"
+    "agentflow/agents/reviewer.py"
    ]
   },
   {
@@ -76,25 +76,25 @@
     "agentflow/agents/coder.py"
    ],
    "dense": [
-    "agentflow/agents/orchestrator.py",
     "agentflow/rag/store.py",
+    "agentflow/graph/routing.py",
     "agentflow/integrations/workspace.py",
-    "agentflow/api/app.py",
-    "agentflow/gate/python.py"
+    "agentflow/agents/coder.py",
+    "agentflow/graph/state.py"
    ],
    "lexical": [
     "agentflow/agents/coder.py",
-    "agentflow/agents/reviewer.py",
     "agentflow/graph/nodes.py",
-    "agentflow/gate/__init__.py",
-    "agentflow/gate/base.py"
+    "agentflow/agents/orchestrator.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/agents/reviewer.py"
    ],
    "hybrid": [
     "agentflow/agents/coder.py",
-    "agentflow/agents/orchestrator.py",
     "agentflow/rag/store.py",
+    "agentflow/graph/routing.py",
     "agentflow/integrations/workspace.py",
-    "agentflow/api/app.py"
+    "agentflow/graph/nodes.py"
    ]
   },
   {
@@ -103,24 +103,24 @@
     "agentflow/rag/retriever.py"
    ],
    "dense": [
+    "agentflow/graph/nodes.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/gate/python.py",
-    "agentflow/integrations/workspace.py",
-    "agentflow/rag/indexer.py",
-    "agentflow/rag/store.py",
-    "agentflow/agents/coder.py"
+    "agentflow/cli.py"
    ],
    "lexical": [
     "agentflow/rag/retriever.py",
     "agentflow/api/app.py",
+    "agentflow/graph/escalation.py",
     "agentflow/graph/nodes.py",
-    "agentflow/agents/test_generator.py",
-    "agentflow/graph/routing.py"
+    "agentflow/agents/reviewer.py"
    ],
    "hybrid": [
-    "agentflow/gate/python.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/gate/typescript.py",
-    "agentflow/graph/nodes.py",
     "agentflow/rag/store.py",
+    "agentflow/graph/nodes.py",
     "agentflow/rag/retriever.py"
    ]
   },
@@ -130,25 +130,25 @@
     "agentflow/rag/indexer.py"
    ],
    "dense": [
-    "agentflow/agents/coder.py",
     "agentflow/graph/nodes.py",
-    "agentflow/mcp_server.py",
-    "agentflow/agents/orchestrator.py",
-    "agentflow/cli.py"
+    "agentflow/graph/routing.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/rag/store.py"
    ],
    "lexical": [
     "agentflow/rag/indexer.py",
+    "agentflow/agents/test_generator.py",
     "agentflow/rag/chunking.py",
-    "agentflow/agents/coder.py",
     "agentflow/rag/store.py",
-    "agentflow/agents/test_generator.py"
+    "agentflow/agents/coder.py"
    ],
    "hybrid": [
-    "agentflow/agents/coder.py",
     "agentflow/rag/indexer.py",
-    "agentflow/rag/store.py",
-    "agentflow/gate/base.py",
-    "agentflow/graph/nodes.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/routing.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/integrations/workspace.py"
    ]
   },
   {
@@ -157,25 +157,25 @@
     "agentflow/rag/store.py"
    ],
    "dense": [
-    "agentflow/graph/routing.py",
     "agentflow/rag/store.py",
-    "agentflow/worker.py",
     "agentflow/observability.py",
-    "agentflow/schemas.py"
+    "agentflow/schemas.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/graph/nodes.py"
    ],
    "lexical": [
     "agentflow/rag/store.py",
-    "agentflow/integrations/telegram.py",
     "agentflow/integrations/workspace.py",
-    "agentflow/rag/indexer.py",
-    "agentflow/runner.py"
+    "agentflow/integrations/telegram.py",
+    "agentflow/api/app.py",
+    "agentflow/rag/indexer.py"
    ],
    "hybrid": [
     "agentflow/rag/store.py",
     "agentflow/integrations/workspace.py",
     "agentflow/gate/python.py",
-    "agentflow/graph/routing.py",
-    "agentflow/worker.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/observability.py"
    ]
   },
   {
@@ -185,23 +185,23 @@
    ],
    "dense": [
     "agentflow/gate/typescript.py",
-    "agentflow/config.py",
-    "agentflow/graph/build.py",
-    "agentflow/gate/base.py",
-    "agentflow/rag/store.py"
+    "agentflow/agents/test_generator.py",
+    "agentflow/worker.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/api/app.py"
    ],
    "lexical": [
     "agentflow/gate/python.py",
     "agentflow/agents/reviewer.py",
-    "agentflow/gate/typescript.py",
     "agentflow/graph/nodes.py",
+    "agentflow/gate/typescript.py",
     "agentflow/agents/test_generator.py"
    ],
    "hybrid": [
+    "agentflow/agents/test_generator.py",
     "agentflow/gate/typescript.py",
     "agentflow/gate/python.py",
-    "agentflow/config.py",
-    "agentflow/graph/build.py",
+    "agentflow/worker.py",
     "agentflow/agents/reviewer.py"
    ]
   },
@@ -211,25 +211,25 @@
     "agentflow/gate/typescript.py"
    ],
    "dense": [
-    "agentflow/agents/coder.py",
-    "agentflow/worker.py",
-    "agentflow/graph/routing.py",
+    "agentflow/agents/reviewer.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/agents/test_generator.py",
     "agentflow/api/app.py",
-    "agentflow/graph/state.py"
+    "agentflow/graph/routing.py"
    ],
    "lexical": [
     "agentflow/gate/typescript.py",
     "agentflow/agents/test_generator.py",
     "agentflow/graph/routing.py",
     "agentflow/config.py",
-    "agentflow/graph/nodes.py"
+    "agentflow/agents/reviewer.py"
    ],
    "hybrid": [
-    "agentflow/agents/coder.py",
+    "agentflow/graph/routing.py",
+    "agentflow/graph/nodes.py",
     "agentflow/gate/__init__.py",
-    "agentflow/gate/typescript.py",
-    "agentflow/worker.py",
-    "agentflow/agents/test_generator.py"
+    "agentflow/agents/reviewer.py",
+    "agentflow/gate/typescript.py"
    ]
   },
   {
@@ -239,25 +239,25 @@
     "agentflow/graph/nodes.py"
    ],
    "dense": [
-    "agentflow/graph/nodes.py",
+    "agentflow/runner.py",
     "agentflow/rag/retriever.py",
-    "agentflow/observability.py",
-    "agentflow/agents/coder.py",
-    "agentflow/rag/embeddings.py"
+    "agentflow/agents/test_generator.py",
+    "agentflow/graph/escalation.py",
+    "agentflow/observability.py"
    ],
    "lexical": [
     "agentflow/agents/reviewer.py",
     "agentflow/graph/nodes.py",
-    "agentflow/graph/routing.py",
     "agentflow/agents/test_generator.py",
-    "agentflow/gate/python.py"
+    "agentflow/graph/routing.py",
+    "agentflow/config.py"
    ],
    "hybrid": [
+    "agentflow/graph/nodes.py",
+    "agentflow/runner.py",
     "agentflow/agents/reviewer.py",
-    "agentflow/gate/python.py",
-    "agentflow/config.py",
-    "agentflow/graph/routing.py",
-    "agentflow/graph/nodes.py"
+    "agentflow/rag/retriever.py",
+    "agentflow/agents/test_generator.py"
    ]
   },
   {
@@ -266,24 +266,24 @@
     "agentflow/graph/routing.py"
    ],
    "dense": [
+    "agentflow/agents/orchestrator.py",
     "agentflow/rag/chunking.py",
-    "agentflow/agents/reviewer.py",
     "agentflow/rag/indexer.py",
-    "agentflow/cli.py",
+    "agentflow/agents/coder.py",
     "agentflow/integrations/workspace.py"
    ],
    "lexical": [
-    "agentflow/graph/routing.py",
     "agentflow/graph/nodes.py",
+    "agentflow/graph/routing.py",
     "agentflow/agents/reviewer.py",
-    "agentflow/gate/base.py",
-    "agentflow/agents/coder.py"
+    "agentflow/config.py",
+    "agentflow/schemas.py"
    ],
    "hybrid": [
-    "agentflow/rag/chunking.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/graph/routing.py",
-    "agentflow/agents/reviewer.py",
     "agentflow/graph/nodes.py",
+    "agentflow/rag/chunking.py",
     "agentflow/rag/indexer.py"
    ]
   },
@@ -295,24 +295,24 @@
    ],
    "dense": [
     "agentflow/models.py",
-    "agentflow/integrations/telegram.py",
-    "agentflow/config.py",
+    "agentflow/worker.py",
+    "agentflow/schemas.py",
     "agentflow/agents/orchestrator.py",
-    "agentflow/schemas.py"
+    "agentflow/api/app.py"
    ],
    "lexical": [
-    "agentflow/graph/nodes.py",
     "agentflow/graph/routing.py",
-    "agentflow/agents/orchestrator.py",
-    "agentflow/runner.py",
-    "agentflow/agents/coder.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/graph/escalation.py",
+    "agentflow/config.py",
+    "agentflow/agents/orchestrator.py"
    ],
    "hybrid": [
-    "agentflow/schemas.py",
-    "agentflow/graph/nodes.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/models.py",
-    "agentflow/integrations/telegram.py",
-    "agentflow/graph/routing.py"
+    "agentflow/graph/routing.py",
+    "agentflow/worker.py",
+    "agentflow/graph/nodes.py"
    ]
   },
   {
@@ -321,10 +321,10 @@
     "agentflow/integrations/github.py"
    ],
    "dense": [
-    "agentflow/agents/reviewer.py",
     "agentflow/graph/nodes.py",
+    "agentflow/mcp_server.py",
     "agentflow/runner.py",
-    "agentflow/agents/coder.py",
+    "agentflow/agents/test_generator.py",
     "agentflow/integrations/workspace.py"
    ],
    "lexical": [
@@ -332,14 +332,14 @@
     "agentflow/api/app.py",
     "agentflow/worker.py",
     "agentflow/integrations/workspace.py",
-    "agentflow/graph/nodes.py"
+    "agentflow/graph/routing.py"
    ],
    "hybrid": [
-    "agentflow/graph/nodes.py",
-    "agentflow/api/app.py",
     "agentflow/integrations/workspace.py",
+    "agentflow/graph/state.py",
     "agentflow/rag/chunking.py",
-    "agentflow/agents/reviewer.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/integrations/github.py"
    ]
   },
   {
@@ -349,11 +349,11 @@
     "agentflow/api/app.py"
    ],
    "dense": [
-    "agentflow/graph/nodes.py",
-    "agentflow/agents/orchestrator.py",
+    "agentflow/graph/state.py",
+    "agentflow/api/app.py",
+    "agentflow/config.py",
     "agentflow/models.py",
-    "agentflow/integrations/workspace.py",
-    "agentflow/worker.py"
+    "agentflow/integrations/workspace.py"
    ],
    "lexical": [
     "agentflow/integrations/telegram.py",
@@ -363,11 +363,11 @@
     "agentflow/graph/nodes.py"
    ],
    "hybrid": [
-    "agentflow/worker.py",
-    "agentflow/agents/orchestrator.py",
-    "agentflow/cli.py",
+    "agentflow/api/app.py",
     "agentflow/graph/nodes.py",
-    "agentflow/integrations/telegram.py"
+    "agentflow/graph/state.py",
+    "agentflow/integrations/telegram.py",
+    "agentflow/config.py"
    ]
   },
   {
@@ -376,25 +376,25 @@
     "agentflow/api/app.py"
    ],
    "dense": [
-    "agentflow/agents/coder.py",
     "agentflow/integrations/workspace.py",
     "agentflow/schemas.py",
-    "agentflow/api/app.py",
-    "agentflow/graph/build.py"
+    "agentflow/agents/reviewer.py",
+    "agentflow/agents/coder.py",
+    "agentflow/api/app.py"
    ],
    "lexical": [
     "agentflow/api/app.py",
     "agentflow/mcp_server.py",
-    "agentflow/runner.py",
     "agentflow/worker.py",
-    "agentflow/rag/retriever.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/runner.py"
    ],
    "hybrid": [
-    "agentflow/api/app.py",
+    "agentflow/runner.py",
     "agentflow/graph/nodes.py",
-    "agentflow/graph/routing.py",
-    "agentflow/agents/coder.py",
-    "agentflow/integrations/workspace.py"
+    "agentflow/api/app.py",
+    "agentflow/integrations/workspace.py",
+    "agentflow/schemas.py"
    ]
   },
   {
@@ -403,11 +403,11 @@
     "agentflow/memory/lessons.py"
    ],
    "dense": [
-    "agentflow/agents/reviewer.py",
     "agentflow/graph/nodes.py",
-    "agentflow/graph/state.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/rag/store.py",
-    "agentflow/cli.py"
+    "agentflow/agents/reviewer.py",
+    "agentflow/agents/coder.py"
    ],
    "lexical": [
     "agentflow/memory/lessons.py",
@@ -417,10 +417,10 @@
     "agentflow/agents/orchestrator.py"
    ],
    "hybrid": [
-    "agentflow/agents/reviewer.py",
-    "agentflow/memory/lessons.py",
     "agentflow/graph/nodes.py",
-    "agentflow/graph/state.py",
+    "agentflow/memory/lessons.py",
+    "agentflow/agents/orchestrator.py",
+    "agentflow/rag/store.py",
     "agentflow/runner.py"
    ]
   },
@@ -430,25 +430,25 @@
     "agentflow/graph/build.py"
    ],
    "dense": [
-    "agentflow/integrations/telegram.py",
+    "agentflow/graph/build.py",
+    "agentflow/cli.py",
+    "agentflow/runner.py",
     "agentflow/gate/python.py",
-    "agentflow/graph/routing.py",
-    "agentflow/graph/nodes.py",
-    "agentflow/schemas.py"
+    "agentflow/agents/test_generator.py"
    ],
    "lexical": [
     "agentflow/graph/build.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/schemas.py",
     "agentflow/rag/store.py",
-    "agentflow/agents/orchestrator.py",
     "agentflow/rag/retriever.py"
    ],
    "hybrid": [
-    "agentflow/schemas.py",
-    "agentflow/api/app.py",
-    "agentflow/graph/routing.py",
-    "agentflow/integrations/telegram.py",
-    "agentflow/graph/build.py"
+    "agentflow/graph/build.py",
+    "agentflow/graph/state.py",
+    "agentflow/cli.py",
+    "agentflow/agents/orchestrator.py",
+    "agentflow/runner.py"
    ]
   },
   {
@@ -457,25 +457,25 @@
     "agentflow/agents/orchestrator.py"
    ],
    "dense": [
-    "agentflow/api/app.py",
+    "agentflow/graph/nodes.py",
     "agentflow/rag/retriever.py",
     "agentflow/rag/chunking.py",
-    "agentflow/graph/nodes.py",
-    "agentflow/runner.py"
+    "agentflow/config.py",
+    "agentflow/graph/build.py"
    ],
    "lexical": [
     "agentflow/agents/orchestrator.py",
-    "agentflow/graph/nodes.py",
     "agentflow/graph/routing.py",
-    "agentflow/graph/state.py",
-    "agentflow/agents/test_generator.py"
+    "agentflow/agents/test_generator.py",
+    "agentflow/graph/nodes.py",
+    "agentflow/config.py"
    ],
    "hybrid": [
-    "agentflow/graph/nodes.py",
-    "agentflow/graph/state.py",
-    "agentflow/api/app.py",
+    "agentflow/graph/routing.py",
     "agentflow/agents/orchestrator.py",
-    "agentflow/rag/retriever.py"
+    "agentflow/graph/nodes.py",
+    "agentflow/rag/retriever.py",
+    "agentflow/rag/chunking.py"
    ]
   },
   {
@@ -484,25 +484,25 @@
     "agentflow/agents/test_generator.py"
    ],
    "dense": [
+    "agentflow/mcp_server.py",
+    "agentflow/integrations/telegram.py",
     "agentflow/rag/tools.py",
-    "agentflow/api/app.py",
-    "agentflow/graph/nodes.py",
     "agentflow/gate/python.py",
-    "agentflow/rag/retriever.py"
+    "agentflow/graph/nodes.py"
    ],
    "lexical": [
     "agentflow/agents/test_generator.py",
-    "agentflow/agents/coder.py",
+    "agentflow/agents/orchestrator.py",
     "agentflow/graph/nodes.py",
-    "agentflow/gate/base.py",
-    "agentflow/agents/reviewer.py"
+    "agentflow/graph/routing.py",
+    "agentflow/agents/coder.py"
    ],
    "hybrid": [
-    "agentflow/agents/test_generator.py",
-    "agentflow/gate/python.py",
+    "agentflow/graph/nodes.py",
     "agentflow/agents/reviewer.py",
-    "agentflow/rag/tools.py",
-    "agentflow/api/app.py"
+    "agentflow/mcp_server.py",
+    "agentflow/agents/test_generator.py",
+    "agentflow/integrations/telegram.py"
    ]
   },
   {
@@ -511,11 +511,11 @@
     "agentflow/mcp_server.py"
    ],
    "dense": [
-    "agentflow/api/app.py",
+    "agentflow/integrations/telegram.py",
+    "agentflow/config.py",
     "agentflow/agents/coder.py",
     "agentflow/gate/__init__.py",
-    "agentflow/graph/nodes.py",
-    "agentflow/agents/test_generator.py"
+    "agentflow/cli.py"
    ],
    "lexical": [
     "agentflow/mcp_server.py",
@@ -527,9 +527,9 @@
    "hybrid": [
     "agentflow/mcp_server.py",
     "agentflow/rag/tools.py",
-    "agentflow/api/app.py",
-    "agentflow/agents/coder.py",
-    "agentflow/gate/__init__.py"
+    "agentflow/integrations/telegram.py",
+    "agentflow/config.py",
+    "agentflow/agents/coder.py"
    ]
   },
   {
@@ -538,11 +538,11 @@
     "agentflow/observability.py"
    ],
    "dense": [
-    "agentflow/cli.py",
     "agentflow/integrations/workspace.py",
     "agentflow/schemas.py",
-    "agentflow/graph/build.py",
-    "agentflow/graph/nodes.py"
+    "agentflow/config.py",
+    "agentflow/rag/embeddings.py",
+    "agentflow/graph/state.py"
    ],
    "lexical": [
     "agentflow/observability.py",
@@ -552,11 +552,11 @@
     "agentflow/rag/store.py"
    ],
    "hybrid": [
-    "agentflow/graph/build.py",
+    "agentflow/worker.py",
     "agentflow/gate/typescript.py",
-    "agentflow/graph/nodes.py",
-    "agentflow/graph/routing.py",
-    "agentflow/cli.py"
+    "agentflow/integrations/workspace.py",
+    "agentflow/observability.py",
+    "agentflow/schemas.py"
    ]
   }
  ],
@@ -566,20 +566,26 @@
    {
     "index": 0,
     "start": 1,
-    "end": 36,
-    "content": "\"\"\"Conditional edges. Pure functions of state + config, unit-tested in isolation.\"\"\"\n\nfrom __future__ import annotations\n\nfrom langgraph.graph import END\n\nfrom agentflow.config import WorkflowConfig\nfrom agentflow.graph.state import WorkflowState, task_by_id\nfrom agentflow.schemas import Task\n\nSTALL_REPEATS = 2  # three identical failures in a row\n\n\ndef after_spec_approval(state: WorkflowState) -> str:\n    return \"generate_tasks\" if state.get(\"spec_approved\") else \"generate_spec\"\n\n\ndef after_task_approval(state: WorkflowState) -> str:\n    return \"select_next_task\" if state.get(\"tasks_approved\") else \"generate_tasks\"\n\n\ndef after_task_selection(state: WorkflowState) -> str:\n    return \"run_coder\" if state.get(\"current_task_id\") else \"create_pr\"\n\n\ndef after_coder(state: WorkflowState, config: WorkflowConfig) -> str:\n    \"\"\"Code first, then the test that judges it (a no-op on retries, where the test\n    already exists and must stay fixed while the coder works against it).\"\"\"\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    result = state.get(\"task_results\", {}).get(task_id)\n    if result and result.success:\n        return \"generate_task_test\"\n    if task_by_id(state, task_id).coder_fix_attempts >= config.max_coder_fix_attempts:\n        return \"handle_failure\"\n    return \"run_coder\""
+    "end": 34,
+    "content": "\"\"\"Conditional edges. Pure functions of state + config, unit-tested in isolation.\"\"\"\n\nfrom __future__ import annotations\n\nfrom langgraph.graph import END\n\nfrom agentflow.config import WorkflowConfig\nfrom agentflow.graph.state import WorkflowState, task_by_id\nfrom agentflow.schemas import Stall, Task\n\nSTALL_REPEATS = 2  # the same failure for the third time within the window\nSTALL_WINDOW = 6\n\n\ndef next_stall(prior: Stall | None, signature: str, approved: bool) -> Stall:\n    \"\"\"Track recurring failures over a window, not only consecutive ones.\n\n    A live run oscillated: the test failed (A), the coder changed an API to satisfy it, the\n    reviewer rejected that change (B), the coder reverted (A again)… A, B, A, B never repeats\n    back-to-back, so a consecutive-only check never sent the task to the referee and the\n    budgets ran out. Counting occurrences in a window catches both shapes.\n    \"\"\"\n    if approved:\n        return Stall()\n    history = [*(prior.history if prior else []), signature][-STALL_WINDOW:]\n    return Stall(signature=signature, repeats=history[:-1].count(signature), history=history)\n\n\ndef after_spec_approval(state: WorkflowState) -> str:\n    return \"generate_tasks\" if state.get(\"spec_approved\") else \"generate_spec\"\n\n\ndef after_task_approval(state: WorkflowState) -> str:\n    return \"select_next_task\" if state.get(\"tasks_approved\") else \"generate_tasks\""
    },
    {
     "index": 1,
-    "start": 39,
-    "end": 67,
-    "content": "def after_review(state: WorkflowState, config: WorkflowConfig) -> str:\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    task = task_by_id(state, task_id)\n    review = state.get(\"review_results\", {}).get(task_id)\n    if review and review.approved:\n        return \"complete_task\"\n    if (\n        task.review_cycles >= config.max_review_cycles\n        or task.gate_failures >= config.max_gate_failures\n        or task.reviewer_malfunctions >= config.max_reviewer_malfunctions\n    ):\n        return \"handle_failure\"\n    # Repeating the same failure: remaining attempts would go the same way. Give the\n    # referee one chance to spot an unsatisfiable test before writing the task off.\n    stall = state.get(\"stalls\", {}).get(task_id)\n    if stall and stall.repeats >= STALL_REPEATS:\n        return \"handle_failure\" if state.get(\"adjudicated\", {}).get(task_id) else \"adjudicate\"\n    return \"run_coder\"\n\n\ndef after_adjudication(state: WorkflowState) -> str:\n    \"\"\"The referee clears the stall only when it rewrote a faulty test.\"\"\"\n    stall = state.get(\"stalls\", {}).get(state[\"current_task_id\"] or \"\")\n    return \"handle_failure\" if stall and stall.repeats >= STALL_REPEATS else \"run_coder\"\n\n\ndef after_failure(state: WorkflowState) -> str:\n    return END if state.get(\"status\") == \"failed\" else \"select_next_task\""
+    "start": 33,
+    "end": 52,
+    "content": "def after_task_approval(state: WorkflowState) -> str:\n    return \"select_next_task\" if state.get(\"tasks_approved\") else \"generate_tasks\"\n\n\ndef after_task_selection(state: WorkflowState) -> str:\n    \"\"\"Each task starts with its acceptance test, written before any code.\"\"\"\n    return \"generate_task_test\" if state.get(\"current_task_id\") else \"create_pr\"\n\n\ndef after_coder(state: WorkflowState, config: WorkflowConfig) -> str:\n    \"\"\"The test was written before the code, so a successful attempt goes straight to the\n    gate; the test stays fixed while the coder works against it.\"\"\"\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    result = state.get(\"task_results\", {}).get(task_id)\n    if result and result.success:\n        return \"run_review\"\n    if task_by_id(state, task_id).coder_fix_attempts >= config.max_coder_fix_attempts:\n        return \"escalate\"\n    return \"run_coder\""
    },
    {
     "index": 2,
-    "start": 66,
-    "end": 87,
-    "content": "def after_failure(state: WorkflowState) -> str:\n    return END if state.get(\"status\") == \"failed\" else \"select_next_task\"\n\n\ndef next_runnable(tasks: list[Task]) -> Task | None:\n    done = {t.id for t in tasks if t.status == \"completed\"}\n    return next((t for t in tasks if t.status == \"pending\" and all(d in done for d in t.depends_on)), None)\n\n\ndef dependents_of(task_id: str, tasks: list[Task]) -> list[str]:\n    \"\"\"Every open task that needs `task_id`, directly or transitively.\"\"\"\n    blocked: set[str] = set()\n    grew = True\n    while grew:\n        grew = False\n        for t in tasks:\n            if t.id in blocked or t.id == task_id or t.status in (\"completed\", \"failed\"):\n                continue\n            if any(d == task_id or d in blocked for d in t.depends_on):\n                blocked.add(t.id)\n                grew = True\n    return sorted(blocked)"
+    "start": 55,
+    "end": 79,
+    "content": "def after_review(state: WorkflowState, config: WorkflowConfig) -> str:\n    task_id = state[\"current_task_id\"]\n    assert task_id\n    task = task_by_id(state, task_id)\n    review = state.get(\"review_results\", {}).get(task_id)\n    if review and review.approved:\n        return \"complete_task\"\n    if (\n        task.review_cycles >= config.max_review_cycles\n        or task.gate_failures >= config.max_gate_failures\n        or task.reviewer_malfunctions >= config.max_reviewer_malfunctions\n    ):\n        return \"escalate\"\n    # Repeating the same failure: remaining attempts would go the same way. Give the\n    # referee one chance to spot an unsatisfiable test before writing the task off.\n    stall = state.get(\"stalls\", {}).get(task_id)\n    if stall and stall.repeats >= STALL_REPEATS:\n        return \"escalate\" if state.get(\"adjudicated\", {}).get(task_id) else \"adjudicate\"\n    return \"run_coder\"\n\n\ndef after_adjudication(state: WorkflowState) -> str:\n    \"\"\"The referee clears the stall only when it rewrote a faulty test.\"\"\"\n    stall = state.get(\"stalls\", {}).get(state[\"current_task_id\"] or \"\")\n    return \"escalate\" if stall and stall.repeats >= STALL_REPEATS else \"run_coder\""
+   },
+   {
+    "index": 3,
+    "start": 82,
+    "end": 111,
+    "content": "def after_escalation(state: WorkflowState) -> str:\n    \"\"\"retry → back to the coder with a fresh budget; replan → rewrite the remaining plan;\n    skip / abort → handle_failure (which skips the subtree or stops the run).\"\"\"\n    decision = state.get(\"failure_decisions\", {}).get(state[\"current_task_id\"] or \"\")\n    action = decision.action if decision else \"skip\"\n    return {\"retry\": \"run_coder\", \"replan\": \"replan\"}.get(action, \"handle_failure\")\n\n\ndef after_failure(state: WorkflowState) -> str:\n    return END if state.get(\"status\") == \"failed\" else \"select_next_task\"\n\n\ndef next_runnable(tasks: list[Task]) -> Task | None:\n    done = {t.id for t in tasks if t.status == \"completed\"}\n    return next((t for t in tasks if t.status == \"pending\" and all(d in done for d in t.depends_on)), None)\n\n\ndef dependents_of(task_id: str, tasks: list[Task]) -> list[str]:\n    \"\"\"Every open task that needs `task_id`, directly or transitively.\"\"\"\n    blocked: set[str] = set()\n    grew = True\n    while grew:\n        grew = False\n        for t in tasks:\n            if t.id in blocked or t.id == task_id or t.status in (\"completed\", \"failed\"):\n                continue\n            if any(d == task_id or d in blocked for d in t.depends_on):\n                blocked.add(t.id)\n                grew = True\n    return sorted(blocked)"
    }
   ]
  }

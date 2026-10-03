@@ -1,34 +1,6 @@
-import { Card, CopyCode, FileLink, Section } from '../components/ui'
-import { BUGS, CODE_MAP, INTERVIEW, NODES, USE_CASES } from '../lib/content'
+import { Card, Section } from '../components/ui'
+import { BUGS, NODES } from '../lib/content'
 import { failedRuns } from '../lib/data'
-
-export function UseCases() {
-  return (
-    <Section
-      id="use-cases"
-      kicker="3 · How people use it"
-      title="Four ways in"
-      intro="Same graph, same state, different front doors. Every write path only enqueues a job; a worker does the long-running part."
-    >
-      <div className="grid gap-4 md:grid-cols-2">
-        {USE_CASES.map((u) => (
-          <Card key={u.id}>
-            <div className="text-[12px] text-muted">{u.who}</div>
-            <h3 className="mt-0.5 text-lg font-semibold">{u.title}</h3>
-            <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-[14px] leading-relaxed">
-              {u.steps.map((s) => (
-                <li key={s}>{s}</li>
-              ))}
-            </ol>
-            <div className="mt-4">
-              <CopyCode>{u.code}</CopyCode>
-            </div>
-          </Card>
-        ))}
-      </div>
-    </Section>
-  )
-}
 
 export function Failures() {
   return (
@@ -91,53 +63,5 @@ function RunStrip({ steps }: { steps: { node: string; verdict: { verdict: string
         })}
       </div>
     </div>
-  )
-}
-
-export function CodeMap() {
-  return (
-    <Section id="code-map" kicker="5 · Find your way" title="Code map" intro="Where each idea lives. All links open the file on GitHub.">
-      <div className="overflow-hidden rounded-xl border border-line">
-        <table className="w-full text-left text-[14px]">
-          <tbody>
-            {CODE_MAP.map((r) => (
-              <tr key={r.concept} className="border-b border-line last:border-0 odd:bg-panel even:bg-panel-2/50">
-                <td className="w-2/5 px-4 py-2.5 align-top font-medium">{r.concept}</td>
-                <td className="px-4 py-2.5">
-                  <div className="flex flex-col gap-0.5">
-                    {r.files.map((f) => (
-                      <FileLink key={f} path={f} />
-                    ))}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Section>
-  )
-}
-
-export function Interview() {
-  return (
-    <Section
-      id="interview"
-      kicker="6 · Explaining it"
-      title="If someone asks you about it"
-      intro="Short, honest answers grounded in what the code actually does. Open the ones you want to rehearse."
-    >
-      <div className="space-y-2">
-        {INTERVIEW.map((x) => (
-          <details key={x.q} className="group rounded-xl border border-line bg-panel px-5 py-3">
-            <summary className="cursor-pointer list-none font-medium">
-              <span className="mr-2 text-accent transition group-open:rotate-90 inline-block">›</span>
-              {x.q}
-            </summary>
-            <p className="mt-2 pl-5 text-[14px] leading-relaxed text-muted">{x.a}</p>
-          </details>
-        ))}
-      </div>
-    </Section>
   )
 }

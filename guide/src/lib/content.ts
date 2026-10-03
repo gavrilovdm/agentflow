@@ -29,6 +29,7 @@ export const NODES: Record<string, NodeInfo> = {
   handle_failure: { title: 'Contain the failure', who: 'Python', what: 'Skip: mark the task failed and skip only the tasks that depend on it. Stop: mark everything left as not started and end the run.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   create_pr: { title: 'Open the PR', who: 'Python + Opus', what: 'Run the whole test suite once more, push the branch, write a description and open the pull request.', file: 'src/agentflow/graph/nodes.py' },
   notify: { title: 'Notify', who: 'Telegram', what: 'Tell a human it is done (or what failed).', file: 'src/agentflow/integrations/telegram.py' },
+  __end__: { title: 'End', who: 'Python', what: 'The graph is finished: either completed (a PR is open) or stopped — by a human, or because nothing salvageable was left.', file: 'src/agentflow/graph/routing.py' },
   finalize: { title: 'Clean up', who: 'Python', what: 'Delete the temporary clone. The graph ends.', file: 'src/agentflow/integrations/workspace.py' },
 }
 
@@ -170,6 +171,14 @@ BUGS.push(
     fix: 'Retry once, then log a warning; notification calls never raise.',
     lesson: 'Side-channel calls (alerts, metrics) must not be able to fail the main work.',
     commit: 'escalation PR',
+  },
+  {
+    id: 'reviewer-fallback', title: 'Every review failed once Opus was rate-limited',
+    symptom: 'A live run escalated twice; the dossiers showed 3 reviewer malfunctions each: “Thinking mode does not support this tool_choice”.',
+    cause: 'The Opus proxy returned 429, the reviewer fell back to DeepSeek as designed — but the fallback was built with DeepSeek’s thinking mode on, and the reviewer’s final structured verdict is a forced tool call, which thinking mode rejects.',
+    fix: 'Build the reviewer’s primary and fallback models through one helper that disables thinking; a live test now runs the reviewer agent path on every model.',
+    lesson: 'Escalation showed the evidence immediately — the dossier, not the logs, is where this was spotted.',
+    commit: 'guide-review PR',
   },
 )
 

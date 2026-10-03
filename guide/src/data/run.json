@@ -57,6 +57,26 @@
    "delta": {
     "spec_approved": true,
     "status": "planning"
+   },
+   "interrupt": {
+    "type": "spec_approval",
+    "spec": {
+     "title": "Add change_email to shop.users (plus Database update support)",
+     "goal": "Users currently have no way to change their email address after registration. Add a `change_email(db, user_id, new_email)` service function in `shop/users.py` that normalises the new email to lowercase, rejects emails already taken by another user, and fails cleanly for unknown user ids. The in-memory `Database` needs a lookup-by-id and a row update primitive to support this.",
+     "constraints": [
+      "Reuse existing exception types where they already exist (`UserNotFound`); new exceptions live alongside it in `shop/users.py`"
+     ],
+     "acceptance_criteria": [
+      "`Database` gains the methods needed to look a row up by id and to update fields on an existing row, usable independently of the users module"
+     ],
+     "technical_notes": "In `shop/db.py`, add two small methods to `Database`:\n- `get(table, row_id) -> dict | None` — implement via the existing `find_one(table, id=row_id)` to avoid duplicating the scan logic.\n- `update(table, row_id, values) -> bool` — locate the row by id and merge `values` into it in place (mutating the dict already in `self.tables`), returning whether a row was updated. Never allow `id` to be overwritten.\n\nIn `shop/users.py`:\n- Add `class EmailTaken(Exception): pass` next to `UserNotFound`.\n- `change_email(db, user_id, new_email)`: normalise with `new_email.lower()`; fetch the current row with `db.get(\"users\", user_id)` and raise `UserNotFound(user_id)` if it is `None`; check for a conflict with `db.find_one(\"users\", email=normalised)` and raise `EmailTaken(normalised)` only if the found row's `id` differs from `user_id`; then `db.update(\"users\", user_id, {\"email\": normalised})` and return `User(row[\"id\"], normalised, row[\"password_hash\"])`.\n- Order matters: unknown-id check before the taken-email check, so a bogus id with a taken email raises `UserNotFound`.\n- Add a short docstring in the style of the neighbouring functions noting the lowercase normalisation.",
+     "out_of_scope": [
+      "Changes to orders, payments, or any HTTP/API layer"
+     ],
+     "id": "spec-cf2b58aa",
+     "version": 1,
+     "created_at": "2026-10-02T21:23:54.002899+00:00"
+    }
    }
   },
   {
@@ -64,6 +84,55 @@
    "started": "2026-10-02T21:24:02.743211+00:00",
    "ended": "2026-10-02T21:24:17.271479+00:00",
    "delta": {
+    "tasks": [
+     {
+      "id": "task-db-get-update",
+      "title": "Add get and update primitives to Database",
+      "description": "In `shop/db.py`, extend the in-memory `Database` class with two small methods that the users service (and any other caller) can use independently:\n\n- `get(self, table: str, row_id: int) -> dict | None` — return the row with the given id, implemented by delegating to the existing `find_one(table, id=row_id)` so the scan logic is not duplicated.\n- `update(self, table: str, row_id: int, values: dict) -> bool` — look the row up by id (reuse `get`/`find_one`), and if found merge `values` into the existing dict in place so the row stored in `self.tables` is mutated. Return `True` when a row was updated and `False` when no row with that id exists. The `id` key must never be overwritten: strip/ignore any `id` entry present in `values`.\n\nKeep the style consistent with the existing methods (type hints, no external deps, no docstring-heavy additions beyond what neighbours have).",
+      "target_files": [
+       "shop/db.py"
+      ],
+      "definition_of_done": "`Database.get(table, row_id)` returns the matching row dict or `None`, and is implemented via `find_one(table, id=row_id)`. `Database.update(table, row_id, values)` mutates the existing row dict in place (visible through `self.tables` and previously-obtained references), returns `True` on success and `False` for an unknown id, and leaves `row['id']` unchanged even if `values` contains an `id` key. Both methods work for any table without depending on the users module.",
+      "interface": "",
+      "depends_on": [],
+      "status": "pending",
+      "coder_fix_attempts": 0,
+      "review_cycles": 0,
+      "reviewer_malfunctions": 0,
+      "gate_failures": 0
+     },
+     {
+      "id": "task-users-change-email",
+      "title": "Add EmailTaken exception and change_email service",
+      "description": "In `shop/users.py`, add email-change support following the existing service conventions (`Database` as the first argument, lowercase email normalisation):\n\n- Define `class EmailTaken(Exception): pass` directly alongside the existing `UserNotFound` exception.\n- Add `change_email(db: Database, user_id: int, new_email: str) -> User` with a short docstring in the style of the neighbouring functions noting that emails are normalised to lowercase.\n- Implementation order matters: normalise with `new_email.lower()`; fetch the current row via `db.get(\"users\", user_id)` and raise `UserNotFound(user_id)` if it is `None`; then call `db.find_one(\"users\", email=normalised)` and raise `EmailTaken(normalised)` only if a row is found whose `id` differs from `user_id` (re-setting one's own email is a no-op success); then call `db.update(\"users\", user_id, {\"email\": normalised})` and return `User(row[\"id\"], normalised, row[\"password_hash\"])`.\n\nDo not touch orders, payments, or any HTTP/API layer.",
+      "target_files": [
+       "shop/users.py"
+      ],
+      "definition_of_done": "`shop/users.py` exports `EmailTaken` next to `UserNotFound` and a `change_email(db, user_id, new_email)` that: returns a `User` with the lowercased email and the row's existing `password_hash` after persisting the change through `db.update`; raises `UserNotFound(user_id)` for an unknown id even when the target email is already taken; raises `EmailTaken(normalised)` when another user already owns the email; and succeeds without error when the email already belongs to the same `user_id`. Subsequent `get_user_by_email(db, new_email)` finds the user.",
+      "interface": "",
+      "depends_on": [
+       "task-db-get-update"
+      ],
+      "status": "pending",
+      "coder_fix_attempts": 0,
+      "review_cycles": 0,
+      "reviewer_malfunctions": 0,
+      "gate_failures": 0
+     }
+    ],
+    "status": "task_review"
+   }
+  },
+  {
+   "node": "await_task_approval",
+   "started": "2026-10-02T21:24:17.271479+00:00",
+   "ended": "2026-10-02T21:24:22.888791+00:00",
+   "delta": {
+    "tasks_approved": true,
+    "status": "coding"
+   },
+   "interrupt": {
+    "type": "tasks_approval",
     "tasks": [
      {
       "id": "task-db-get-update",
@@ -97,17 +166,7 @@
       "reviewer_malfunctions": 0,
       "gate_failures": 0
      }
-    ],
-    "status": "task_review"
-   }
-  },
-  {
-   "node": "await_task_approval",
-   "started": "2026-10-02T21:24:17.271479+00:00",
-   "ended": "2026-10-02T21:24:22.888791+00:00",
-   "delta": {
-    "tasks_approved": true,
-    "status": "coding"
+    ]
    }
   },
   {
@@ -124,6 +183,7 @@
        "shop/db.py"
       ],
       "definition_of_done": "`Database.get(table, row_id)` returns the matching row dict or `None`, and is implemented via `find_one(table, id=row_id)`. `Database.update(table, row_id, values)` mutates the existing row dict in place (visible through `self.tables` and previously-obtained references), returns `True` on success and `False` for an unknown id, and leaves `row['id']` unchanged even if `values` contains an `id` key. Both methods work for any table without depending on the users module.",
+      "interface": "",
       "depends_on": [],
       "status": "coding",
       "coder_fix_attempts": 0,
@@ -139,6 +199,7 @@
        "shop/users.py"
       ],
       "definition_of_done": "`shop/users.py` exports `EmailTaken` next to `UserNotFound` and a `change_email(db, user_id, new_email)` that: returns a `User` with the lowercased email and the row's existing `password_hash` after persisting the change through `db.update`; raises `UserNotFound(user_id)` for an unknown id even when the target email is already taken; raises `EmailTaken(normalised)` when another user already owns the email; and succeeds without error when the email already belongs to the same `user_id`. Subsequent `get_user_by_email(db, new_email)` finds the user.",
+      "interface": "",
       "depends_on": [
        "task-db-get-update"
       ],
@@ -213,7 +274,8 @@
     "stalls": {
      "task-db-get-update": {
       "signature": "The diff adds exactly the two primitives the task asked for, in the existing style. `get` delegates to `find_one(table, id=row_id)` (satisfying the delegation spy test and returning the stored dict object itself, so identity and unknown-table/unknown-id-return-None cases hold). `update` looks the ro",
-      "repeats": 0
+      "repeats": 0,
+      "history": []
      }
     }
    }
@@ -232,6 +294,7 @@
        "shop/db.py"
       ],
       "definition_of_done": "`Database.get(table, row_id)` returns the matching row dict or `None`, and is implemented via `find_one(table, id=row_id)`. `Database.update(table, row_id, values)` mutates the existing row dict in place (visible through `self.tables` and previously-obtained references), returns `True` on success and `False` for an unknown id, and leaves `row['id']` unchanged even if `values` contains an `id` key. Both methods work for any table without depending on the users module.",
+      "interface": "",
       "depends_on": [],
       "status": "completed",
       "coder_fix_attempts": 0,
@@ -247,6 +310,7 @@
        "shop/users.py"
       ],
       "definition_of_done": "`shop/users.py` exports `EmailTaken` next to `UserNotFound` and a `change_email(db, user_id, new_email)` that: returns a `User` with the lowercased email and the row's existing `password_hash` after persisting the change through `db.update`; raises `UserNotFound(user_id)` for an unknown id even when the target email is already taken; raises `EmailTaken(normalised)` when another user already owns the email; and succeeds without error when the email already belongs to the same `user_id`. Subsequent `get_user_by_email(db, new_email)` finds the user.",
+      "interface": "",
       "depends_on": [
        "task-db-get-update"
       ],
@@ -273,6 +337,7 @@
        "shop/db.py"
       ],
       "definition_of_done": "`Database.get(table, row_id)` returns the matching row dict or `None`, and is implemented via `find_one(table, id=row_id)`. `Database.update(table, row_id, values)` mutates the existing row dict in place (visible through `self.tables` and previously-obtained references), returns `True` on success and `False` for an unknown id, and leaves `row['id']` unchanged even if `values` contains an `id` key. Both methods work for any table without depending on the users module.",
+      "interface": "",
       "depends_on": [],
       "status": "completed",
       "coder_fix_attempts": 0,
@@ -288,6 +353,7 @@
        "shop/users.py"
       ],
       "definition_of_done": "`shop/users.py` exports `EmailTaken` next to `UserNotFound` and a `change_email(db, user_id, new_email)` that: returns a `User` with the lowercased email and the row's existing `password_hash` after persisting the change through `db.update`; raises `UserNotFound(user_id)` for an unknown id even when the target email is already taken; raises `EmailTaken(normalised)` when another user already owns the email; and succeeds without error when the email already belongs to the same `user_id`. Subsequent `get_user_by_email(db, new_email)` finds the user.",
+      "interface": "",
       "depends_on": [
        "task-db-get-update"
       ],
@@ -393,11 +459,13 @@
     "stalls": {
      "task-db-get-update": {
       "signature": "The diff adds exactly the two primitives the task asked for, in the existing style. `get` delegates to `find_one(table, id=row_id)` (satisfying the delegation spy test and returning the stored dict object itself, so identity and unknown-table/unknown-id-return-None cases hold). `update` looks the ro",
-      "repeats": 0
+      "repeats": 0,
+      "history": []
      },
      "task-users-change-email": {
       "signature": "The diff adds `EmailTaken` directly below `UserNotFound` and a `change_email(db, user_id, new_email)` service in `shop/users.py`, matching the repo conventions (`Database` first argument, lowercase email normalisation, docstring in the style of `register_user`). The implementation follows the mandat",
-      "repeats": 0
+      "repeats": 0,
+      "history": []
      }
     }
    }
@@ -416,6 +484,7 @@
        "shop/db.py"
       ],
       "definition_of_done": "`Database.get(table, row_id)` returns the matching row dict or `None`, and is implemented via `find_one(table, id=row_id)`. `Database.update(table, row_id, values)` mutates the existing row dict in place (visible through `self.tables` and previously-obtained references), returns `True` on success and `False` for an unknown id, and leaves `row['id']` unchanged even if `values` contains an `id` key. Both methods work for any table without depending on the users module.",
+      "interface": "",
       "depends_on": [],
       "status": "completed",
       "coder_fix_attempts": 0,
@@ -431,6 +500,7 @@
        "shop/users.py"
       ],
       "definition_of_done": "`shop/users.py` exports `EmailTaken` next to `UserNotFound` and a `change_email(db, user_id, new_email)` that: returns a `User` with the lowercased email and the row's existing `password_hash` after persisting the change through `db.update`; raises `UserNotFound(user_id)` for an unknown id even when the target email is already taken; raises `EmailTaken(normalised)` when another user already owns the email; and succeeds without error when the email already belongs to the same `user_id`. Subsequent `get_user_by_email(db, new_email)` finds the user.",
+      "interface": "",
       "depends_on": [
        "task-db-get-update"
       ],
@@ -519,6 +589,7 @@
      "shop/db.py"
     ],
     "definition_of_done": "`Database.get(table, row_id)` returns the matching row dict or `None`, and is implemented via `find_one(table, id=row_id)`. `Database.update(table, row_id, values)` mutates the existing row dict in place (visible through `self.tables` and previously-obtained references), returns `True` on success and `False` for an unknown id, and leaves `row['id']` unchanged even if `values` contains an `id` key. Both methods work for any table without depending on the users module.",
+    "interface": "",
     "depends_on": [],
     "status": "completed",
     "coder_fix_attempts": 0,
@@ -534,6 +605,7 @@
      "shop/users.py"
     ],
     "definition_of_done": "`shop/users.py` exports `EmailTaken` next to `UserNotFound` and a `change_email(db, user_id, new_email)` that: returns a `User` with the lowercased email and the row's existing `password_hash` after persisting the change through `db.update`; raises `UserNotFound(user_id)` for an unknown id even when the target email is already taken; raises `EmailTaken(normalised)` when another user already owns the email; and succeeds without error when the email already belongs to the same `user_id`. Subsequent `get_user_by_email(db, new_email)` finds the user.",
+    "interface": "",
     "depends_on": [
      "task-db-get-update"
     ],
@@ -620,15 +692,20 @@
   "stalls": {
    "task-db-get-update": {
     "signature": "The diff adds exactly the two primitives the task asked for, in the existing style. `get` delegates to `find_one(table, id=row_id)` (satisfying the delegation spy test and returning the stored dict object itself, so identity and unknown-table/unknown-id-return-None cases hold). `update` looks the ro",
-    "repeats": 0
+    "repeats": 0,
+    "history": []
    },
    "task-users-change-email": {
     "signature": "The diff adds `EmailTaken` directly below `UserNotFound` and a `change_email(db, user_id, new_email)` service in `shop/users.py`, matching the repo conventions (`Database` first argument, lowercase email normalisation, docstring in the style of `register_user`). The implementation follows the mandat",
-    "repeats": 0
+    "repeats": 0,
+    "history": []
    }
   },
   "adjudicated": {},
   "failed_tasks": {},
+  "failure_decisions": {},
+  "escalations": {},
+  "hints": {},
   "pull_request": {
    "number": 1,
    "url": "https://github.com/gavrilovdm/agentflow-sandbox/pull/1",
