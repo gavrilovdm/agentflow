@@ -46,7 +46,7 @@ SANDBOX = "gavrilovdm/agentflow-sandbox"
 
 
 def dump(name: str, data: Any) -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / name).parent.mkdir(parents=True, exist_ok=True)
     (OUT / name).write_text(json.dumps(data, indent=1, default=str, ensure_ascii=False))
     print(f"wrote {name} ({(OUT / name).stat().st_size // 1024} KB)")
 
@@ -89,6 +89,34 @@ def _delta(before: dict, after: dict) -> dict:
     return out
 
 
+# Runs shown as scenarios in the guide's replay (all real, from Postgres checkpoints).
+SCENARIO_RUNS = {
+    "happy": SUCCESS_RUN,
+    "escalate-skip": "run-d373c3156641",
+    "escalate-replan": "run-474c62f24055",
+}
+
+
+def _steps(hist: list) -> list[dict]:
+    """One entry per executed node: when it ran, what it changed, and — for a node that
+    paused the run — the question it asked (interrupt payload, e.g. the escalation dossier)."""
+    steps = []
+    for prev, cur in zip(hist, hist[1:], strict=False):
+        if not prev.next:
+            continue
+        step = {
+            "node": prev.next[0],
+            "started": prev.created_at,
+            "ended": cur.created_at,
+            "delta": _delta(prev.values or {}, cur.values or {}),
+        }
+        asked = [i.value for t in (prev.tasks or ()) for i in (t.interrupts or ())]
+        if asked:
+            step["interrupt"] = jsonable(asked[0])
+        steps.append(step)
+    return steps
+
+
 async def export_runs() -> None:
     async with open_persistence() as p:
 
@@ -96,22 +124,15 @@ async def export_runs() -> None:
             return list(reversed([s async for s in p.graph.aget_state_history(_config(thread))]))
 
         hist = await history(SUCCESS_RUN)
-        steps = []
-        for prev, cur in zip(hist, hist[1:], strict=False):
-            if not prev.next:
-                continue
-            delta = _delta(prev.values or {}, cur.values or {})
-            # written_files can be large; keep full content (it's the real code) but nothing else heavy
-            steps.append(
-                {
-                    "node": prev.next[0],
-                    "started": prev.created_at,
-                    "ended": cur.created_at,
-                    "delta": delta,
-                }
-            )
         final = jsonable({k: v for k, v in (hist[-1].values or {}).items() if k not in SKIP_KEYS})
-        dump("run.json", {"thread_id": SUCCESS_RUN, "steps": steps, "final": final})
+        dump("run.json", {"thread_id": SUCCESS_RUN, "steps": _steps(hist), "final": final})
+
+        for key, thread in SCENARIO_RUNS.items():
+            h = await history(thread)
+            fin = jsonable({k: v for k, v in (h[-1].values or {}).items() if k not in SKIP_KEYS})
+            dump(
+                f"runs/{key}.json", {"thread_id": thread, "steps": _steps(h), "final": fin, "calls": llm_calls(thread)}
+            )
 
         failures = {}
         for thread, label in FAILED_RUNS.items():
@@ -163,20 +184,28 @@ def _tool_text(out: Any) -> str:
     return out if isinstance(out, str) else json.dumps(out, default=str)
 
 
-def export_llm_calls() -> None:
+def _langsmith():
     env = {k: v for k, v in dotenv_values(ROOT / ".env").items() if k.startswith("LANGSMITH") and v}
     if not env.get("LANGSMITH_API_KEY"):
-        print("skip llm_calls.json (no LANGSMITH_API_KEY)")
-        return
+        return None
     os.environ.update(env)
     from langsmith import Client
 
-    c = Client()
-    roots = [
-        r
-        for r in c.list_runs(project_name="agentflow", is_root=True, limit=50)
-        if (r.metadata or {}).get("thread_id") == SUCCESS_RUN
-    ]
+    return Client()
+
+
+def llm_calls(thread: str) -> list[dict]:
+    """Every model and tool call of one run, from its LangSmith traces."""
+    c = _langsmith()
+    if c is None:
+        return []
+    roots = list(
+        c.list_runs(
+            project_name="agentflow",
+            is_root=True,
+            filter=f'and(eq(metadata_key, "thread_id"), eq(metadata_value, "{thread}"))',
+        )
+    )
     calls = []
     for root in sorted(roots, key=lambda r: r.start_time):
         for r in sorted(c.list_runs(project_name="agentflow", trace_id=root.trace_id), key=lambda r: r.start_time):
@@ -206,6 +235,11 @@ def export_llm_calls() -> None:
                         "output": _tool_text((r.outputs or {}).get("output", ""))[:800],
                     }
                 )
+    return calls
+
+
+def export_llm_calls() -> None:
+    calls = llm_calls(SUCCESS_RUN)
     dump("llm_calls.json", calls)
 
 

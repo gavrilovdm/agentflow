@@ -30,7 +30,12 @@ export const POSITIONS: Record<string, [number, number]> = {
   replan: [COL.L, row(7)],
   escalate: [COL.L, row(8)],
   adjudicate: [COL.L, row(9)],
+  // Invisible spacer: fitView frames nodes only, and the skip/stop edge loops out to the
+  // left of the failure column — without this its label was cut off.
+  __pad_left__: [COL.L - 80, row(7)],
 }
+
+export const isSpacer = (id: string) => id.startsWith('__pad')
 
 export interface EdgeSpec {
   source: HandleId

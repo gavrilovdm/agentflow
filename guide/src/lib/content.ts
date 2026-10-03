@@ -29,6 +29,7 @@ export const NODES: Record<string, NodeInfo> = {
   handle_failure: { title: 'Contain the failure', who: 'Python', what: 'Skip: mark the task failed and skip only the tasks that depend on it. Stop: mark everything left as not started and end the run.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   create_pr: { title: 'Open the PR', who: 'Python + Opus', what: 'Run the whole test suite once more, push the branch, write a description and open the pull request.', file: 'src/agentflow/graph/nodes.py' },
   notify: { title: 'Notify', who: 'Telegram', what: 'Tell a human it is done (or what failed).', file: 'src/agentflow/integrations/telegram.py' },
+  __end__: { title: 'End', who: 'Python', what: 'The graph is finished: either completed (a PR is open) or stopped — by a human, or because nothing salvageable was left.', file: 'src/agentflow/graph/routing.py' },
   finalize: { title: 'Clean up', who: 'Python', what: 'Delete the temporary clone. The graph ends.', file: 'src/agentflow/integrations/workspace.py' },
 }
 

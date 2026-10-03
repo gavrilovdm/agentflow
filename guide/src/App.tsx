@@ -1,6 +1,6 @@
 import { Concepts } from './sections/Concepts'
 import { Hero } from './sections/Hero'
-import { Replay } from './sections/Replay'
+import { Replay } from './sections/replay/Replay'
 import { CodeMap, Failures, Interview, UseCases } from './sections/Rest'
 import { API_URL } from './lib/api'
 import { LiveProvider, useLive } from './lib/live'

@@ -13,7 +13,7 @@ import '@xyflow/react/dist/style.css'
 import { useMemo, useState } from 'react'
 import { NODES } from '../lib/content'
 import { graph } from '../lib/data'
-import { EDGES, HANDLE_IDS, POSITIONS, SELF_LOOPS, type HandleId } from '../lib/graphLayout'
+import { EDGES, HANDLE_IDS, POSITIONS, SELF_LOOPS, isSpacer, type HandleId } from '../lib/graphLayout'
 import { actorColor } from './ui'
 
 const SIDE: Record<string, Position> = { top: Position.Top, bottom: Position.Bottom, left: Position.Left, right: Position.Right }
@@ -61,12 +61,10 @@ export function GraphView({
   active,
   previous,
   onSelect,
-  height = 640,
 }: {
   active?: string
   previous?: string
   onSelect?: (node: string) => void
-  height?: number
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
   const focus = hovered ?? active
@@ -100,8 +98,10 @@ export function GraphView({
           position: { x, y },
           draggable: false,
           selectable: false,
+          hidden: false,
+          style: isSpacer(id) ? { opacity: 0, pointerEvents: 'none', width: 10 } : undefined,
           data: {
-            label: LABEL[id] ?? info?.title ?? id,
+            label: isSpacer(id) ? '' : (LABEL[id] ?? info?.title ?? id),
             color: info ? actorColor(info.who) : 'var(--muted)',
             active: id === active,
             dim: hovered !== null && !neighbours.has(id),
@@ -116,7 +116,7 @@ export function GraphView({
     () =>
       edgeList.map((e) => {
         const target = e.spec.targetAlias ?? e.target
-        const hot = e.source === previous && e.target === active
+        const hot = e.source === previous && (e.target === active || target === active)
         const touchesFocus = focus !== undefined && (e.source === focus || target === focus)
         const dim = hovered !== null && !touchesFocus
         const stroke = hot ? 'var(--accent)' : touchesFocus ? 'var(--ink)' : 'var(--muted)'
@@ -129,7 +129,9 @@ export function GraphView({
           type: 'smoothstep',
           pathOptions: { borderRadius: 10, offset: 18 },
           animated: hot,
-          label: touchesFocus || hot ? e.spec.label : undefined,
+          // Only the focused node's outgoing edges are labelled — those are its choices.
+          // Labelling incoming edges too piled several labels onto busy nodes.
+          label: e.source === focus || hot ? e.spec.label : undefined,
           labelStyle: { fontSize: 10, fill: 'var(--ink)' },
           labelBgStyle: { fill: 'var(--panel)' },
           labelBgPadding: [4, 2] as [number, number],
@@ -146,14 +148,15 @@ export function GraphView({
   )
 
   return (
-    <div style={{ height }} className="overflow-hidden rounded-xl border border-line bg-panel">
+    // Height follows width at the layout's aspect ratio, so the diagram fills its box.
+    <div style={{ aspectRatio: '780 / 800' }} className="w-full overflow-hidden rounded-xl border border-line bg-panel">
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         connectionMode={ConnectionMode.Loose}
         fitView
-        fitViewOptions={{ padding: 0.06 }}
+        fitViewOptions={{ padding: 0.1 }}
         nodesConnectable={false}
         panOnScroll={false}
         zoomOnScroll={false}
