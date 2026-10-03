@@ -172,6 +172,14 @@ BUGS.push(
     lesson: 'Side-channel calls (alerts, metrics) must not be able to fail the main work.',
     commit: 'escalation PR',
   },
+  {
+    id: 'reviewer-fallback', title: 'Every review failed once Opus was rate-limited',
+    symptom: 'A live run escalated twice; the dossiers showed 3 reviewer malfunctions each: “Thinking mode does not support this tool_choice”.',
+    cause: 'The Opus proxy returned 429, the reviewer fell back to DeepSeek as designed — but the fallback was built with DeepSeek’s thinking mode on, and the reviewer’s final structured verdict is a forced tool call, which thinking mode rejects.',
+    fix: 'Build the reviewer’s primary and fallback models through one helper that disables thinking; a live test now runs the reviewer agent path on every model.',
+    lesson: 'Escalation showed the evidence immediately — the dossier, not the logs, is where this was spotted.',
+    commit: 'guide-review PR',
+  },
 )
 
 export interface UseCase {

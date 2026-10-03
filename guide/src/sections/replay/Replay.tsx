@@ -9,7 +9,8 @@ import { Timeline } from './Timeline'
 const STEP_MS = 1800
 
 function initialFromUrl(): { scenario: string; step: number } {
-  const q = new URLSearchParams(window.location.search)
+  // Read during render, so guard for non-browser rendering (SSR, tests).
+  const q = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search)
   const scenario = SCENARIOS.some((s) => s.id === q.get('scenario')) ? (q.get('scenario') as string) : SCENARIOS[0].id
   const n = Number(q.get('step'))
   return { scenario, step: Number.isInteger(n) && n >= 1 ? n - 1 : 0 }
@@ -115,7 +116,13 @@ export function Replay() {
         {run && !scenario.legacyGraph && scenario.kind === 'real' && <> Thread <code>{run.thread_id}</code>.</>}
       </p>
 
-      <div tabIndex={0} onKeyDown={onKey} className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      <div
+        role="group"
+        aria-label="Replay player: left and right arrows step, space plays"
+        tabIndex={0}
+        onKeyDown={onKey}
+        className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      >
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <button type="button" className="rounded-lg border border-line bg-panel px-3 py-1.5 text-sm disabled:opacity-40" disabled={index === 0} onClick={() => go(index - 1)}>
             ← Prev

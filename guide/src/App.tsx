@@ -1,7 +1,10 @@
-import { Concepts } from './sections/Concepts'
+import { Concepts } from './sections/concepts/Concepts'
 import { Hero } from './sections/Hero'
 import { Replay } from './sections/replay/Replay'
-import { CodeMap, Failures, Interview, UseCases } from './sections/Rest'
+import { CodeMap } from './sections/CodeMap'
+import { Failures } from './sections/Failures'
+import { Interview } from './sections/Interview'
+import { UseCases } from './sections/UseCases'
 import { API_URL } from './lib/api'
 import { LiveProvider, useLive } from './lib/live'
 

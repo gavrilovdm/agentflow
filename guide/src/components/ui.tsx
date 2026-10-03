@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { GITHUB } from '../lib/data'
 import { GLOSSARY } from '../lib/content'
 
@@ -18,13 +18,26 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 }
 
 /** A glossary term: dotted underline, definition on hover / focus / tap. */
+const TOOLTIP_HALF_WIDTH = 140 // half of w-64 (256px) + margin
+
 export function Term({ t, children }: { t: keyof typeof GLOSSARY | string; children?: ReactNode }) {
   const [open, setOpen] = useState(false)
+  const [align, setAlign] = useState<'center' | 'left' | 'right'>('center')
+  const ref = useRef<HTMLButtonElement>(null)
+  // Keep the tooltip on screen: near a viewport edge, anchor it to that edge instead of centring.
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return
+    const r = ref.current.getBoundingClientRect()
+    const mid = r.left + r.width / 2
+    setAlign(mid < TOOLTIP_HALF_WIDTH ? 'left' : window.innerWidth - mid < TOOLTIP_HALF_WIDTH ? 'right' : 'center')
+  }, [open])
   const def = GLOSSARY[t as string]
   if (!def) return <>{children ?? t}</>
+  const position = { center: 'left-1/2 -translate-x-1/2', left: 'left-0', right: 'right-0' }[align]
   return (
     <span className="relative inline-block">
       <button
+        ref={ref}
         type="button"
         className="cursor-help border-b border-dotted border-muted text-inherit"
         onMouseEnter={() => setOpen(true)}
@@ -37,7 +50,7 @@ export function Term({ t, children }: { t: keyof typeof GLOSSARY | string; child
         {children ?? t}
       </button>
       {open && (
-        <span role="tooltip" className="absolute bottom-full left-1/2 z-30 mb-2 w-64 -translate-x-1/2 rounded-lg border border-line bg-panel p-3 text-left text-[13px] font-normal leading-snug text-ink shadow-lg">
+        <span role="tooltip" className={`absolute bottom-full z-30 mb-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-line bg-panel p-3 text-left text-[13px] font-normal leading-snug text-ink shadow-lg ${position}`}>
           <b className="block text-accent">{t}</b>
           {def}
         </span>
