@@ -21,5 +21,8 @@ pnpm dev            # http://localhost:5173
 playground queries the real vector index. Run `export_guide_data.py --index-self` once to
 index this repository.
 
+**Graph zoom.** The replay graph zooms with pinch or Ctrl+scroll, pans by drag, and has
++ / − / fit / fullscreen buttons in its bottom-left corner. Plain scroll still scrolls the page.
+
 The routing simulator is a TypeScript port of `graph/routing.py`. `pnpm test` runs the same
 cases as `tests/test_routing.py`.
