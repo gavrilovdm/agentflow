@@ -23,54 +23,6 @@ from agentflow.config import get_settings
 DEFAULT_MAX_TOKENS = 16_000
 
 
-class CursorProxyChat(ChatOpenAI):
-    """ChatOpenAI shaped around what cursor-proxy actually forwards (verified live in
-    vacancy-parser, see README "Claude through cursor-proxy").
-
-    - A `system` message never reaches the model: the same instruction is obeyed in
-      `user` and silently ignored in `system`. The orchestrator kept returning plausible
-      specs that were simply not following its rules, so system text is folded into
-      the first user message here instead of trusting every caller to remember.
-    - `temperature` is passed through verbatim and Opus answers it with 400, so it is
-      never sent.
-    - Empty text next to `tool_calls` becomes an empty text block, which Anthropic
-      rejects with 400 ("text content blocks must be non-empty").
-    """
-
-    def _get_request_payload(self, input_: Any, *, stop: list[str] | None = None, **kwargs: Any) -> dict:
-        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        payload.pop("temperature", None)
-        payload["messages"] = fold_system_into_user(payload["messages"])
-        for m in payload["messages"]:
-            if m.get("role") == "assistant" and m.get("tool_calls") and not m.get("content"):
-                m.pop("content", None)
-        return payload
-
-
-def fold_system_into_user(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Move every system message's text to the front of the first user message."""
-    system = [m for m in messages if m.get("role") == "system"]
-    if not system:
-        return messages
-    preamble = "\n\n".join(_text(m.get("content")) for m in system)
-    rest = [m for m in messages if m.get("role") != "system"]
-    for i, m in enumerate(rest):
-        if m.get("role") == "user":
-            content = m.get("content")
-            if isinstance(content, list):
-                merged: Any = [{"type": "text", "text": preamble}, *content]
-            else:
-                merged = f"{preamble}\n\n{_text(content)}"
-            return [*rest[:i], {**m, "content": merged}, *rest[i + 1 :]]
-    return [{"role": "user", "content": preamble}, *rest]
-
-
-def _text(content: Any) -> str:
-    if isinstance(content, list):
-        return "".join(b.get("text", "") for b in content if isinstance(b, dict))
-    return str(content or "")
-
-
 def chat_model(
     name: str,
     *,
@@ -87,11 +39,12 @@ def chat_model(
             kwargs["temperature"] = temperature
         return ChatAnthropic(**kwargs)
     if name.startswith("cpx"):
-        # Claude through cursor-proxy (cpxopus / cpxsonnet / cpxhaiku): it translates
-        # chat.completions — tools and tool_choice included — into Anthropic messages.
-        # Names starting with "claude-" never reach it, hence the cpx aliases.
-        return CursorProxyChat(
+        # Claude through cursor-proxy (cpxopus / cpxsonnet / cpxhaiku). From 0.2.0 the
+        # proxy itself absorbs the OAuth upstream's quirks (lost system prompt, 400 on
+        # Opus temperature and on empty text), so this is a plain OpenAI client.
+        return ChatOpenAI(
             model=name,
+            temperature=temperature,
             max_tokens=max_tokens,  # type: ignore[call-arg]
             api_key=s.claude_proxy_key or "unset",  # type: ignore[arg-type]
             base_url=s.claude_proxy_url,
