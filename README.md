@@ -177,7 +177,8 @@ Claude can be reached directly (`claude-*` model names, `ANTHROPIC_API_KEY`) or 
 
 ### Claude through cursor-proxy
 
-The orchestrator (spec, plan, replan, PR description) defaults to `cpxopus`: Opus through the local
+The orchestrator (spec, plan, replan, PR description), the test generator and the reviewer (including the referee)
+default to `cpxopus`: Opus through the local
 [cursor-proxy](https://github.com/gavrilovdm/cursor-proxy), the same setup vacancy-parser uses. The proxy takes
 OpenAI-format requests and forwards them to Anthropic with the Claude Code OAuth session, so no Anthropic key is needed.
 
@@ -190,7 +191,8 @@ node dist/cli.js key                  # prints the cpx_… key once → CLAUDE_P
 ```
 
 docker-compose reaches it at `host.docker.internal:8787`; the Helm chart pins `claude-opus-5` because a cluster has no
-local proxy. `CursorProxyChat` in `models.py` is shaped around what the proxy really forwards (checked live):
+local proxy. `CursorProxyChat` in `models.py` is shaped around what the proxy really forwards (checked live); the reviewer's
+multi-turn tool use (`tool` messages, assistant `tool_calls`) goes through it unchanged:
 
 | Limitation | Workaround |
 |---|---|

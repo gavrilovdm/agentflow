@@ -12,8 +12,9 @@ def _payload(messages, **kwargs):
     return model._get_request_payload(messages, **kwargs)
 
 
-def test_orchestrator_defaults_to_cursor_proxy():
-    assert Settings(_env_file=None).orchestrator_model == "cpxopus"
+def test_claude_roles_default_to_cursor_proxy():
+    s = Settings(_env_file=None)
+    assert (s.orchestrator_model, s.test_generator_model, s.reviewer_model) == ("cpxopus",) * 3
 
 
 def test_system_text_moves_into_first_user_message():

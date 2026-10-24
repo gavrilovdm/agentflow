@@ -64,9 +64,10 @@ class Settings(BaseSettings):
     claude_proxy_url: str = "http://127.0.0.1:8787/v1"
     claude_proxy_key: str = ""
 
-    orchestrator_model: str = "cpxopus"  # Opus via cursor-proxy
-    reviewer_model: str = "claude-opus-5"
-    test_generator_model: str = "claude-opus-5"
+    # Opus via cursor-proxy for every Claude role; the coder stays on DeepSeek.
+    orchestrator_model: str = "cpxopus"
+    reviewer_model: str = "cpxopus"
+    test_generator_model: str = "cpxopus"
     coder_model: str = "deepseek-v4-flash"
     fallback_model: str = "claude-sonnet-5"
 

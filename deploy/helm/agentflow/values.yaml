@@ -33,7 +33,7 @@ ingress:
     alb.ingress.kubernetes.io/target-type: ip
 
 config:
-  # The app default is cpxopus via a local cursor-proxy, which a cluster doesn't have.
+  # The app defaults are cpxopus via a local cursor-proxy, which a cluster doesn't have.
   ORCHESTRATOR_MODEL: claude-opus-5
   REVIEWER_MODEL: claude-opus-5
   TEST_GENERATOR_MODEL: claude-opus-5
