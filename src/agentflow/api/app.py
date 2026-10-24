@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hmac
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -57,8 +58,12 @@ async def count_requests(request: Request, call_next):
 
 
 def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
-    token = get_settings().api_token
-    if token and authorization != f"Bearer {token}":
+    s = get_settings()
+    if not s.api_token:
+        if s.insecure_dev:
+            return
+        raise HTTPException(503, "API_TOKEN is not configured")
+    if not hmac.compare_digest((authorization or "").encode(), f"Bearer {s.api_token}".encode()):
         raise HTTPException(401, "invalid or missing bearer token")
 
 
@@ -112,6 +117,10 @@ async def _enqueue_resume(request: Request, thread_id: str, decision: dict[str, 
 
 @app.post("/runs", status_code=202, dependencies=[Auth])
 async def create_run(body: StartRun, request: Request) -> dict[str, str]:
+    # local_path points the agent (which runs shell commands) at any directory of the API
+    # host; over the network that is remote code execution, so only local dev may use it.
+    if body.local_path and not get_settings().insecure_dev:
+        raise HTTPException(403, "local_path is only accepted with INSECURE_DEV=true")
     cfg = WorkflowConfig(
         target_repo=TargetRepo.parse(body.repo, body.base_branch) if body.repo else None,
         local_path=body.local_path,
@@ -160,7 +169,7 @@ async def github_webhook(
 ) -> dict[str, str]:
     s = get_settings()
     raw = await request.body()
-    if not github.verify_signature(s.github_webhook_secret, raw, x_hub_signature_256):
+    if not github.verify_signature(s.github_webhook_secret, raw, x_hub_signature_256, insecure_dev=s.insecure_dev):
         raise HTTPException(401, "bad signature")
     payload = await request.json()
     # Trigger: an issue gets the configured label → the issue becomes the prompt.
@@ -200,15 +209,31 @@ TEXT_COMMANDS = {
 }
 
 
+def _from_allowed_chat(update: dict[str, Any], chat_id: str, insecure_dev: bool) -> bool:
+    if not chat_id:
+        return insecure_dev
+    message = (update.get("callback_query") or {}).get("message") or update.get("message") or {}
+    return str((message.get("chat") or {}).get("id", "")) == chat_id
+
+
 @app.post("/webhooks/telegram")
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: Annotated[str | None, Header()] = None,
 ) -> dict[str, str]:
     s = get_settings()
-    if s.telegram_webhook_secret and x_telegram_bot_api_secret_token != s.telegram_webhook_secret:
-        raise HTTPException(401, "bad secret")
+    if s.telegram_webhook_secret:
+        if not hmac.compare_digest(
+            (x_telegram_bot_api_secret_token or "").encode(), s.telegram_webhook_secret.encode()
+        ):
+            raise HTTPException(401, "bad secret")
+    elif not s.insecure_dev:
+        raise HTTPException(503, "TELEGRAM_WEBHOOK_SECRET is not configured")
     update = await request.json()
+    # Anyone can message the bot; only the configured chat may steer runs (a /hint is
+    # injected into the coder's prompt).
+    if not _from_allowed_chat(update, s.telegram_chat_id, s.insecure_dev):
+        return {"status": "ignored"}
 
     # Inline buttons: "<action>|<thread>" — approve/reject for spec & plan,
     # retry/replan/skip/abort for a task that ran out of budget.

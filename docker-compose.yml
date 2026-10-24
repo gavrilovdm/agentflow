@@ -5,7 +5,7 @@ services:
       POSTGRES_USER: agentflow
       POSTGRES_PASSWORD: agentflow
       POSTGRES_DB: agentflow
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agentflow"]
@@ -14,7 +14,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
 
   api:
     build: { context: ., dockerfile: docker/Dockerfile }
@@ -24,7 +24,10 @@ services:
       REDIS_URL: redis://redis:6379
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}  # shell env wins over .env (e.g. GITHUB_TOKEN=$(gh auth token))
       CLAUDE_PROXY_URL: http://host.docker.internal:8787/v1
-    ports: ["8010:8000"]  # 8000 is often taken locally
+      # Local dev only: empty API_TOKEN / webhook secrets are accepted. Safe because every
+      # port is bound to 127.0.0.1; never copy this into a deployment.
+      INSECURE_DEV: "true"
+    ports: ["127.0.0.1:8010:8000"]  # 8000 is often taken locally
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }

@@ -78,6 +78,12 @@ curl -X POST localhost:8010/runs/<thread_id>/approval \
      -H 'content-type: application/json' -d '{"approved": true}'
 ```
 
+Outside docker-compose every secret is required: an empty `API_TOKEN` answers 503, and an empty
+`GITHUB_WEBHOOK_SECRET` / `TELEGRAM_WEBHOOK_SECRET` rejects the webhook. Compose sets `INSECURE_DEV=true`
+and binds its ports to 127.0.0.1, which is the only setup where checks may be skipped. `local_path`
+(run the agent in a directory of the API host) is accepted only in that mode, and Telegram commands are
+honoured only from `TELEGRAM_CHAT_ID`.
+
 You can also wire up these triggers:
 
 - **GitHub webhook** → `POST /webhooks/github` (event: issues). Labelling an issue `agentflow` starts a run; the PR body says `Closes #N`.

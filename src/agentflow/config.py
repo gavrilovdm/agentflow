@@ -84,7 +84,11 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"  # the guide app's dev server
-    api_token: str = Field(default="", description="Bearer token for the REST API; empty disables auth")
+    api_token: str = Field(default="", description="Bearer token for the REST API; empty refuses every request")
+    # Empty secrets used to switch checks off, so one forgotten env var in prod exposed
+    # an endpoint that runs a coding agent with our GitHub token. Now an empty secret
+    # refuses requests unless this is set, which only docker-compose (bound to 127.0.0.1) does.
+    insecure_dev: bool = Field(default=False, description="Accept unauthenticated requests when secrets are empty")
     recursion_limit: int = 500
 
 
