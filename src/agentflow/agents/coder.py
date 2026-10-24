@@ -8,7 +8,7 @@ loops), retries with backoff on transient API errors, and provider fallback.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +50,6 @@ class CoderContext:
     workspace: Path
     language: str
     test_content: str = ""
-    lessons: list[str] = field(default_factory=list)
     human_hint: str | None = None
 
 
@@ -125,8 +124,6 @@ def system_prompt(ctx: CoderContext) -> str:
             "## Guidance from a human (takes priority)\n"
             f"This task ran out of attempts before and a human reviewed it. Their guidance:\n{ctx.human_hint}"
         )
-    if ctx.lessons:
-        sections.append("## Lessons from past reviews of this repository\n" + "\n".join(f"- {x}" for x in ctx.lessons))
     sections.append(
         "## Instructions\n"
         "1. Use glob_files / grep / read_file to find existing code and conventions before writing new code\n"

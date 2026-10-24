@@ -11,19 +11,17 @@ import logging
 from typing import Any
 
 from arq.connections import RedisSettings
-from prometheus_client import start_http_server
 
 from agentflow.config import WorkflowConfig, get_settings
 from agentflow.graph.escalation import dossier_text
 from agentflow.integrations import telegram
-from agentflow.observability import JOB_SECONDS, RUNS_FINISHED, RUNS_STARTED, setup_logging
+from agentflow.observability import setup_logging
 from agentflow.runner import CRASH_PREFIX, RunSnapshot, open_persistence, resume_run, start_run
 
 log = logging.getLogger("agentflow.worker")
 
 
 async def _after(snap: RunSnapshot) -> dict[str, Any]:
-    RUNS_FINISHED.labels(snap.status).inc()
     error = snap.values.get("error") or ""
     if error.startswith(CRASH_PREFIX):
         spec = snap.values.get("spec")
@@ -51,15 +49,14 @@ async def _after(snap: RunSnapshot) -> dict[str, Any]:
 async def start_run_job(
     ctx: dict, prompt: str, config: dict, thread_id: str, issue_number: int | None = None, trigger: str = "api"
 ) -> dict:
-    RUNS_STARTED.labels(trigger).inc()
-    with JOB_SECONDS.labels("start").time():
-        snap = await start_run(
-            ctx["persistence"],
-            prompt,
-            WorkflowConfig.model_validate(config),
-            thread_id=thread_id,
-            issue_number=issue_number,
-        )
+    log.info("run started", extra={"data": {"thread_id": thread_id, "trigger": trigger}})
+    snap = await start_run(
+        ctx["persistence"],
+        prompt,
+        WorkflowConfig.model_validate(config),
+        thread_id=thread_id,
+        issue_number=issue_number,
+    )
     return await _after(snap)
 
 
@@ -67,14 +64,12 @@ async def resume_run_job(ctx: dict, thread_id: str, decision: dict | bool, feedb
     # Jobs enqueued before decisions became dicts carry (approved, feedback).
     if isinstance(decision, bool):
         decision = {"approved": decision, "feedback": feedback}
-    with JOB_SECONDS.labels("resume").time():
-        snap = await resume_run(ctx["persistence"], thread_id, decision)
+    snap = await resume_run(ctx["persistence"], thread_id, decision)
     return await _after(snap)
 
 
 async def startup(ctx: dict) -> None:
     setup_logging()
-    start_http_server(9100)  # Prometheus scrape target for the worker
     ctx["_persistence_cm"] = open_persistence()
     ctx["persistence"] = await ctx["_persistence_cm"].__aenter__()
 

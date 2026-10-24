@@ -1,7 +1,7 @@
 // Hand-written explanations. Everything factual here is checked against the code
 // (links point at the real files) or against the captured data in ../data.
 
-export type ConceptId = 'tools' | 'state' | 'routing' | 'memory' | 'fallbacks' | 'evals'
+export type ConceptId = 'tools' | 'state' | 'routing' | 'fallbacks' | 'evals'
 
 export interface NodeInfo {
   title: string
@@ -20,10 +20,10 @@ export const NODES: Record<string, NodeInfo> = {
   await_task_approval: { title: 'Human checks the plan', who: 'You', what: 'Second checkpoint: approve the plan, or reject it with feedback and it gets re-planned.', concept: 'state', file: 'src/agentflow/graph/nodes.py' },
   select_next_task: { title: 'Pick next task', who: 'Python', what: 'Choose the first pending task whose dependencies are all done. None left → go open the PR.', concept: 'routing', file: 'src/agentflow/graph/routing.py' },
   generate_task_test: { title: 'Write the failing test', who: 'Opus (test generator)', what: 'Before any code: write the acceptance test from the task’s interface and Definition of Done, then check it fails (red). A test that already passes asserts nothing and is rewritten.', concept: 'tools', file: 'src/agentflow/agents/test_generator.py' },
-  run_coder: { title: 'Make it pass', who: 'DeepSeek (coder agent)', what: 'A tool-using agent greps and reads the codebase and writes code until the failing test can pass. It also gets past review feedback and lessons from earlier runs.', concept: 'tools', file: 'src/agentflow/agents/coder.py' },
+  run_coder: { title: 'Make it pass', who: 'DeepSeek (coder agent)', what: 'A tool-using agent greps and reads the codebase and writes code until the failing test can pass. It also gets the reviewer’s feedback from earlier attempts.', concept: 'tools', file: 'src/agentflow/agents/coder.py' },
   run_review: { title: 'Gate, then review', who: 'pytest/ruff + Opus (reviewer)', what: 'Deterministic checks first (types, tests, lint). Only if they pass does a reviewer agent judge the diff — and it can grep and read the repo while doing so.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   adjudicate: { title: 'Referee', who: 'Opus (referee)', what: 'When the same failure repeats 3×, decide whether the test is wrong rather than the code. If so, rewrite the test and try again.', concept: 'routing', file: 'src/agentflow/agents/reviewer.py' },
-  complete_task: { title: 'Commit + learn', who: 'Python', what: 'Commit code and test together and save useful review feedback as long-term lessons.', concept: 'memory', file: 'src/agentflow/graph/nodes.py' },
+  complete_task: { title: 'Commit', who: 'Python', what: 'Commit code and test together, so the PR never ships code without its test.', concept: 'state', file: 'src/agentflow/graph/nodes.py' },
   escalate: { title: 'Ask a human', who: 'You', what: 'A task ran out of budget. The run pauses with a dossier — attempts, recent failures, open reviewer requests, partial work — and you choose: retry with a hint, re-plan, skip, or stop.', concept: 'routing', file: 'src/agentflow/graph/escalation.py' },
   replan: { title: 'Re-plan', who: 'Opus (orchestrator)', what: 'Rewrite only the not-yet-done tasks around the failure, using the dossier, your guidance and the same read-only repo tools as the planner. Completed tasks and their commits stay as they are.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   handle_failure: { title: 'Contain the failure', who: 'Python', what: 'Skip: mark the task failed and skip only the tasks that depend on it. Stop: mark everything left as not started and end the run.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
@@ -230,14 +230,13 @@ export const CODE_MAP: { concept: string; files: string[] }[] = [
   { concept: 'Agents (coder, reviewer, referee)', files: ['src/agentflow/agents/coder.py', 'src/agentflow/agents/reviewer.py'] },
   { concept: 'Structured outputs (schemas)', files: ['src/agentflow/schemas.py', 'src/agentflow/models.py'] },
   { concept: 'Code navigation tools (glob, grep, read)', files: ['src/agentflow/agents/repo_tools.py'] },
-  { concept: 'Long-term memory', files: ['src/agentflow/memory/lessons.py'] },
   { concept: 'Deterministic gate', files: ['src/agentflow/gate/python.py', 'src/agentflow/gate/typescript.py'] },
   { concept: 'Start / resume / inspect runs', files: ['src/agentflow/runner.py'] },
   { concept: 'API, webhooks, queue worker', files: ['src/agentflow/api/app.py', 'src/agentflow/worker.py'] },
   { concept: 'MCP server', files: ['src/agentflow/mcp_server.py'] },
   { concept: 'Evals', files: ['evals/spec_eval.py', 'evals/e2e_eval.py'] },
   { concept: 'Tests (graph e2e with fake LLMs)', files: ['tests/test_workflow_e2e.py', 'tests/test_routing.py'] },
-  { concept: 'Deploy', files: ['docker/Dockerfile', 'deploy/helm/agentflow/values.yaml', 'infra/terraform/eks.tf'] },
+  { concept: 'Deploy', files: ['docker/Dockerfile', 'docker-compose.yml'] },
 ]
 
 export const INTERVIEW: { q: string; a: string }[] = [
@@ -279,6 +278,6 @@ export const INTERVIEW: { q: string; a: string }[] = [
   },
   {
     q: 'What would you do next?',
-    a: 'Run the end-to-end eval as an A/B against the last RAG version to confirm that exploring plans better than retrieving, add cost tracking per run, and deploy the Terraform stack for a real staging environment.',
+    a: 'Run the end-to-end eval as an A/B against the last RAG version to confirm that exploring plans better than retrieving, add cost tracking per run, and turn the Telegram bot into a conversational front end over the same actions the MCP server exposes.',
   },
 ]

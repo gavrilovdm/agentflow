@@ -13,7 +13,6 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
 from agentflow.config import WorkflowConfig, get_settings
@@ -31,23 +30,18 @@ class Persistence:
 
 @asynccontextmanager
 async def open_persistence(in_memory: bool = False) -> AsyncIterator[Persistence]:
-    """Postgres for checkpoints and long-term memory — one database, two roles.
-    `in_memory` swaps both for process-local versions (tests, demos)."""
+    """Postgres checkpoints make runs resumable across worker restarts.
+    `in_memory` swaps them for a process-local saver (tests, demos)."""
     s = get_settings()
     if in_memory:
-        yield Persistence(build_graph(InMemorySaver(serde=SERDE), InMemoryStore()))
+        yield Persistence(build_graph(InMemorySaver(serde=SERDE)))
         return
 
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-    from langgraph.store.postgres.aio import AsyncPostgresStore
 
-    async with (
-        AsyncPostgresSaver.from_conn_string(s.database_url, serde=SERDE) as saver,
-        AsyncPostgresStore.from_conn_string(s.database_url) as store,
-    ):
+    async with AsyncPostgresSaver.from_conn_string(s.database_url, serde=SERDE) as saver:
         await saver.setup()
-        await store.setup()
-        yield Persistence(build_graph(saver, store))
+        yield Persistence(build_graph(saver))
 
 
 @dataclass

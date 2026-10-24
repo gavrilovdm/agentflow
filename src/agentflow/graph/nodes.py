@@ -24,7 +24,6 @@ from agentflow.graph.routing import dependents_of, next_runnable, next_stall
 from agentflow.graph.state import WorkflowState, replace_task, task_by_id
 from agentflow.integrations import github, telegram
 from agentflow.integrations import workspace as ws
-from agentflow.memory.lessons import recall_lessons, remember_review_feedback
 from agentflow.models import text_model, text_of
 from agentflow.schemas import ApprovalDecision, CoderResult, FailureDecision, ReviewCycle, ReviewResult, Stall, Task
 
@@ -131,7 +130,6 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     task, spec, root = task_by_id(state, task_id), state["spec"], _ws(state)
     assert spec
 
-    lessons = await recall_lessons(runtime.store, state["repo_id"])
     test_path = state.get("tests", {}).get(task_id)
     ctx = coder.CoderContext(
         task=task,
@@ -139,7 +137,6 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         workspace=root,
         language=_gate(state).language,
         test_content=_read(root / test_path) if test_path else "",
-        lessons=lessons,
         human_hint=state.get("hints", {}).get(task_id) or None,
     )
 
@@ -325,14 +322,6 @@ async def complete_task(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     # ships code with no tests and workspace cleanup deletes them unrecoverably.
     paths = [*state["task_results"][task_id].written_files, state.get("tests", {}).get(task_id, "")]
     await asyncio.to_thread(ws.commit, root, [p for p in paths if p], f"feat({task_id}): {task.title}")
-
-    # Review feedback that was followed by an approved fix is validated knowledge.
-    if runtime.store is not None:
-        saved = await remember_review_feedback(
-            runtime.store, state["repo_id"], task, state.get("review_history", {}).get(task_id, [])
-        )
-        if saved:
-            progress(runtime, f"stored {saved} lesson(s) from review feedback", task=task_id)
     return {"tasks": replace_task(state["tasks"], task_id, status="completed")}
 
 

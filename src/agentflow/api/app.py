@@ -12,14 +12,13 @@ from typing import Annotated, Any
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field, ValidationError
 
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.integrations import github, telegram
-from agentflow.observability import APPROVALS, HTTP_REQUESTS, setup_logging
+from agentflow.observability import setup_logging
 from agentflow.runner import open_persistence, snapshot, validate_decision
 from agentflow.schemas import FailureAction
 
@@ -44,14 +43,6 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
-
-
-@app.middleware("http")
-async def count_requests(request: Request, call_next):
-    response = await call_next(request)
-    route = request.scope.get("route")
-    HTTP_REQUESTS.labels(getattr(route, "path", "unmatched"), response.status_code).inc()
-    return response
 
 
 def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -105,8 +96,7 @@ async def _enqueue_resume(request: Request, thread_id: str, decision: dict[str, 
         decision = validate_decision(snap.interrupt, decision)
     except (ValueError, ValidationError) as exc:
         raise ResumeRejected(422, str(exc)) from exc
-    label = decision.get("action") or ("approve" if decision.get("approved") else "reject")
-    APPROVALS.labels(label, channel).inc()
+    log.info("resume", extra={"data": {"thread_id": thread_id, "channel": channel, "decision": decision}})
     await request.app.state.queue.enqueue_job(
         "resume_run_job", thread_id, decision, _job_id=f"resume:{thread_id}:{snap.checkpoint_id}"
     )
@@ -261,8 +251,3 @@ async def telegram_webhook(
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/metrics")
-async def metrics() -> Response:
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

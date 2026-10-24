@@ -15,11 +15,11 @@ flowchart TD
     hitl2 -- reject + feedback --> plan
     hitl2 -- approve --> select[select_next_task]
     select -- task --> tests[generate_task_test<br/>from interface + DoD · must fail first]
-    tests --> coder[run_coder<br/>tool-using agent + lessons<br/>makes the test pass]
+    tests --> coder[run_coder<br/>tool-using agent<br/>makes the test pass]
     coder -- wrote code --> review[run_review<br/>gate: types · tests · lint<br/>then reviewer agent]
     coder -- error, budget left --> coder
     coder -- budget spent --> esc
-    review -- approved --> done[complete_task<br/>commit · store lessons]
+    review -- approved --> done[complete_task<br/>commit]
     review -- rejected --> coder
     review -- same failure 3x in window --> referee[adjudicate<br/>is the test wrong?]
     referee -- test wrong: regenerate --> coder
@@ -43,15 +43,15 @@ flowchart TD
 | **LangGraph / LangChain** | 17-node `StateGraph` with typed reducers and runtime-context DI (`graph/`) |
 | **Tool calling, structured outputs** | Read-only code navigation (glob/grep/read, `agents/repo_tools.py`) for the orchestrator, coder and reviewer; coder write tools; Pydantic outputs for spec, plan, review and referee (`schemas.py`), the orchestrator's returned through a structured-output tool at the end of exploration |
 | **Context management** | No whole-repo dumps and no retrieval preload: agents pull in only what they grep and read; tool output is capped (100 grep matches, 400 lines per read) and every agent has a model-call ceiling |
-| **State, memory** | Postgres checkpointer (per-run state, resumable), LangGraph Store (cross-run lessons, most recent first, `memory/lessons.py`) |
+| **State** | Postgres checkpointer: per-run state, resumable after a worker restart |
 | **Routing, retries, fallback** | Conditional edges (`graph/routing.py`); node `RetryPolicy` + timeouts; `.with_fallbacks()` on structured calls; `ModelFallbackMiddleware`, `ModelRetryMiddleware` and `ModelCallLimitMiddleware` on agents |
 | **Recovery from failure** | Separate budgets, windowed stall detection (catches A↔B oscillation), a referee that can rewrite an unsatisfiable test, then escalation: a human picks retry-with-hint, re-plan, skip or abort |
 | **API integrations, event-driven** | GitHub webhook (issue labelled → run → PR that closes it), Telegram inline buttons resume paused runs, Redis job queue |
 | **Human-in-the-loop** | `interrupt()` at spec, plan, and whenever a task exhausts its budget (with an evidence dossier); answered via Telegram, REST, MCP or CLI; resumes deduplicated by checkpoint id |
 | **MCP** | `mcp_server.py`: `start_run`, `get_run`, `review_checkpoint`, `resolve_failed_task` |
 | **Evaluation** | `evals/`: spec LLM-as-judge, e2e agent runs; all logged to LangSmith |
-| **Tracing, monitoring** | LangSmith traces tagged by role and task; Prometheus metrics (`/metrics`, worker `:9100`); JSON logs |
-| **Docker, K8s, CI/CD, AWS** | Multi-stage Dockerfile; Helm chart (HPA, PDB, ExternalSecrets, ServiceMonitor, IRSA); Terraform (VPC, EKS, RDS Postgres 17, ElastiCache, ECR, GitHub OIDC); GitHub Actions CI and CD |
+| **Tracing** | LangSmith traces tagged by role and task; JSON logs |
+| **Docker, CI** | Multi-stage Dockerfile, docker-compose for the whole service; GitHub Actions CI |
 
 ## Quickstart
 
@@ -91,7 +91,9 @@ You can also wire up these triggers:
 
 **Agents explore; there is no RAG.** The project used to run hybrid RAG: code-aware chunks, Voyage embeddings, pgvector + Postgres full-text fused with RRF, and a 6000-token preload in every coder prompt. It was removed after measuring it on this repo: the preload put the target files in context in only 2–3 of 6 tasks (README and generated guide data took the rest), and in a live run the coder never called its search tool, going straight to `read_file`. A plan has to name exact target files and binding interfaces, which means following references: find the file, grep every call site, read the module it extends. So the orchestrator (`generate_spec`, `generate_tasks`, `replan`) runs as a `create_agent` with read-only `glob_files`, `grep` and `read_file` (`agents/repo_tools.py`, sandboxed to the workspace, output capped) and returns its `SpecDraft`/`TaskPlan` through a structured-output tool. The coder gets `glob_files` and `grep` next to its own read/write tools, the reviewer gets all three. Exploration is capped at 20 model calls; if it ends without an answer or errors, the orchestrator falls back to a one-shot structured call, so a tool loop can't fail the run at planning. Dropping RAG also dropped the embeddings provider, pgvector and the re-index after every task.
 
-**One Postgres, two roles.** It holds LangGraph checkpoints (resumable runs) and the LangGraph Store (long-term memory: review lessons per repository, recalled most recent first). Plain Postgres 17, no extensions.
+**One Postgres, one role.** It holds LangGraph checkpoints, so a paused or interrupted run resumes where it stopped. Plain Postgres 17, no extensions.
+
+**What was cut and why.** The project used to ship a Terraform stack (VPC, EKS, RDS, ElastiCache) with a Helm chart and a CD workflow, Prometheus metrics, and cross-run "lessons" in the LangGraph Store. The AWS stack was never applied: CD skipped every run, and it would cost about $300 a month to host one worker that `docker compose` runs on a single VM. Prometheus had nothing to scrape it without a cluster, and LangSmith already traces what matters for agents. Lessons lost their point when embeddings went: recall returned the newest review comments whatever the task, which is noise in the coder's prompt.
 
 **Failure handling is the product.** This is a port of a TypeScript version that ran on real repos. Every rule in `graph/nodes.py` and `gate/` has a comment naming the failure it prevents. Some examples:
 
@@ -178,8 +180,7 @@ node dist/cli.js key                  # prints the cpx_… key once → CLAUDE_P
 node dist/cli.js update               # later: pull, rebuild, restart
 ```
 
-docker-compose reaches it at `host.docker.internal:8787`; the Helm chart pins `claude-opus-5` because a cluster has no
-local proxy. `cpx*` models are a plain `ChatOpenAI`: from 0.2.0 the proxy itself moves `system` text into the first user
+docker-compose reaches it at `host.docker.internal:8787`. `cpx*` models are a plain `ChatOpenAI`: from 0.2.0 the proxy itself moves `system` text into the first user
 turn (the OAuth upstream ignores it silently), drops `temperature` for Opus and drops empty text blocks — see its README.
 **An older proxy silently drops every agent's system prompt**, so check `curl 127.0.0.1:8787/healthz` after setting up.
 
@@ -190,11 +191,14 @@ Requests are billed as Claude Code traffic on a personal session — fine for ma
 ## Development
 
 ```bash
-uv run pytest                        # 59 tests: gate, repo tools, routing, API/webhooks, whole-graph e2e (LLMs faked)
-docker compose up -d postgres && uv run pytest -m integration   # Postgres Store round-trip
+uv run pytest                        # 57 tests: gate, repo tools, routing, API/webhooks, whole-graph e2e (LLMs faked)
+docker compose up -d postgres && uv run pytest -m integration   # paused run resumed from Postgres
 uv run pytest -m live                # one real structured call per configured model (costs money)
 uv run ruff check . && uv run mypy src
+cd guide && pnpm test && pnpm build  # routing parity with graph/, graph layout sync, render
 ```
+
+CI runs all of these except `-m live`, plus a Docker build.
 
 The graph e2e tests use real git and a real Python gate, with fake LLM agents. They cover:
 
@@ -202,7 +206,8 @@ The graph e2e tests use real git and a real Python gate, with fake LLM agents. T
 - a gate failure fed back to the coder
 - a stall that reaches the referee
 - skipping the dependent subtree after a failure
-- review feedback stored as a lesson
+- a review rejection that costs one cycle
+- a paused run resumed from Postgres after a restart (`-m integration`)
 
 ## Layout
 
@@ -211,8 +216,7 @@ src/agentflow/
   agents/        orchestrator · test_generator · coder · reviewer (+ referee) · repo_tools (glob/grep/read)
   graph/         state · context (DI) · nodes · routing · build
   gate/          python · typescript · detection
-  memory/        lessons (LangGraph Store)
   integrations/  workspace (git) · github · telegram
   api/ worker.py mcp_server.py cli.py runner.py observability.py
-evals/  tests/  docker/  deploy/helm/  infra/terraform/  .github/workflows/
+evals/  tests/  docker/  .github/workflows/
 ```

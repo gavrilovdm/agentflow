@@ -9,7 +9,6 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import get_runtime
-from langgraph.store.base import BaseStore
 from langgraph.types import RetryPolicy
 
 from agentflow.config import WorkflowConfig
@@ -40,10 +39,7 @@ SERDE = JsonPlusSerializer(
 LLM_RETRY = RetryPolicy(max_attempts=3, initial_interval=2.0, backoff_factor=3.0)
 
 
-def build_graph(
-    checkpointer: BaseCheckpointSaver | None = None,
-    store: BaseStore | None = None,
-) -> CompiledStateGraph[Any, Any, Any, Any]:
+def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph[Any, Any, Any, Any]:
     g = StateGraph(WorkflowState, context_schema=Deps)
 
     g.add_node("prepare_workspace", nodes.prepare_workspace, retry_policy=LLM_RETRY)
@@ -87,7 +83,7 @@ def build_graph(
     g.add_edge("notify", "finalize")
     g.add_edge("finalize", END)
 
-    return g.compile(checkpointer=checkpointer, store=store, name="agentflow")
+    return g.compile(checkpointer=checkpointer, name="agentflow")
 
 
 def _with_config(route):
