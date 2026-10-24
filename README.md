@@ -10,7 +10,7 @@ flowchart TD
     prep --> spec[generate_spec<br/>orchestrator + retrieved context]
     spec --> hitl1{{human approval<br/>Telegram buttons / API}}
     hitl1 -- reject + feedback --> spec
-    hitl1 -- approve --> plan[generate_tasks<br/>DAG, cycle-safe]
+    hitl1 -- approve --> plan[generate_tasks<br/>explores repo: glob · grep · read<br/>DAG, cycle-safe]
     plan --> hitl2{{human approval}}
     hitl2 -- reject + feedback --> plan
     hitl2 -- approve --> select[select_next_task]
@@ -41,7 +41,7 @@ flowchart TD
 | **Python backend** | FastAPI (`api/app.py`), arq worker (`worker.py`), Pydantic everywhere, mypy-clean |
 | **LLM APIs, agentic systems** | Anthropic (Opus/Sonnet) and DeepSeek via LangChain; `create_agent` coder and reviewer (`agents/`) |
 | **LangGraph / LangChain** | 17-node `StateGraph` with typed reducers and runtime-context DI (`graph/`) |
-| **Tool calling, structured outputs** | Coder tools (write/read/list/search) and Pydantic outputs for spec, plan, review and referee (`schemas.py`) |
+| **Tool calling, structured outputs** | Coder tools (write/read/list/search); planner tools (glob/grep/read, `agents/repo_tools.py`) feeding a structured plan; Pydantic outputs for spec, plan, review and referee (`schemas.py`) |
 | **RAG, embeddings, vector search** | `rag/`: language-aware chunking, incremental re-embedding by file hash, pgvector HNSW + Postgres FTS fused with RRF, token-budgeted context packing |
 | **Context management** | Retrieval instead of whole-repo dumps; `pack_context` merges adjacent chunks under a token budget; agents can query more through tools |
 | **State, memory** | Postgres checkpointer (per-run state, resumable), LangGraph Store with a semantic index (cross-run lessons, `memory/lessons.py`) |
@@ -94,6 +94,8 @@ You can also wire up these triggers:
 ## Design notes
 
 **Hybrid retrieval.** Dense vectors find code by meaning ("where are users persisted"). Lexical search finds exact identifiers (`resolve_in_workspace`), which embeddings blur. Reciprocal Rank Fusion merges the two rankings without calibrating their scores. Each chunk is embedded with a `File: path (lines a-b)` header, so file names count too. The index is incremental and rebuilt after every completed task, so later tasks can retrieve code that earlier tasks wrote.
+
+**The planner explores, not just retrieves.** RAG picks chunks by similarity to one query, chosen before the model has seen any code. A plan has to name exact target files and binding interfaces, which means following references: find the file, grep every call site, read the module it extends. So `generate_tasks` and `replan` run as a `create_agent` with read-only `glob_files`, `grep` and `read_file` tools (`agents/repo_tools.py`, sandboxed to the workspace, output capped) and return the `TaskPlan` through a structured-output tool. Retrieved context still goes in the prompt as a starting point. Exploration is capped at 20 model calls; if it ends without a plan or errors, the planner falls back to the old one-shot structured call, so a tool loop can't fail the run at planning.
 
 **One Postgres, three roles.** It holds LangGraph checkpoints (resumable runs), the LangGraph Store (semantic long-term memory), and the `code_chunks` vector + FTS table.
 

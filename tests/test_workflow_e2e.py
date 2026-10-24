@@ -50,7 +50,8 @@ def fakes(monkeypatch):
             out_of_scope=[],
         )
 
-    async def fake_tasks(spec, context, previous=None, feedback=None):
+    async def fake_tasks(spec, context, previous=None, feedback=None, *, workspace=None):
+        assert workspace is not None, "the planner must get the workspace to explore"
         return [
             Task(
                 id="task-add",
@@ -291,7 +292,7 @@ async def test_exhausted_task_pauses_with_dossier_then_retry_with_hint(repo: Pat
 async def test_replan_replaces_failed_and_pending_tasks(repo: Path, stubborn, monkeypatch):
     from agentflow.schemas import Task as T
 
-    async def replanner(spec, completed, failed, remaining, dossier, hint, context):
+    async def replanner(spec, completed, failed, remaining, dossier, hint, context, *, workspace=None):
         assert failed.id == "task-add" and [t.id for t in remaining] == ["task-mul"] and hint == "split it"
         return [
             T(

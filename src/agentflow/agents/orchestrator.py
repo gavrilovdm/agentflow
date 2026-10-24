@@ -3,6 +3,11 @@
 Both calls are structured outputs (Pydantic schemas → forced tool call) with a
 model fallback chain. Planning is grounded in retrieved repository context, which
 replaces the old "LLM reads project-map.md and guesses which files matter" step.
+
+Given the workspace, the planner (task plan and replan) also runs as a tool-using
+agent with read-only glob/grep/read tools: RAG picks chunks by similarity to one
+query, but naming exact target files and binding interfaces means following
+references through the code, which only exploration does.
 """
 
 from __future__ import annotations
@@ -10,11 +15,17 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from pathlib import Path
+from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain.agents import create_agent
+from langchain.agents.middleware import ModelCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware
+from langchain.agents.structured_output import ToolStrategy
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from agentflow.agents.repo_tools import make_repo_tools
 from agentflow.config import get_settings
-from agentflow.models import structured
+from agentflow.models import chat_model, structured
 from agentflow.schemas import Spec, SpecDraft, Task, TaskPlan
 
 log = logging.getLogger(__name__)
@@ -50,6 +61,53 @@ LIST_FIELDS_HINT = HumanMessage(
     "Your previous answer did not match the schema. constraints, acceptance_criteria and out_of_scope must be "
     "JSON arrays with one item per entry, and acceptance_criteria needs at least two separate testable statements."
 )
+
+
+# Exploration budget per planning call. Each tool round is one model call; past this
+# the agent stops and the plan comes from a one-shot structured call instead.
+MAX_PLANNER_CALLS = 20
+
+EXPLORE_HINT = """
+
+## Exploring the repository
+You have read-only tools: glob_files, grep and read_file. The repository context above was
+retrieved by similarity and may be incomplete or miss the files that matter. Before planning:
+- confirm every existing file you put in target_files actually exists (glob_files / read_file)
+- grep for the functions, classes and call sites a task changes, so interfaces reuse real names
+- read the modules a task extends, enough to match their patterns
+Keep it focused: a handful of targeted calls, then return the plan."""
+
+
+async def _plan(system: str, messages: list[BaseMessage], workspace: Path | None, tag: str) -> TaskPlan:
+    """Task plan from the orchestrator model, exploring the workspace first when given one."""
+    s = get_settings()
+    config: Any = {"tags": ["orchestrator", tag]}
+    if workspace is not None:
+        middleware: list[Any] = [
+            ModelCallLimitMiddleware(run_limit=MAX_PLANNER_CALLS, exit_behavior="end"),
+            ModelRetryMiddleware(max_retries=2),
+        ]
+        if s.fallback_model and s.fallback_model != s.orchestrator_model:
+            middleware.append(ModelFallbackMiddleware(chat_model(s.fallback_model, forces_tool_choice=True)))
+        agent = create_agent(
+            # The TaskPlan comes back as a forced tool call (tool_choice="any").
+            chat_model(s.orchestrator_model, forces_tool_choice=True),
+            tools=make_repo_tools(workspace),
+            system_prompt=system + EXPLORE_HINT,
+            middleware=middleware,
+            response_format=ToolStrategy(TaskPlan),
+            name=f"planner-{tag}",
+        )
+        try:
+            payload: Any = {"messages": messages}
+            out = await agent.ainvoke(payload, config={**config, "recursion_limit": MAX_PLANNER_CALLS * 3})
+            plan = out.get("structured_response")
+            if isinstance(plan, TaskPlan):
+                return plan
+            log.warning("planner explored without returning a plan; falling back to a one-shot plan")
+        except Exception as exc:  # noqa: BLE001 — exploration is an aid; planning must still happen
+            log.warning("planner agent failed (%s); falling back to a one-shot plan", str(exc)[:200])
+    return await structured(s.orchestrator_model, TaskPlan).ainvoke([SystemMessage(system), *messages], config=config)
 
 
 def _revision_message(label: str, previous: object, feedback: str) -> HumanMessage:
@@ -95,10 +153,14 @@ async def generate_spec(
 
 
 async def generate_tasks(
-    spec: Spec, repo_context: str, previous: list[Task] | None = None, feedback: str | None = None
+    spec: Spec,
+    repo_context: str,
+    previous: list[Task] | None = None,
+    feedback: str | None = None,
+    *,
+    workspace: Path | None = None,
 ) -> list[Task]:
-    messages = [
-        SystemMessage(TASKS_SYSTEM),
+    messages: list[BaseMessage] = [
         HumanMessage(
             f"## Approved specification\n\n```json\n{spec.model_dump_json(indent=2)}\n```\n\n"
             + (f"## Repository context\n\n{repo_context}" if repo_context else "")
@@ -106,10 +168,7 @@ async def generate_tasks(
     ]
     if previous and feedback:
         messages.append(_revision_message("task list", [t.model_dump() for t in previous], feedback))
-    s = get_settings()
-    plan: TaskPlan = await structured(s.orchestrator_model, TaskPlan).ainvoke(
-        messages, config={"tags": ["orchestrator", "tasks"]}
-    )
+    plan = await _plan(TASKS_SYSTEM, messages, workspace, "tasks")
     return validate_plan([Task(**t.model_dump()) for t in plan.tasks])
 
 
@@ -136,9 +195,10 @@ async def replan_tasks(
     dossier: dict,
     hint: str | None,
     repo_context: str,
+    *,
+    workspace: Path | None = None,
 ) -> list[Task]:
-    messages = [
-        SystemMessage(REPLAN_SYSTEM),
+    messages: list[BaseMessage] = [
         HumanMessage(
             f"## Specification\n```json\n{spec.model_dump_json(indent=2)}\n```\n\n"
             f"## Completed tasks\n```json\n{json.dumps([t.model_dump() for t in completed], indent=2)}\n```\n\n"
@@ -149,9 +209,7 @@ async def replan_tasks(
             + (f"## Repository context\n{repo_context}" if repo_context else "")
         ),
     ]
-    plan: TaskPlan = await structured(get_settings().orchestrator_model, TaskPlan).ainvoke(
-        messages, config={"tags": ["orchestrator", "replan"]}
-    )
+    plan = await _plan(REPLAN_SYSTEM, messages, workspace, "replan")
     return [Task(**t.model_dump()) for t in plan.tasks]
 
 

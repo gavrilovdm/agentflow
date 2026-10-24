@@ -111,7 +111,7 @@ async def generate_tasks(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     context = await _repo_context(runtime, state, f"{spec.goal}\n{spec.technical_notes}", budget=5000)
     feedback = state.get("tasks_feedback")
     tasks = await orchestrator.generate_tasks(
-        spec, context, previous=state.get("tasks") if feedback else None, feedback=feedback
+        spec, context, previous=state.get("tasks") if feedback else None, feedback=feedback, workspace=_ws(state)
     )
     progress(runtime, f"planned {len(tasks)} tasks", tasks=[t.id for t in tasks])
     return {"tasks": tasks, "status": "task_review"}
@@ -428,6 +428,7 @@ async def replan(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         escalation.build_dossier(state, task_id),
         decision.hint if decision else None,
         context,
+        workspace=_ws(state),
     )
     used = {t.id for t in tasks} | set(state.get("task_results", {})) | set(state.get("tests", {}))
     renames: dict[str, str] = {}
