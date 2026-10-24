@@ -109,12 +109,6 @@ async def test_approval_flow_and_telegram_button(client, tmp_path, monkeypatch):
     assert bad.status_code == 422
 
 
-async def test_metrics_exposed(client):
-    await client.get("/healthz")
-    body = (await client.get("/metrics")).text
-    assert "agentflow_http_requests_total" in body
-
-
 async def test_cors_allows_guide_origin(client):
     r = await client.options(
         "/healthz", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"}

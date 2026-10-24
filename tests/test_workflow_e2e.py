@@ -1,10 +1,11 @@
-"""Whole graph, real git + real Python gate + real RAG, with the LLM agents faked.
+"""Whole graph, real git + real Python gate, with the LLM agents faked.
 
 Covers: spec rejection → revision, plan approval, a gate failure fed back to the coder,
-regression tests across tasks, per-task commits, and lessons written to the Store.
+regression tests across tasks, per-task commits, and a run resumed from Postgres.
 """
 
 import shutil
+import uuid
 from pathlib import Path
 
 import pytest
@@ -168,7 +169,7 @@ async def test_gate_budget_exhaustion_skips_dependents(repo: Path, fakes, monkey
     assert snap.values["adjudicated"] == {"task-add": True}
 
 
-async def test_review_feedback_becomes_lesson(repo: Path, fakes, monkeypatch):
+async def test_review_rejection_costs_one_cycle(repo: Path, fakes, monkeypatch):
     seen = {"n": 0}
 
     async def picky_review(task, spec, test_content, diff, workspace):
@@ -190,8 +191,20 @@ async def test_review_feedback_becomes_lesson(repo: Path, fakes, monkeypatch):
         assert snap.status == "completed"
         task_add = next(t for t in snap.values["tasks"] if t.id == "task-add")
         assert task_add.review_cycles == 1
-        items = await p.graph.store.asearch(("lessons", f"local:{repo.resolve()}".replace(".", "_")))
-        assert any("docstring" in i.value["text"] for i in items)
+
+
+@pytest.mark.integration
+async def test_paused_run_resumes_from_postgres_after_restart(repo: Path, fakes):
+    # Needs `docker compose up -d postgres`. A worker restart between spec approval and
+    # the rest of the run must not lose the run: the pause lives only in the checkpointer.
+    thread = f"pg-{uuid.uuid4().hex[:8]}"
+    async with open_persistence() as p:
+        snap = await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id=thread)
+        assert snap.interrupt["type"] == "spec_approval"
+    async with open_persistence() as p:
+        await resume_run(p, thread, approved=True)
+        snap = await resume_run(p, thread, approved=True)
+    assert snap.status == "completed", snap.to_json()
 
 
 async def test_node_crash_marks_run_failed(repo: Path, fakes, monkeypatch):

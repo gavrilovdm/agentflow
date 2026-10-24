@@ -151,7 +151,7 @@ const RENDERERS: Record<string, Renderer> = {
   },
   complete_task: ({ task }) => {
     const commit = pr.commits.find((c) => c.messageHeadline.includes(task ?? '~'))
-    return <P>Committed code + test{commit ? <> as <code>{commit.messageHeadline}</code></> : ''} and stored any validated review feedback as lessons.</P>
+    return <P>Committed code + test{commit ? <> as <code>{commit.messageHeadline}</code></> : ''}.</P>
   },
   escalate: Escalation,
   replan: ({ step }) => {

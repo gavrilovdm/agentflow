@@ -6,7 +6,6 @@ import type { ConceptId } from '../../lib/content'
 import { ToolsWidget } from './ToolsWidget'
 import { HitlWidget } from './HitlWidget'
 import { RoutingWidget } from './RoutingWidget'
-import { MemoryWidget } from './MemoryWidget'
 import { FallbackWidget } from './FallbackWidget'
 import { EvalsWidget } from './EvalsWidget'
 
@@ -71,21 +70,6 @@ export const CONCEPTS: ConceptEntry[] = [
               If the same failure comes back a third time within the last few attempts — in a row or alternating with another one — retrying is pointless; a referee agent decides whether the{' '}
               <i>test</i> is the problem. If the budget still runs out, the run <b>escalates</b>: it pauses with the
               evidence and a human chooses retry-with-hint, re-plan, skip or stop.
-            </p>
-          </>
-    ),
-  },
-  {
-    id: 'memory',
-    title: 'Memory: short-term vs long-term',
-    where: ['src/agentflow/memory/lessons.py', 'src/agentflow/agents/coder.py'],
-    Widget: MemoryWidget,
-    plain: (
-<>
-            <p>
-              Short-term memory is the run’s own state (the checkpoints above) — it ends with the run. Long-term memory
-              outlives it: when a reviewer’s change request leads to an approved fix, that request is stored as a
-              “lesson” for this repository, and the most recent lessons go into the next coder’s prompt.
             </p>
           </>
     ),

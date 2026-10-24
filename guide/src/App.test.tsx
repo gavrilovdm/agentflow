@@ -9,7 +9,7 @@ describe('guide', () => {
     for (const id of ['replay', 'concepts', 'use-cases', 'what-broke', 'code-map', 'interview']) {
       expect(html).toContain(`id="${id}"`)
     }
-    for (const c of ['tools', 'state', 'routing', 'memory', 'fallbacks', 'evals']) {
+    for (const c of ['tools', 'state', 'routing', 'fallbacks', 'evals']) {
       expect(html).toContain(`id="concept-${c}"`)
     }
   })

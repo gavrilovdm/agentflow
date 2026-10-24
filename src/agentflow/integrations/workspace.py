@@ -46,7 +46,7 @@ def resolve_in_workspace(workspace: Path, file_path: str) -> tuple[Path, str]:
 
 
 def repo_id(target: TargetRepo | None, workspace: Path) -> str:
-    """Stable key for the vector index and lessons namespace."""
+    """Stable name for the repository in progress events and run state."""
     return target.full_name if target else f"local:{workspace.resolve()}"
 
 
