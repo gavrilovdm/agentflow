@@ -19,9 +19,6 @@ from langgraph.types import Command
 from agentflow.config import WorkflowConfig, get_settings
 from agentflow.graph.build import SERDE, build_graph
 from agentflow.graph.context import Deps
-from agentflow.rag.embeddings import get_embeddings
-from agentflow.rag.store import ChunkStore, PgVectorStore
-from agentflow.rag.store import InMemoryStore as InMemoryChunkStore
 from agentflow.schemas import ApprovalDecision, FailureDecision
 
 log = logging.getLogger("agentflow.runner")
@@ -30,21 +27,15 @@ log = logging.getLogger("agentflow.runner")
 @dataclass
 class Persistence:
     graph: CompiledStateGraph
-    chunk_store: ChunkStore
 
 
 @asynccontextmanager
 async def open_persistence(in_memory: bool = False) -> AsyncIterator[Persistence]:
-    """Postgres for checkpoints, long-term memory and vectors — one database, three
-    roles. `in_memory` swaps all three for process-local versions (tests, demos)."""
+    """Postgres for checkpoints and long-term memory — one database, two roles.
+    `in_memory` swaps both for process-local versions (tests, demos)."""
     s = get_settings()
-    embeddings = get_embeddings()
-    index = {"dims": s.embedding_dim, "embed": embeddings, "fields": ["text"]}
     if in_memory:
-        yield Persistence(
-            build_graph(InMemorySaver(serde=SERDE), InMemoryStore(index=index)),  # type: ignore[arg-type]
-            InMemoryChunkStore(),
-        )
+        yield Persistence(build_graph(InMemorySaver(serde=SERDE), InMemoryStore()))
         return
 
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -52,13 +43,11 @@ async def open_persistence(in_memory: bool = False) -> AsyncIterator[Persistence
 
     async with (
         AsyncPostgresSaver.from_conn_string(s.database_url, serde=SERDE) as saver,
-        AsyncPostgresStore.from_conn_string(s.database_url, index=index) as store,  # type: ignore[arg-type]
+        AsyncPostgresStore.from_conn_string(s.database_url) as store,
     ):
         await saver.setup()
         await store.setup()
-        chunks = PgVectorStore(s.database_url, dim=s.embedding_dim)
-        await chunks.setup()
-        yield Persistence(build_graph(saver, store), chunks)
+        yield Persistence(build_graph(saver, store))
 
 
 @dataclass
@@ -96,7 +85,7 @@ def _config(thread_id: str) -> RunnableConfig:
 
 
 def make_deps(p: Persistence, config: WorkflowConfig) -> Deps:
-    return Deps(chunk_store=p.chunk_store, embeddings=get_embeddings(), config=config)
+    return Deps(config=config)
 
 
 async def snapshot(graph: CompiledStateGraph, thread_id: str) -> RunSnapshot:

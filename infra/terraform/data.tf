@@ -1,5 +1,4 @@
-# Postgres 17 on RDS ships the pgvector extension: one database serves LangGraph
-# checkpoints, the long-term memory Store and the code-chunk vector index.
+# One Postgres 17 database serves LangGraph checkpoints and the long-term memory Store.
 resource "random_password" "db" {
   length  = 32
   special = false

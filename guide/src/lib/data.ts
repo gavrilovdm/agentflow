@@ -3,7 +3,6 @@ import failedRunsJson from '../data/failed_runs.json'
 import graphJson from '../data/graph.json'
 import llmCallsJson from '../data/llm_calls.json'
 import prJson from '../data/pr.json'
-import retrievalJson from '../data/retrieval.json'
 import runJson from '../data/run.json'
 
 export interface Spec {
@@ -84,13 +83,6 @@ export const pr = prJson as {
   diff: string
   files: { path: string; additions: number; deletions: number }[]
   commits: { messageHeadline: string; oid: string }[]
-}
-export const retrieval = retrievalJson as {
-  k: number
-  embeddings: string
-  summary: Record<'dense' | 'lexical' | 'hybrid', { recall: number; mrr: number }>
-  cases: { query: string; relevant: string[]; dense: string[]; lexical: string[]; hybrid: string[] }[]
-  chunk_demo: { path: string; chunks: { index: number; start: number; end: number; content: string }[] }
 }
 export const failedRuns = failedRunsJson as Record<
   string,

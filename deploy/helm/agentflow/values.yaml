@@ -50,7 +50,6 @@ externalSecret:
   keys:
     - ANTHROPIC_API_KEY
     - DEEPSEEK_API_KEY
-    - VOYAGE_API_KEY
     - DATABASE_URL
     - REDIS_URL
     - GITHUB_TOKEN

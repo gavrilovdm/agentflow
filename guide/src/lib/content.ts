@@ -1,7 +1,7 @@
 // Hand-written explanations. Everything factual here is checked against the code
 // (links point at the real files) or against the captured data in ../data.
 
-export type ConceptId = 'tools' | 'rag' | 'state' | 'routing' | 'memory' | 'fallbacks' | 'evals'
+export type ConceptId = 'tools' | 'state' | 'routing' | 'memory' | 'fallbacks' | 'evals'
 
 export interface NodeInfo {
   title: string
@@ -13,17 +13,17 @@ export interface NodeInfo {
 
 export const NODES: Record<string, NodeInfo> = {
   __start__: { title: 'Request arrives', who: 'You', what: 'A feature request comes in — from the CLI, the REST API, MCP, or a labelled GitHub issue.', file: 'src/agentflow/runner.py' },
-  prepare_workspace: { title: 'Prepare workspace', who: 'Python', what: 'Clone the target repo into a temp folder on a new branch, then (re)index its code for search. Only files whose hash changed get re-embedded.', concept: 'rag', file: 'src/agentflow/graph/nodes.py' },
-  generate_spec: { title: 'Write the spec', who: 'Opus (orchestrator)', what: 'Turn a one-line request into a precise spec with testable acceptance criteria — after searching the repo so it reuses real names.', concept: 'tools', file: 'src/agentflow/agents/orchestrator.py' },
+  prepare_workspace: { title: 'Prepare workspace', who: 'Python', what: 'Clone the target repo into a temp folder on a new branch. Nothing is indexed: the agents explore it later with read-only glob, grep and read tools.', concept: 'tools', file: 'src/agentflow/graph/nodes.py' },
+  generate_spec: { title: 'Write the spec', who: 'Opus (orchestrator)', what: 'Turn a one-line request into a precise spec with testable acceptance criteria — after exploring the repo with glob, grep and read so it reuses real names.', concept: 'tools', file: 'src/agentflow/agents/orchestrator.py' },
   await_spec_approval: { title: 'Human checks the spec', who: 'You', what: 'The graph pauses and saves its state. It resumes only when someone approves or rejects with feedback — via API, Telegram or MCP.', concept: 'state', file: 'src/agentflow/graph/nodes.py' },
   generate_tasks: { title: 'Plan the tasks', who: 'Opus (orchestrator)', what: 'Explore the repo with read-only glob, grep and read tools, then split the spec into small tasks with dependencies (a DAG), each naming real files and a binding interface. Cycles and dangling dependencies get repaired automatically.', concept: 'tools', file: 'src/agentflow/agents/orchestrator.py' },
   await_task_approval: { title: 'Human checks the plan', who: 'You', what: 'Second checkpoint: approve the plan, or reject it with feedback and it gets re-planned.', concept: 'state', file: 'src/agentflow/graph/nodes.py' },
   select_next_task: { title: 'Pick next task', who: 'Python', what: 'Choose the first pending task whose dependencies are all done. None left → go open the PR.', concept: 'routing', file: 'src/agentflow/graph/routing.py' },
   generate_task_test: { title: 'Write the failing test', who: 'Opus (test generator)', what: 'Before any code: write the acceptance test from the task’s interface and Definition of Done, then check it fails (red). A test that already passes asserts nothing and is rewritten.', concept: 'tools', file: 'src/agentflow/agents/test_generator.py' },
-  run_coder: { title: 'Make it pass', who: 'DeepSeek (coder agent)', what: 'A tool-using agent reads files, searches the codebase and writes code until the failing test can pass. It also gets past review feedback and lessons from earlier runs.', concept: 'tools', file: 'src/agentflow/agents/coder.py' },
-  run_review: { title: 'Gate, then review', who: 'pytest/ruff + Opus (reviewer)', what: 'Deterministic checks first (types, tests, lint). Only if they pass does a reviewer agent judge the diff — and it can search the repo while doing so.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
+  run_coder: { title: 'Make it pass', who: 'DeepSeek (coder agent)', what: 'A tool-using agent greps and reads the codebase and writes code until the failing test can pass. It also gets past review feedback and lessons from earlier runs.', concept: 'tools', file: 'src/agentflow/agents/coder.py' },
+  run_review: { title: 'Gate, then review', who: 'pytest/ruff + Opus (reviewer)', what: 'Deterministic checks first (types, tests, lint). Only if they pass does a reviewer agent judge the diff — and it can grep and read the repo while doing so.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   adjudicate: { title: 'Referee', who: 'Opus (referee)', what: 'When the same failure repeats 3×, decide whether the test is wrong rather than the code. If so, rewrite the test and try again.', concept: 'routing', file: 'src/agentflow/agents/reviewer.py' },
-  complete_task: { title: 'Commit + learn', who: 'Python', what: 'Commit code and test together, re-index the repo so later tasks can find the new code, and save useful review feedback as long-term lessons.', concept: 'memory', file: 'src/agentflow/graph/nodes.py' },
+  complete_task: { title: 'Commit + learn', who: 'Python', what: 'Commit code and test together and save useful review feedback as long-term lessons.', concept: 'memory', file: 'src/agentflow/graph/nodes.py' },
   escalate: { title: 'Ask a human', who: 'You', what: 'A task ran out of budget. The run pauses with a dossier — attempts, recent failures, open reviewer requests, partial work — and you choose: retry with a hint, re-plan, skip, or stop.', concept: 'routing', file: 'src/agentflow/graph/escalation.py' },
   replan: { title: 'Re-plan', who: 'Opus (orchestrator)', what: 'Rewrite only the not-yet-done tasks around the failure, using the dossier, your guidance and the same read-only repo tools as the planner. Completed tasks and their commits stay as they are.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   handle_failure: { title: 'Contain the failure', who: 'Python', what: 'Skip: mark the task failed and skip only the tasks that depend on it. Stop: mark everything left as not started and end the run.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
@@ -38,11 +38,6 @@ export const GLOSSARY: Record<string, string> = {
   agent: 'An LLM in a loop with tools: it decides which tool to call, sees the result, and decides again until the job is done.',
   'tool calling': 'The model answers with a structured request like {"name": "read_file", "args": {...}} instead of prose. Your code runs it and sends back the result.',
   'structured output': 'Forcing the model to answer in a fixed JSON shape (here: Pydantic models), so code can rely on fields existing instead of parsing prose.',
-  RAG: 'Retrieval-Augmented Generation: before asking the model, search your own data and paste the relevant bits into the prompt.',
-  embedding: 'A list of numbers that represents the meaning of a text. Similar meaning → nearby vectors, so you can search by meaning.',
-  'vector search': 'Finding the stored embeddings closest to the query’s embedding. pgvector does this inside Postgres.',
-  'full-text search': 'Classic keyword search (Postgres tsvector). Great at exact identifiers like get_user_by_email.',
-  RRF: 'Reciprocal Rank Fusion: merge two ranked lists by summing 1/(60+rank). Items ranked well by both float to the top.',
   LangGraph: 'A library for building agent workflows as a graph of steps (nodes) with typed shared state, saved after every step.',
   checkpoint: 'A snapshot of the graph’s state saved after every step. It is how a run can pause for a human and resume later — even after a restart.',
   interrupt: 'LangGraph’s pause button: a node calls interrupt(payload), the run stops, and continues when someone resumes it with an answer.',
@@ -141,14 +136,6 @@ BUGS.push(
     commit: '565438f',
   },
   {
-    id: 'ci-noise', title: 'A CI gate that measured noise',
-    symptom: 'Adding an unrelated endpoint dropped “hybrid recall” from 0.90 to 0.78 and would have failed CI.',
-    cause: 'Without an embeddings key the vector half is hash noise; any new code shuffles it.',
-    fix: 'Gate on the keyword half offline, on fused search only with real embeddings.',
-    lesson: 'Before gating on a metric, check that it moves only when the thing you care about moves.',
-    commit: '9715bdf',
-  },
-  {
     id: 'oscillation', title: 'A ping-pong the loop detector could not see',
     symptom: 'First live test-first run: one task burned 4 gate failures and 4 review rejections, alternating, then the whole plan was skipped.',
     cause: 'The test demanded a change to an API the task said not to touch; the coder made it, the reviewer (rightly) rejected it, the coder reverted, the test failed again. Failures alternated A, B, A, B — and stall detection only looked for the same failure twice in a row, so the referee was never called.',
@@ -222,7 +209,6 @@ Events:       Issues`,
       'Register the MCP server once.',
       'Ask the assistant to start a run; it calls start_run.',
       'Ask “what is it waiting for?” → get_run; “approve it” → review_checkpoint.',
-      'search_codebase lets the assistant query the same hybrid index the agents use.',
     ],
     code: `claude mcp add agentflow -- uv --directory ~/agentflow run agentflow-mcp`,
   },
@@ -233,8 +219,7 @@ Events:       Issues`,
       'The spec and plan are shown in the terminal; type y or your feedback.',
       'Commits land on your local branch; no PR is opened in in-place mode.',
     ],
-    code: `uv run agentflow search tests/fixtures/sample_repo "where are passwords hashed"
-uv run agentflow run "Add change_email that rejects duplicates" --path ../my-python-repo`,
+    code: `uv run agentflow run "Add change_email that rejects duplicates" --path ../my-python-repo`,
   },
 ]
 
@@ -244,13 +229,13 @@ export const CODE_MAP: { concept: string; files: string[] }[] = [
   { concept: 'Shared state & reducers', files: ['src/agentflow/graph/state.py'] },
   { concept: 'Agents (coder, reviewer, referee)', files: ['src/agentflow/agents/coder.py', 'src/agentflow/agents/reviewer.py'] },
   { concept: 'Structured outputs (schemas)', files: ['src/agentflow/schemas.py', 'src/agentflow/models.py'] },
-  { concept: 'RAG: chunk → embed → store → search', files: ['src/agentflow/rag/chunking.py', 'src/agentflow/rag/indexer.py', 'src/agentflow/rag/store.py', 'src/agentflow/rag/retriever.py'] },
+  { concept: 'Code navigation tools (glob, grep, read)', files: ['src/agentflow/agents/repo_tools.py'] },
   { concept: 'Long-term memory', files: ['src/agentflow/memory/lessons.py'] },
   { concept: 'Deterministic gate', files: ['src/agentflow/gate/python.py', 'src/agentflow/gate/typescript.py'] },
   { concept: 'Start / resume / inspect runs', files: ['src/agentflow/runner.py'] },
   { concept: 'API, webhooks, queue worker', files: ['src/agentflow/api/app.py', 'src/agentflow/worker.py'] },
   { concept: 'MCP server', files: ['src/agentflow/mcp_server.py'] },
-  { concept: 'Evals', files: ['evals/retrieval_eval.py', 'evals/spec_eval.py', 'evals/e2e_eval.py'] },
+  { concept: 'Evals', files: ['evals/spec_eval.py', 'evals/e2e_eval.py'] },
   { concept: 'Tests (graph e2e with fake LLMs)', files: ['tests/test_workflow_e2e.py', 'tests/test_routing.py'] },
   { concept: 'Deploy', files: ['docker/Dockerfile', 'deploy/helm/agentflow/values.yaml', 'infra/terraform/eks.tf'] },
 ]
@@ -258,7 +243,7 @@ export const CODE_MAP: { concept: string; files: string[] }[] = [
 export const INTERVIEW: { q: string; a: string }[] = [
   {
     q: 'Walk me through what happens when a request comes in.',
-    a: 'It becomes a LangGraph run. Opus writes a spec grounded in retrieved code, a human approves, Opus plans a task DAG with a binding interface per task, a human approves. Then per task, test-first: Opus writes an acceptance test that must fail, DeepSeek makes it pass with tools, a deterministic gate runs, an Opus reviewer judges the diff, and the task is committed. Finally a full-suite check and a PR. State is checkpointed in Postgres after every step.',
+    a: 'It becomes a LangGraph run. Opus explores the repo with read-only tools and writes a spec, a human approves, Opus plans a task DAG with a binding interface per task, a human approves. Then per task, test-first: Opus writes an acceptance test that must fail, DeepSeek makes it pass with tools, a deterministic gate runs, an Opus reviewer judges the diff, and the task is committed. Finally a full-suite check and a PR. State is checkpointed in Postgres after every step.',
   },
   {
     q: 'Is it test-driven? Why the tests before the code?',
@@ -269,8 +254,8 @@ export const INTERVIEW: { q: string; a: string }[] = [
     a: 'Control and cost. A graph makes the order of steps, the budgets and the human checkpoints explicit and testable — the routing is plain Python with unit tests. Agents are used only where judgement is needed (coding, reviewing). Using DeepSeek for coding and Opus for judgement cuts token cost substantially.',
   },
   {
-    q: 'How does your RAG work, and why hybrid?',
-    a: 'Code is split along language boundaries, each chunk gets a “File: path (lines)” header and is embedded into pgvector; the same table has a Postgres full-text index. A query runs both and fuses the rankings with RRF. Embeddings find code by meaning, keyword search finds exact identifiers; fusion means neither failure mode dominates. Re-indexing is incremental by file hash and happens after every task.',
+    q: 'How do the agents find the right code? Why no RAG?',
+    a: 'They explore it the way a developer does: glob for files, grep for definitions and call sites, read the modules they extend. There used to be hybrid RAG (pgvector + Postgres full-text + RRF), and I removed it. Measured on this repo, the 6000-token preload put the target files in front of the coder in only 2–3 of 6 tasks; the rest was README and generated data. In a live run the coder never called the search tool at all and went straight to read_file. A plan needs exact paths and signatures, which means following references, not ranking chunks by similarity. Dropping it also dropped an embeddings provider, pgvector and a re-index after every task.',
   },
   {
     q: 'How do you stop an agent from looping forever?',
@@ -282,7 +267,7 @@ export const INTERVIEW: { q: string; a: string }[] = [
   },
   {
     q: 'How do you know it works? How do you evaluate it?',
-    a: 'Three layers. Unit and graph-level tests with fake LLMs for the deterministic logic. Evals: a retrieval ablation gated in CI, an LLM-as-judge rubric for specs, and end-to-end runs on a fixture repo tracked as LangSmith experiments. And live smoke tests that call each model in isolation — added after a fallback turned out to be broken.',
+    a: 'Three layers. Unit and graph-level tests with fake LLMs for the deterministic logic. Evals: an LLM-as-judge rubric for specs, and end-to-end runs on a fixture repo tracked as LangSmith experiments. And live smoke tests that call each model in isolation — added after a fallback turned out to be broken.',
   },
   {
     q: 'What happens if a provider goes down?',
@@ -294,6 +279,6 @@ export const INTERVIEW: { q: string; a: string }[] = [
   },
   {
     q: 'What would you do next?',
-    a: 'Replace the hand-written retrieval golden set with queries the agents actually issued (from traces), turn on real embeddings in CI, add cost tracking per run, and deploy the Terraform stack for a real staging environment.',
+    a: 'Run the end-to-end eval as an A/B against the last RAG version to confirm that exploring plans better than retrieving, add cost tracking per run, and deploy the Terraform stack for a real staging environment.',
   },
 ]

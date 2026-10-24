@@ -6,7 +6,7 @@
    (`.claude/hooks/docs_guard.py`) blocks ending a session when code changed but no docs did.
 3. Before pushing, run: `uv run ruff check src tests evals scripts && uv run mypy src && uv run pytest -q`.
    If `guide/` changed: `cd guide && pnpm test && pnpm build`.
-4. Open a PR with `gh pr create`. CI (lint, types, tests, pgvector integration, retrieval eval,
+4. Open a PR with `gh pr create`. CI (lint, types, tests, Postgres integration,
    helm/terraform, docker build) must be green before merge. `main` is protected.
 
 ## Where docs live
@@ -14,11 +14,10 @@
 |---|---|
 | `src/agentflow/graph/` | README diagram + design notes; `guide/src/lib/content.ts` (NODES); `guide/src/lib/routing.ts` if routing changed (parity test); `guide/src/lib/graphLayout.ts` if nodes/edges changed (sync test fails otherwise) |
 | `src/agentflow/agents/`, `schemas.py` | README requirements table; guide NODES / INTERVIEW |
-| `src/agentflow/rag/` | README "Hybrid retrieval"; guide RAG text |
 | `src/agentflow/gate/` | README "Gate per language" |
 | `src/agentflow/api/`, `worker.py`, `mcp_server.py` | README "As a service"; guide USE_CASES |
 | `evals/` | README "Evals" |
-| Real-run data in the guide | re-run `uv run python scripts/export_guide_data.py`, then `cd guide && pnpm rag:index`; replay scenarios live in `guide/src/lib/scenarios.ts` |
+| Real-run data in the guide | re-run `uv run python scripts/export_guide_data.py`, replay scenarios live in `guide/src/lib/scenarios.ts` |
 
 ## Conventions
 - Comments explain *why* (the failure a rule prevents), not what.

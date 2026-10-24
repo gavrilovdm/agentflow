@@ -2,7 +2,8 @@
 
     LANGSMITH_API_KEY=... ANTHROPIC_API_KEY=... uv run python -m evals.spec_eval
 
-Each prompt is turned into a spec grounded in the fixture repo; a judge model scores
+Each prompt is turned into a spec by the orchestrator exploring the fixture repo with
+its read-only tools; a judge model, given the whole (small) repo, scores
 it against a rubric. "Make it faster" is deliberately vague: a good spec pins it down
 with measurable criteria instead of echoing it.
 """
@@ -20,10 +21,6 @@ from pydantic import BaseModel, Field
 from agentflow.agents.orchestrator import generate_spec
 from agentflow.config import get_settings
 from agentflow.models import structured
-from agentflow.rag.embeddings import get_embeddings
-from agentflow.rag.indexer import index_repo
-from agentflow.rag.retriever import HybridRetriever, pack_context
-from agentflow.rag.store import InMemoryStore
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT / "tests" / "fixtures" / "sample_repo"
@@ -39,14 +36,17 @@ class Judgement(BaseModel):
 
 JUDGE = """You grade software specifications. Score each dimension 1-5 (5 = excellent).
 testable: every acceptance criterion could be turned into an automated test.
-grounded: the spec builds on the repository's existing modules and conventions shown in the context.
+grounded: the spec builds on the repository's existing modules and conventions shown below.
 scoped: the spec states what is out of scope and does not balloon beyond the request."""
 
 
+def repo_dump(root: Path) -> str:
+    files = sorted(p for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+    return "\n\n".join(f"### {p.relative_to(root)}\n```\n{p.read_text()}\n```" for p in files)
+
+
 async def main() -> None:
-    store, emb = InMemoryStore(), get_embeddings()
-    await index_repo(REPO, "spec-eval", store, emb)
-    retriever = HybridRetriever(store, emb, "spec-eval")
+    context = repo_dump(REPO)
 
     client = Client()
     if not client.has_dataset(dataset_name=DATASET):
@@ -55,8 +55,7 @@ async def main() -> None:
         client.create_examples(dataset_id=ds.id, inputs=prompts)
 
     async def target(inputs: dict) -> dict:
-        context = pack_context(await retriever.search(inputs["prompt"], k=8), budget_tokens=4000)
-        spec = await generate_spec(inputs["prompt"], context)
+        spec = await generate_spec(inputs["prompt"], workspace=REPO)
         return {"spec": spec.model_dump(), "context": context}
 
     judge = structured(get_settings().reviewer_model, Judgement)
@@ -66,7 +65,7 @@ async def main() -> None:
             [
                 SystemMessage(JUDGE),
                 HumanMessage(
-                    f"## Request\n{inputs['prompt']}\n\n## Repository context\n{outputs['context']}\n\n"
+                    f"## Request\n{inputs['prompt']}\n\n## Repository\n{outputs['context']}\n\n"
                     f"## Spec\n```json\n{json.dumps(outputs['spec'], indent=2)}\n```"
                 ),
             ]

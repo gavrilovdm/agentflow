@@ -37,7 +37,7 @@ def repo(tmp_path: Path) -> Path:
 def fakes(monkeypatch):
     calls = {"spec": 0, "coder": [], "review": 0}
 
-    async def fake_spec(prompt, context, previous=None, feedback=None):
+    async def fake_spec(prompt, previous=None, feedback=None, *, workspace=None):
         calls["spec"] += 1
         return Spec(
             id="spec-1",
@@ -50,7 +50,7 @@ def fakes(monkeypatch):
             out_of_scope=[],
         )
 
-    async def fake_tasks(spec, context, previous=None, feedback=None, *, workspace=None):
+    async def fake_tasks(spec, previous=None, feedback=None, *, workspace=None):
         assert workspace is not None, "the planner must get the workspace to explore"
         return [
             Task(
@@ -70,7 +70,7 @@ def fakes(monkeypatch):
             ),
         ]
 
-    async def fake_coder(ctx, retriever, feedback=None):
+    async def fake_coder(ctx, feedback=None):
         calls["coder"].append((ctx.task.id, feedback))
         calls.setdefault("saw_test", []).append(bool(ctx.test_content))
         if ctx.task.id == "task-add":
@@ -95,7 +95,7 @@ def fakes(monkeypatch):
         (workspace / rel).write_text(f"from calc.{mod} import {fn}\n\n\ndef test_it():\n    assert {expr}\n")
         return rel
 
-    async def fake_review(task, spec, test_content, diff, retriever):
+    async def fake_review(task, spec, test_content, diff, workspace):
         calls["review"] += 1
         assert diff, "reviewer must see a non-empty diff"
         return ReviewCycle(verdict="approved", comments="LGTM", diff=diff)
@@ -137,13 +137,13 @@ async def test_full_run_in_place(repo: Path, fakes):
     log = [c.message for c in Repo(repo).iter_commits()]
     assert log[:2] == ["feat(task-mul): mul()", "feat(task-add): add()"]
     assert "tests/acceptance/test_task_add.py" in Repo(repo).git.ls_files()
-    assert any("indexed" in e.get("message", "") for e in events)
+    assert any(e.get("message") == "workspace ready" for e in events)
     # Tests come first: the coder saw its acceptance test on every attempt, including the first.
     assert all(fakes["saw_test"])
 
 
 async def test_gate_budget_exhaustion_skips_dependents(repo: Path, fakes, monkeypatch):
-    async def always_buggy(ctx, retriever, feedback=None):
+    async def always_buggy(ctx, feedback=None):
         body = "def add(a: int, b: int) -> int:\n    return 0\n"
         (ctx.workspace / "calc/ops.py").write_text(body)
         return CoderResult(task_id=ctx.task.id, success=True, written_files={"calc/ops.py": body})
@@ -171,7 +171,7 @@ async def test_gate_budget_exhaustion_skips_dependents(repo: Path, fakes, monkey
 async def test_review_feedback_becomes_lesson(repo: Path, fakes, monkeypatch):
     seen = {"n": 0}
 
-    async def picky_review(task, spec, test_content, diff, retriever):
+    async def picky_review(task, spec, test_content, diff, workspace):
         seen["n"] += 1
         if task.id == "task-add" and seen["n"] == 1:
             return ReviewCycle(
@@ -190,7 +190,7 @@ async def test_review_feedback_becomes_lesson(repo: Path, fakes, monkeypatch):
         assert snap.status == "completed"
         task_add = next(t for t in snap.values["tasks"] if t.id == "task-add")
         assert task_add.review_cycles == 1
-        items = await p.graph.store.asearch(("lessons", f"local:{repo.resolve()}".replace(".", "_")), query="docstring")
+        items = await p.graph.store.asearch(("lessons", f"local:{repo.resolve()}".replace(".", "_")))
         assert any("docstring" in i.value["text"] for i in items)
 
 
@@ -240,7 +240,7 @@ def stubborn(fakes, monkeypatch):
     """task-add fails the gate until a human hint arrives; the referee blames the code."""
     seen: dict[str, list] = {"hints": []}
 
-    async def coder_needing_hint(ctx, retriever, feedback=None):
+    async def coder_needing_hint(ctx, feedback=None):
         seen["hints"].append(ctx.human_hint)
         if "mul" in ctx.task.id:
             body = "def mul(a: int, b: int) -> int:\n    return a * b\n"
@@ -292,7 +292,7 @@ async def test_exhausted_task_pauses_with_dossier_then_retry_with_hint(repo: Pat
 async def test_replan_replaces_failed_and_pending_tasks(repo: Path, stubborn, monkeypatch):
     from agentflow.schemas import Task as T
 
-    async def replanner(spec, completed, failed, remaining, dossier, hint, context, *, workspace=None):
+    async def replanner(spec, completed, failed, remaining, dossier, hint, *, workspace=None):
         assert failed.id == "task-add" and [t.id for t in remaining] == ["task-mul"] and hint == "split it"
         return [
             T(

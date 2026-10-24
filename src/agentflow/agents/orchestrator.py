@@ -1,13 +1,11 @@
 """Orchestrator: turns a request into a spec, then a dependency-ordered task plan.
 
-Both calls are structured outputs (Pydantic schemas → forced tool call) with a
-model fallback chain. Planning is grounded in retrieved repository context, which
-replaces the old "LLM reads project-map.md and guesses which files matter" step.
-
-Given the workspace, the planner (task plan and replan) also runs as a tool-using
-agent with read-only glob/grep/read tools: RAG picks chunks by similarity to one
-query, but naming exact target files and binding interfaces means following
-references through the code, which only exploration does.
+Spec, plan and replan each run as a tool-using agent with read-only glob/grep/read
+tools over the workspace and end in a structured output (Pydantic schema → forced
+tool call). Naming exact target files and binding interfaces means following
+references through the code; a similarity search over chunks picked the wrong files
+for most tasks, so the orchestrator explores instead. If exploration ends without an
+answer, a one-shot structured call with a model fallback chain produces it.
 """
 
 from __future__ import annotations
@@ -36,7 +34,7 @@ specification from the user's request.
 Rules:
 - Acceptance criteria must be testable ("responds in <200ms", not "should be fast")
 - Constraints name the actual tech stack, matching what the repository already uses
-- technical_notes reference existing modules, functions and patterns from the repository context
+- technical_notes reference existing modules, functions and patterns you found in the repository
 - out_of_scope lists anything a developer might reasonably assume is included but isn't
 - A developer must be able to start coding with no follow-up questions."""
 
@@ -63,51 +61,63 @@ LIST_FIELDS_HINT = HumanMessage(
 )
 
 
-# Exploration budget per planning call. Each tool round is one model call; past this
-# the agent stops and the plan comes from a one-shot structured call instead.
-MAX_PLANNER_CALLS = 20
+# Exploration budget per call. Each tool round is one model call; past this the agent
+# stops and the answer comes from a one-shot structured call instead.
+MAX_EXPLORE_CALLS = 20
 
 EXPLORE_HINT = """
 
 ## Exploring the repository
-You have read-only tools: glob_files, grep and read_file. The repository context above was
-retrieved by similarity and may be incomplete or miss the files that matter. Before planning:
-- confirm every existing file you put in target_files actually exists (glob_files / read_file)
-- grep for the functions, classes and call sites a task changes, so interfaces reuse real names
-- read the modules a task extends, enough to match their patterns
-Keep it focused: a handful of targeted calls, then return the plan."""
+You have read-only tools: glob_files, grep and read_file. You see nothing of the repository except
+what they return, so look before you write:
+- find the files involved by name (glob_files) and confirm every existing path you cite exists
+- grep for the functions, classes and call sites the change touches, so you reuse real names
+- read the modules being extended, enough to match their patterns
+Keep it focused: a handful of targeted calls, then return the answer."""
+
+
+async def _explore[T](system: str, messages: list[BaseMessage], workspace: Path, schema: type[T], tag: str) -> T | None:
+    """Run the orchestrator model as a read-only agent over the workspace, ending in `schema`.
+    None when it stops without an answer (call limit) or errors: exploration is an aid,
+    so callers fall back to a one-shot structured call rather than fail the run."""
+    s = get_settings()
+    middleware: list[Any] = [
+        ModelCallLimitMiddleware(run_limit=MAX_EXPLORE_CALLS, exit_behavior="end"),
+        ModelRetryMiddleware(max_retries=2),
+    ]
+    if s.fallback_model and s.fallback_model != s.orchestrator_model:
+        middleware.append(ModelFallbackMiddleware(chat_model(s.fallback_model, forces_tool_choice=True)))
+    agent = create_agent(
+        # The answer comes back as a forced tool call (tool_choice="any").
+        chat_model(s.orchestrator_model, forces_tool_choice=True),
+        tools=make_repo_tools(workspace),
+        system_prompt=system + EXPLORE_HINT,
+        middleware=middleware,
+        response_format=ToolStrategy(schema),
+        name=f"orchestrator-{tag}",
+    )
+    try:
+        payload: Any = {"messages": messages}
+        out = await agent.ainvoke(
+            payload, config={"tags": ["orchestrator", tag], "recursion_limit": MAX_EXPLORE_CALLS * 3}
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("orchestrator agent failed on %s (%s); falling back to one shot", tag, str(exc)[:200])
+        return None
+    result = out.get("structured_response")
+    if isinstance(result, schema):
+        return result
+    log.warning("orchestrator explored without answering %s; falling back to one shot", tag)
+    return None
 
 
 async def _plan(system: str, messages: list[BaseMessage], workspace: Path | None, tag: str) -> TaskPlan:
-    """Task plan from the orchestrator model, exploring the workspace first when given one."""
-    s = get_settings()
-    config: Any = {"tags": ["orchestrator", tag]}
-    if workspace is not None:
-        middleware: list[Any] = [
-            ModelCallLimitMiddleware(run_limit=MAX_PLANNER_CALLS, exit_behavior="end"),
-            ModelRetryMiddleware(max_retries=2),
-        ]
-        if s.fallback_model and s.fallback_model != s.orchestrator_model:
-            middleware.append(ModelFallbackMiddleware(chat_model(s.fallback_model, forces_tool_choice=True)))
-        agent = create_agent(
-            # The TaskPlan comes back as a forced tool call (tool_choice="any").
-            chat_model(s.orchestrator_model, forces_tool_choice=True),
-            tools=make_repo_tools(workspace),
-            system_prompt=system + EXPLORE_HINT,
-            middleware=middleware,
-            response_format=ToolStrategy(TaskPlan),
-            name=f"planner-{tag}",
-        )
-        try:
-            payload: Any = {"messages": messages}
-            out = await agent.ainvoke(payload, config={**config, "recursion_limit": MAX_PLANNER_CALLS * 3})
-            plan = out.get("structured_response")
-            if isinstance(plan, TaskPlan):
-                return plan
-            log.warning("planner explored without returning a plan; falling back to a one-shot plan")
-        except Exception as exc:  # noqa: BLE001 — exploration is an aid; planning must still happen
-            log.warning("planner agent failed (%s); falling back to a one-shot plan", str(exc)[:200])
-    return await structured(s.orchestrator_model, TaskPlan).ainvoke([SystemMessage(system), *messages], config=config)
+    plan = await _explore(system, messages, workspace, TaskPlan, tag) if workspace is not None else None
+    if plan is not None:
+        return plan
+    return await structured(get_settings().orchestrator_model, TaskPlan).ainvoke(
+        [SystemMessage(system), *messages], config={"tags": ["orchestrator", tag]}
+    )
 
 
 def _revision_message(label: str, previous: object, feedback: str) -> HumanMessage:
@@ -119,19 +129,24 @@ def _revision_message(label: str, previous: object, feedback: str) -> HumanMessa
 
 
 async def generate_spec(
-    prompt: str, repo_context: str, previous: Spec | None = None, feedback: str | None = None
+    prompt: str, previous: Spec | None = None, feedback: str | None = None, *, workspace: Path | None = None
 ) -> Spec:
-    messages = [
-        SystemMessage(SPEC_SYSTEM),
-        HumanMessage(
-            (f"## Relevant repository context\n\n{repo_context}" if repo_context else "## Repository\n\nEmpty.")
-            + f"\n\n## User request\n\n{prompt}"
-        ),
-    ]
+    messages: list[BaseMessage] = [HumanMessage(f"## User request\n\n{prompt}")]
     if previous and feedback:
         messages.append(_revision_message("spec", previous.model_dump(), feedback))
-    s = get_settings()
-    runnable = structured(s.orchestrator_model, SpecDraft)
+    draft = await _explore(SPEC_SYSTEM, messages, workspace, SpecDraft, "spec") if workspace is not None else None
+    if draft is None:
+        draft = await _spec_one_shot(messages)
+    return Spec(
+        id=previous.id if previous else f"spec-{uuid.uuid4().hex[:8]}",
+        version=(previous.version + 1) if previous else 1,
+        **draft.model_dump(),
+    )
+
+
+async def _spec_one_shot(messages: list[BaseMessage]) -> SpecDraft:
+    messages = [SystemMessage(SPEC_SYSTEM), *messages]
+    runnable = structured(get_settings().orchestrator_model, SpecDraft)
     draft: SpecDraft | None = None
     for attempt in range(SPEC_ATTEMPTS):
         try:
@@ -145,26 +160,18 @@ async def generate_spec(
                 raise
             log.warning("spec rejected by schema (attempt %s): %s", attempt + 1, str(exc)[:200])
     assert draft is not None
-    return Spec(
-        id=previous.id if previous else f"spec-{uuid.uuid4().hex[:8]}",
-        version=(previous.version + 1) if previous else 1,
-        **draft.model_dump(),
-    )
+    return draft
 
 
 async def generate_tasks(
     spec: Spec,
-    repo_context: str,
     previous: list[Task] | None = None,
     feedback: str | None = None,
     *,
     workspace: Path | None = None,
 ) -> list[Task]:
     messages: list[BaseMessage] = [
-        HumanMessage(
-            f"## Approved specification\n\n```json\n{spec.model_dump_json(indent=2)}\n```\n\n"
-            + (f"## Repository context\n\n{repo_context}" if repo_context else "")
-        ),
+        HumanMessage(f"## Approved specification\n\n```json\n{spec.model_dump_json(indent=2)}\n```"),
     ]
     if previous and feedback:
         messages.append(_revision_message("task list", [t.model_dump() for t in previous], feedback))
@@ -194,7 +201,6 @@ async def replan_tasks(
     remaining: list[Task],
     dossier: dict,
     hint: str | None,
-    repo_context: str,
     *,
     workspace: Path | None = None,
 ) -> list[Task]:
@@ -205,8 +211,7 @@ async def replan_tasks(
             f"## Failed task\n```json\n{failed.model_dump_json(indent=2)}\n```\n\n"
             f"## Why it failed\n```json\n{json.dumps(dossier, indent=2, default=str)}\n```\n\n"
             f"## Still pending\n```json\n{json.dumps([t.model_dump() for t in remaining], indent=2)}\n```\n\n"
-            + (f"## Human guidance\n{hint}\n\n" if hint else "")
-            + (f"## Repository context\n{repo_context}" if repo_context else "")
+            + (f"## Human guidance\n{hint}" if hint else "")
         ),
     ]
     plan = await _plan(REPLAN_SYSTEM, messages, workspace, "replan")

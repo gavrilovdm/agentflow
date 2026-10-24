@@ -2,38 +2,27 @@
 
 Everything the guide shows as "real" comes from here: the graph structure compiled from
 code, checkpoint histories of actual runs from Postgres, LLM/tool calls from LangSmith,
-the resulting PR from GitHub, and retrieval rankings computed over this repository.
+and the resulting PR from GitHub.
 
     docker compose up -d postgres            # checkpoints of past runs live here
-    uv run python scripts/export_guide_data.py [--index-self]
-
---index-self also indexes agentflow's own source into the Postgres vector table, so the
-guide's live RAG playground has an interesting repository to search.
+    uv run python scripts/export_guide_data.py
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
 
 from agentflow.graph.build import build_graph
-from agentflow.rag.chunking import chunk_file
-from agentflow.rag.embeddings import get_embeddings
-from agentflow.rag.indexer import index_repo
-from agentflow.rag.retriever import rrf_merge
-from agentflow.rag.store import InMemoryStore
 from agentflow.runner import _config, open_persistence
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))  # for `evals`
 OUT = ROOT / "guide" / "src" / "data"
 SUCCESS_RUN = "run-712dd72b01d9"
 FAILED_RUNS = {
@@ -260,77 +249,12 @@ def export_pr() -> None:
     dump("pr.json", view)
 
 
-# ─── retrieval ───────────────────────────────────────────────────────────────
-
-
-async def export_retrieval() -> None:
-    from evals.retrieval_eval import GOLDEN, K, _files, recall_at_k, reciprocal_rank
-
-    store, emb = InMemoryStore(), get_embeddings()
-    await index_repo(ROOT / "src", "self", store, emb)
-    golden = json.loads(GOLDEN.read_text())
-    cases, totals = [], {m: [0.0, 0.0] for m in ("dense", "lexical", "hybrid")}
-    for case in golden:
-        dense = await store.search_vector("self", await emb.aembed_query(case["query"]), 20, None)
-        lexical = await store.search_text("self", case["query"], 20, None)
-        ranked = {"dense": _files(dense), "lexical": _files(lexical), "hybrid": _files(rrf_merge([dense, lexical], 20))}
-        for m, r in ranked.items():
-            totals[m][0] += recall_at_k(r, case["relevant"])
-            totals[m][1] += reciprocal_rank(r, case["relevant"])
-        cases.append({**case, **{m: r[:K] for m, r in ranked.items()}})
-    n = len(golden)
-    summary = {m: {"recall": round(t[0] / n, 3), "mrr": round(t[1] / n, 3)} for m, t in totals.items()}
-
-    # The browser playground (guide/scripts/build_rag_index.ts) embeds and searches these
-    # same chunks client-side, so the deployed guide needs no API.
-    corpus = [
-        {
-            "path": ch.path,
-            "index": ch.index,
-            "start": ch.start_line,
-            "end": ch.end_line,
-            "kind": ch.kind,
-            "content": ch.content,
-        }
-        for ch, _ in store.rows.values()  # store order: ties rank the same in TS
-    ]
-    dump("rag/corpus.json", corpus)
-
-    sample_path = "agentflow/graph/routing.py"
-    text = (ROOT / "src" / sample_path).read_text()
-    chunks = [
-        {"index": c.index, "start": c.start_line, "end": c.end_line, "content": c.content}
-        for c in chunk_file(sample_path, text, "x")
-    ]
-    dump(
-        "retrieval.json",
-        {
-            "k": K,
-            "embeddings": type(emb).__name__,
-            "summary": summary,
-            "cases": cases,
-            "chunk_demo": {"path": sample_path, "chunks": chunks},
-        },
-    )
-
-
-async def index_self() -> None:
-    async with open_persistence() as p:
-        stats = await index_repo(ROOT, "gavrilovdm/agentflow", p.chunk_store, get_embeddings())
-        print("indexed agentflow into Postgres:", stats)
-
-
-async def main(args: argparse.Namespace) -> None:
+async def main() -> None:
     export_graph()
     await export_runs()
     export_llm_calls()
     export_pr()
-    await export_retrieval()
-    if args.index_self:
-        await index_self()
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--index-self", action="store_true")
-    asyncio.run(main(ap.parse_args()))
+    asyncio.run(main())

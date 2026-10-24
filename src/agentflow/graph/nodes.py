@@ -26,8 +26,6 @@ from agentflow.integrations import github, telegram
 from agentflow.integrations import workspace as ws
 from agentflow.memory.lessons import recall_lessons, remember_review_feedback
 from agentflow.models import text_model, text_of
-from agentflow.rag.indexer import index_repo
-from agentflow.rag.retriever import pack_context
 from agentflow.schemas import ApprovalDecision, CoderResult, FailureDecision, ReviewCycle, ReviewResult, Stall, Task
 
 log = logging.getLogger("agentflow.graph")
@@ -56,13 +54,6 @@ def _read(path: Path) -> str:
         return ""
 
 
-async def _repo_context(runtime: Runtime[Deps], state: WorkflowState, query: str, budget: int) -> str:
-    retriever = runtime.context.retriever(state["repo_id"])
-    code = await retriever.search(query, k=10, kind="code")
-    docs = await retriever.search(query, k=4, kind="doc")
-    return pack_context(docs + code, budget_tokens=budget)
-
-
 # ─── Setup ───────────────────────────────────────────────────────────────────
 
 
@@ -71,13 +62,11 @@ async def prepare_workspace(state: WorkflowState, runtime: Runtime[Deps]) -> dic
     branch = f"agentflow/{int(time.time())}"
     path = await asyncio.to_thread(ws.prepare_workspace, cfg.target_repo, branch, cfg.local_path)
     repo_id = ws.repo_id(cfg.target_repo, path)
-    stats = await index_repo(path, repo_id, runtime.context.chunk_store, runtime.context.embeddings)
-    progress(runtime, f"workspace ready, indexed {stats.files_seen} files", repo=repo_id, **vars(stats))
+    progress(runtime, "workspace ready", repo=repo_id)
     return {
         "workspace": str(path),
         "branch": branch,
         "repo_id": repo_id,
-        "index_stats": vars(stats),
         "status": "speccing",
     }
 
@@ -86,10 +75,9 @@ async def prepare_workspace(state: WorkflowState, runtime: Runtime[Deps]) -> dic
 
 
 async def generate_spec(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
-    context = await _repo_context(runtime, state, state["user_prompt"], budget=6000)
     feedback = state.get("spec_feedback")
     spec = await orchestrator.generate_spec(
-        state["user_prompt"], context, previous=state.get("spec") if feedback else None, feedback=feedback
+        state["user_prompt"], previous=state.get("spec") if feedback else None, feedback=feedback, workspace=_ws(state)
     )
     progress(runtime, f"spec v{spec.version}: {spec.title}")
     return {"spec": spec, "status": "spec_review"}
@@ -108,10 +96,9 @@ def await_spec_approval(state: WorkflowState) -> dict:
 async def generate_tasks(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     spec = state["spec"]
     assert spec
-    context = await _repo_context(runtime, state, f"{spec.goal}\n{spec.technical_notes}", budget=5000)
     feedback = state.get("tasks_feedback")
     tasks = await orchestrator.generate_tasks(
-        spec, context, previous=state.get("tasks") if feedback else None, feedback=feedback, workspace=_ws(state)
+        spec, previous=state.get("tasks") if feedback else None, feedback=feedback, workspace=_ws(state)
     )
     progress(runtime, f"planned {len(tasks)} tasks", tasks=[t.id for t in tasks])
     return {"tasks": tasks, "status": "task_review"}
@@ -144,9 +131,7 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     task, spec, root = task_by_id(state, task_id), state["spec"], _ws(state)
     assert spec
 
-    query = f"{task.title}\n{task.description}\nFiles: {' '.join(task.target_files)}"
-    retrieved = await _repo_context(runtime, state, query, budget=6000)
-    lessons = await recall_lessons(runtime.store, state["repo_id"], query)
+    lessons = await recall_lessons(runtime.store, state["repo_id"])
     test_path = state.get("tests", {}).get(task_id)
     ctx = coder.CoderContext(
         task=task,
@@ -154,7 +139,6 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         workspace=root,
         language=_gate(state).language,
         test_content=_read(root / test_path) if test_path else "",
-        retrieved_context=retrieved,
         lessons=lessons,
         human_hint=state.get("hints", {}).get(task_id) or None,
     )
@@ -171,7 +155,7 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         last = prior_review.cycles[-1]
         feedback = "\n".join([last.comments, *last.change_requests]) or "The previous attempt was rejected."
 
-    result = await coder.run_coder(ctx, runtime.context.retriever(state["repo_id"]), feedback)
+    result = await coder.run_coder(ctx, feedback)
     # Carry forward everything written for this task: a fix attempt rewrites one or two
     # files, and replacing the set shrank the review diff until the reviewer rejected
     # the task for "missing" files that were on disk all along.
@@ -251,9 +235,7 @@ async def run_review(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         cycle = ReviewCycle(verdict="failed", comments=gate.summary, change_requests=[gate.summary])
     else:
         diff = await asyncio.to_thread(ws.stage_and_diff, root, written)
-        cycle = await reviewer.review_diff(
-            task, spec, _read(root / own_test) if own_test else "", diff, runtime.context.retriever(state["repo_id"])
-        )
+        cycle = await reviewer.review_diff(task, spec, _read(root / own_test) if own_test else "", diff, root)
 
     approved = cycle.verdict == "approved"
     gate_failed = cycle.verdict == "failed"
@@ -344,8 +326,6 @@ async def complete_task(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     paths = [*state["task_results"][task_id].written_files, state.get("tests", {}).get(task_id, "")]
     await asyncio.to_thread(ws.commit, root, [p for p in paths if p], f"feat({task_id}): {task.title}")
 
-    # Re-index so the next task can retrieve what this one just wrote.
-    await index_repo(root, state["repo_id"], runtime.context.chunk_store, runtime.context.embeddings)
     # Review feedback that was followed by an approved fix is validated knowledge.
     if runtime.store is not None:
         saved = await remember_review_feedback(
@@ -418,7 +398,6 @@ async def replan(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     completed = [t for t in tasks if t.status == "completed"]
     remaining = [t for t in tasks if t.status in ("pending", "coding") and t.id != task_id]
     decision = state.get("failure_decisions", {}).get(task_id)
-    context = await _repo_context(runtime, state, f"{failed.title}\n{failed.description}", budget=4000)
 
     new = await orchestrator.replan_tasks(
         spec,
@@ -427,7 +406,6 @@ async def replan(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         remaining,
         escalation.build_dossier(state, task_id),
         decision.hint if decision else None,
-        context,
         workspace=_ws(state),
     )
     used = {t.id for t in tasks} | set(state.get("task_results", {})) | set(state.get("tests", {}))

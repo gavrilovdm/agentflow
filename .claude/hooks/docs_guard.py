@@ -21,7 +21,6 @@ DOCS = ("README.md", "CLAUDE.md", "guide/README.md", "guide/src/lib/content.ts",
 DOC_MAP = {
     "src/agentflow/graph/": "README.md (diagram, design notes) + guide/src/lib/content.ts (NODES) + guide routing port",
     "src/agentflow/agents/": "README.md (requirements table) + guide/src/lib/content.ts (NODES, INTERVIEW)",
-    "src/agentflow/rag/": "README.md (Hybrid retrieval) + guide RAG concept text",
     "src/agentflow/gate/": "README.md (Gate per language) + guide BUGS/NODES if behaviour changed",
     "src/agentflow/api/": "README.md (As a service) + guide USE_CASES",
     "src/agentflow/schemas.py": "README.md if the task/spec contract changed + guide NODES",

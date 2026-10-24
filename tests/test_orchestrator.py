@@ -26,7 +26,7 @@ async def test_generate_spec_retries_with_schema_hint(monkeypatch):
             return SpecDraft(**BASE, acceptance_criteria=["a", "b"])
 
     monkeypatch.setattr(orchestrator, "structured", lambda *a, **k: Flaky())
-    spec = await orchestrator.generate_spec("p", "")
+    spec = await orchestrator.generate_spec("p")
     assert spec.acceptance_criteria == ["a", "b"]
     assert seen[1] == seen[0] + 1  # second attempt carried the hint
 
@@ -80,7 +80,7 @@ async def test_planner_with_workspace_explores_and_returns_agent_plan(monkeypatc
     seen: dict = {}
     _patch_agent(monkeypatch, {"structured_response": TaskPlan(tasks=[TaskDraft(**PLANNED)])}, seen)
     monkeypatch.setattr(orchestrator, "structured", lambda *a, **k: OneShot(seen))
-    tasks = await orchestrator.generate_tasks(Spec(**SPEC), "", workspace=tmp_path)
+    tasks = await orchestrator.generate_tasks(Spec(**SPEC), workspace=tmp_path)
     assert [t.id for t in tasks] == ["task-a"]
     assert seen["tools"] == ["glob_files", "grep", "read_file"] and "one_shot" not in seen
 
@@ -92,7 +92,7 @@ async def test_planner_falls_back_to_one_shot_when_exploration_yields_no_plan(mo
     seen: dict = {}
     _patch_agent(monkeypatch, result, seen)
     monkeypatch.setattr(orchestrator, "structured", lambda *a, **k: OneShot(seen))
-    tasks = await orchestrator.generate_tasks(Spec(**SPEC), "", workspace=tmp_path)
+    tasks = await orchestrator.generate_tasks(Spec(**SPEC), workspace=tmp_path)
     assert [t.id for t in tasks] == ["task-fallback"] and seen["one_shot"]
 
 
@@ -100,5 +100,26 @@ async def test_planner_without_workspace_stays_one_shot(monkeypatch):
     seen: dict = {}
     monkeypatch.setattr(orchestrator, "create_agent", lambda *a, **k: pytest.fail("no agent without a workspace"))
     monkeypatch.setattr(orchestrator, "structured", lambda *a, **k: OneShot(seen))
-    tasks = await orchestrator.generate_tasks(Spec(**SPEC), "")
+    tasks = await orchestrator.generate_tasks(Spec(**SPEC))
     assert [t.id for t in tasks] == ["task-fallback"]
+
+
+async def test_spec_with_workspace_comes_from_the_exploring_agent(monkeypatch, tmp_path):
+    seen: dict = {}
+    _patch_agent(monkeypatch, {"structured_response": SpecDraft(**BASE, acceptance_criteria=["x", "y"])}, seen)
+    monkeypatch.setattr(orchestrator, "structured", lambda *a, **k: pytest.fail("no one-shot when the agent answers"))
+    spec = await orchestrator.generate_spec("p", workspace=tmp_path)
+    assert spec.acceptance_criteria == ["x", "y"] and seen["tools"] == ["glob_files", "grep", "read_file"]
+
+
+async def test_spec_falls_back_to_one_shot_when_exploration_fails(monkeypatch, tmp_path):
+    seen: dict = {}
+    _patch_agent(monkeypatch, RuntimeError("proxy down"), seen)
+
+    class Once:
+        async def ainvoke(self, messages, config=None):
+            return SpecDraft(**BASE, acceptance_criteria=["a", "b"])
+
+    monkeypatch.setattr(orchestrator, "structured", lambda *a, **k: Once())
+    spec = await orchestrator.generate_spec("p", workspace=tmp_path)
+    assert spec.acceptance_criteria == ["a", "b"]

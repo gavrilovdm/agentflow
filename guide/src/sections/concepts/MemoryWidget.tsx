@@ -7,7 +7,7 @@ export function MemoryWidget() {
   const stages = [
     { t: 'Run 1 · reviewer rejects', body: `{\n  "verdict": "changes_requested",\n  "change_requests": ["${lesson}"]\n}` },
     { t: 'Run 1 · coder fixes it, reviewer approves → saved', body: `store.put(("lessons", "<repo>"), key, {\n  "text": "${lesson}",\n  "task": "add()"\n})` },
-    { t: 'Run 2 · a new task starts → recalled by meaning', body: `## Lessons from past reviews of this repository\n- ${lesson} (from task: add())` },
+    { t: 'Run 2 · a new task starts → most recent lessons recalled', body: `## Lessons from past reviews of this repository\n- ${lesson} (from task: add())` },
   ]
   return (
     <Card>
