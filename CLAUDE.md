@@ -7,7 +7,7 @@
 3. Before pushing, run: `uv run ruff check src tests evals scripts && uv run mypy src && uv run pytest -q`.
    If `guide/` changed: `cd guide && pnpm test && pnpm build`.
 4. Open a PR with `gh pr create`. CI (lint, types, tests, Postgres integration,
-docker build) must be green before merge. `main` is protected.
+   guide tests + build, docker build) must be green before merge. `main` is protected.
 
 ## Where docs live
 | Code | Docs to update |

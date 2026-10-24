@@ -195,7 +195,10 @@ uv run pytest                        # 57 tests: gate, repo tools, routing, API/
 docker compose up -d postgres && uv run pytest -m integration   # paused run resumed from Postgres
 uv run pytest -m live                # one real structured call per configured model (costs money)
 uv run ruff check . && uv run mypy src
+cd guide && pnpm test && pnpm build  # routing parity with graph/, graph layout sync, render
 ```
+
+CI runs all of these except `-m live`, plus a Docker build.
 
 The graph e2e tests use real git and a real Python gate, with fake LLM agents. They cover:
 
