@@ -1,25 +1,25 @@
 # agentflow
 
-A multi-agent coding workflow built on **LangGraph**. You give it a feature request (CLI, REST, MCP, or a labelled GitHub issue). It writes a spec and a task plan and waits for a human to approve both. Then it implements each task test-first: an acceptance test is written from the task's interface and Definition of Done and must fail first, a coder agent makes it pass, a deterministic gate runs, and a reviewer agent checks the result. Finally it opens a pull request. Every agent uses **RAG over the target repository**: code-aware chunks, Voyage embeddings, and hybrid pgvector + full-text search.
+A multi-agent coding workflow built on **LangGraph**. You give it a feature request (CLI, REST, MCP, or a labelled GitHub issue). It writes a spec and a task plan and waits for a human to approve both. Then it implements each task test-first: an acceptance test is written from the task's interface and Definition of Done and must fail first, a coder agent makes it pass, a deterministic gate runs, and a reviewer agent checks the result. Finally it opens a pull request. Agents read the target repository the way a developer does, with read-only **glob, grep and read tools**; there is no index and no embeddings.
 
 It runs a whole workflow end to end: it calls tools, recovers from failures, pauses for people, and ships a PR. It is not a chat wrapper.
 
 ```mermaid
 flowchart TD
-    trigger([CLI · REST · MCP · GitHub issue label]) --> prep[prepare_workspace<br/>clone + incremental RAG index]
-    prep --> spec[generate_spec<br/>orchestrator + retrieved context]
+    trigger([CLI · REST · MCP · GitHub issue label]) --> prep[prepare_workspace<br/>clone onto a new branch]
+    prep --> spec[generate_spec<br/>explores repo: glob · grep · read]
     spec --> hitl1{{human approval<br/>Telegram buttons / API}}
     hitl1 -- reject + feedback --> spec
-    hitl1 -- approve --> plan[generate_tasks<br/>DAG, cycle-safe]
+    hitl1 -- approve --> plan[generate_tasks<br/>explores repo: glob · grep · read<br/>DAG, cycle-safe]
     plan --> hitl2{{human approval}}
     hitl2 -- reject + feedback --> plan
     hitl2 -- approve --> select[select_next_task]
     select -- task --> tests[generate_task_test<br/>from interface + DoD · must fail first]
-    tests --> coder[run_coder<br/>tool-using agent + RAG + lessons<br/>makes the test pass]
+    tests --> coder[run_coder<br/>tool-using agent + lessons<br/>makes the test pass]
     coder -- wrote code --> review[run_review<br/>gate: types · tests · lint<br/>then reviewer agent]
     coder -- error, budget left --> coder
     coder -- budget spent --> esc
-    review -- approved --> done[complete_task<br/>commit · re-index · store lessons]
+    review -- approved --> done[complete_task<br/>commit · store lessons]
     review -- rejected --> coder
     review -- same failure 3x in window --> referee[adjudicate<br/>is the test wrong?]
     referee -- test wrong: regenerate --> coder
@@ -41,27 +41,23 @@ flowchart TD
 | **Python backend** | FastAPI (`api/app.py`), arq worker (`worker.py`), Pydantic everywhere, mypy-clean |
 | **LLM APIs, agentic systems** | Anthropic (Opus/Sonnet) and DeepSeek via LangChain; `create_agent` coder and reviewer (`agents/`) |
 | **LangGraph / LangChain** | 17-node `StateGraph` with typed reducers and runtime-context DI (`graph/`) |
-| **Tool calling, structured outputs** | Coder tools (write/read/list/search) and Pydantic outputs for spec, plan, review and referee (`schemas.py`) |
-| **RAG, embeddings, vector search** | `rag/`: language-aware chunking, incremental re-embedding by file hash, pgvector HNSW + Postgres FTS fused with RRF, token-budgeted context packing |
-| **Context management** | Retrieval instead of whole-repo dumps; `pack_context` merges adjacent chunks under a token budget; agents can query more through tools |
-| **State, memory** | Postgres checkpointer (per-run state, resumable), LangGraph Store with a semantic index (cross-run lessons, `memory/lessons.py`) |
+| **Tool calling, structured outputs** | Read-only code navigation (glob/grep/read, `agents/repo_tools.py`) for the orchestrator, coder and reviewer; coder write tools; Pydantic outputs for spec, plan, review and referee (`schemas.py`), the orchestrator's returned through a structured-output tool at the end of exploration |
+| **Context management** | No whole-repo dumps and no retrieval preload: agents pull in only what they grep and read; tool output is capped (100 grep matches, 400 lines per read) and every agent has a model-call ceiling |
+| **State, memory** | Postgres checkpointer (per-run state, resumable), LangGraph Store (cross-run lessons, most recent first, `memory/lessons.py`) |
 | **Routing, retries, fallback** | Conditional edges (`graph/routing.py`); node `RetryPolicy` + timeouts; `.with_fallbacks()` on structured calls; `ModelFallbackMiddleware`, `ModelRetryMiddleware` and `ModelCallLimitMiddleware` on agents |
 | **Recovery from failure** | Separate budgets, windowed stall detection (catches A↔B oscillation), a referee that can rewrite an unsatisfiable test, then escalation: a human picks retry-with-hint, re-plan, skip or abort |
 | **API integrations, event-driven** | GitHub webhook (issue labelled → run → PR that closes it), Telegram inline buttons resume paused runs, Redis job queue |
 | **Human-in-the-loop** | `interrupt()` at spec, plan, and whenever a task exhausts its budget (with an evidence dossier); answered via Telegram, REST, MCP or CLI; resumes deduplicated by checkpoint id |
-| **MCP** | `mcp_server.py`: `start_run`, `get_run`, `review_checkpoint`, `search_codebase` |
-| **Evaluation** | `evals/`: retrieval ablation (CI-gated), spec LLM-as-judge, e2e agent runs; all logged to LangSmith |
+| **MCP** | `mcp_server.py`: `start_run`, `get_run`, `review_checkpoint`, `resolve_failed_task` |
+| **Evaluation** | `evals/`: spec LLM-as-judge, e2e agent runs; all logged to LangSmith |
 | **Tracing, monitoring** | LangSmith traces tagged by role and task; Prometheus metrics (`/metrics`, worker `:9100`); JSON logs |
-| **Docker, K8s, CI/CD, AWS** | Multi-stage Dockerfile; Helm chart (HPA, PDB, ExternalSecrets, ServiceMonitor, IRSA); Terraform (VPC, EKS, RDS Postgres 17 + pgvector, ElastiCache, ECR, GitHub OIDC); GitHub Actions CI and CD |
+| **Docker, K8s, CI/CD, AWS** | Multi-stage Dockerfile; Helm chart (HPA, PDB, ExternalSecrets, ServiceMonitor, IRSA); Terraform (VPC, EKS, RDS Postgres 17, ElastiCache, ECR, GitHub OIDC); GitHub Actions CI and CD |
 
 ## Quickstart
 
 ```bash
-cp .env.example .env            # ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, VOYAGE_API_KEY at minimum
+cp .env.example .env            # ANTHROPIC_API_KEY, DEEPSEEK_API_KEY at minimum
 uv sync
-
-# See what the agents would retrieve (works offline, no keys needed)
-uv run agentflow search tests/fixtures/sample_repo "where are passwords hashed"
 
 # Full run in-process on a local repo: approve spec and plan in the terminal, commits land locally
 uv run agentflow run "Add a change_email service that rejects duplicates" --path ../some-python-repo
@@ -70,7 +66,7 @@ uv run agentflow run "Add a change_email service that rejects duplicates" --path
 ### As a service
 
 ```bash
-docker compose up -d            # postgres+pgvector, redis, api, worker
+docker compose up -d            # postgres, redis, api, worker
 curl -X POST localhost:8010/runs -H 'content-type: application/json' \
      -d '{"prompt": "Add order history endpoint", "repo": "you/your-repo"}'
 curl localhost:8010/runs/<thread_id>                       # status, spec, tasks, pending approval
@@ -93,9 +89,9 @@ You can also wire up these triggers:
 
 ## Design notes
 
-**Hybrid retrieval.** Dense vectors find code by meaning ("where are users persisted"). Lexical search finds exact identifiers (`resolve_in_workspace`), which embeddings blur. Reciprocal Rank Fusion merges the two rankings without calibrating their scores. Each chunk is embedded with a `File: path (lines a-b)` header, so file names count too. The index is incremental and rebuilt after every completed task, so later tasks can retrieve code that earlier tasks wrote.
+**Agents explore; there is no RAG.** The project used to run hybrid RAG: code-aware chunks, Voyage embeddings, pgvector + Postgres full-text fused with RRF, and a 6000-token preload in every coder prompt. It was removed after measuring it on this repo: the preload put the target files in context in only 2–3 of 6 tasks (README and generated guide data took the rest), and in a live run the coder never called its search tool, going straight to `read_file`. A plan has to name exact target files and binding interfaces, which means following references: find the file, grep every call site, read the module it extends. So the orchestrator (`generate_spec`, `generate_tasks`, `replan`) runs as a `create_agent` with read-only `glob_files`, `grep` and `read_file` (`agents/repo_tools.py`, sandboxed to the workspace, output capped) and returns its `SpecDraft`/`TaskPlan` through a structured-output tool. The coder gets `glob_files` and `grep` next to its own read/write tools, the reviewer gets all three. Exploration is capped at 20 model calls; if it ends without an answer or errors, the orchestrator falls back to a one-shot structured call, so a tool loop can't fail the run at planning. Dropping RAG also dropped the embeddings provider, pgvector and the re-index after every task.
 
-**One Postgres, three roles.** It holds LangGraph checkpoints (resumable runs), the LangGraph Store (semantic long-term memory), and the `code_chunks` vector + FTS table.
+**One Postgres, two roles.** It holds LangGraph checkpoints (resumable runs) and the LangGraph Store (long-term memory: review lessons per repository, recalled most recent first). Plain Postgres 17, no extensions.
 
 **Failure handling is the product.** This is a port of a TypeScript version that ran on real repos. Every rule in `graph/nodes.py` and `gate/` has a comment naming the failure it prevents. Some examples:
 
@@ -132,26 +128,15 @@ This follows how production harnesses treat budget exhaustion: stop and escalate
 ## Evals
 
 ```bash
-uv run python -m evals.retrieval_eval [--langsmith]   # recall@5 / MRR: dense vs lexical vs hybrid
-uv run python -m evals.spec_eval                      # LLM-as-judge: testable / grounded / scoped
-uv run python -m evals.e2e_eval                       # real models on the fixture repo: completion rate, gate/review cycles
+uv run python -m evals.spec_eval      # LLM-as-judge: testable / grounded / scoped
+uv run python -m evals.e2e_eval       # real models on the fixture repo: completion rate, gate/review cycles
 ```
 
-Retrieval eval, offline (hash embeddings, so dense is noise; 20 queries over `src/`):
-
-| mode | recall@5 | MRR |
-|---|---|---|
-| dense | 0.125 | 0.128 |
-| lexical | 1.000 | 1.000 |
-| hybrid | 0.775 | 0.568 |
-
-Without real embeddings the dense half is hash noise, and fusing it in *lowers* hybrid below lexical-only. That is why the CI gate checks the lexical half offline and switches to hybrid once `VOYAGE_API_KEY` is set. Gating hybrid on noise made the check move with every unrelated code change.
-
-Caveat: the golden queries were written by someone who knows the code, so they share vocabulary with it. That flatters lexical search. The next step is to replace them with queries the agents actually issued, taken from LangSmith traces, and to rerun with `VOYAGE_API_KEY` set to measure dense and hybrid properly.
+The spec eval lets the orchestrator explore the fixture repo with its tools and gives the judge the whole (small) repo to check grounding against. The retrieval eval was removed together with RAG.
 
 ## Interactive guide
 
-`guide/` is a small React app that explains the project. It replays a real run step by step, gives each concept something to try (RAG search playground, routing simulator, HITL), lists the use cases, and tells the stories of the bugs found live. Start it with `cd guide && pnpm install && pnpm dev`.
+`guide/` is a small React app that explains the project. It replays a real run step by step, gives each concept something to try (routing simulator, HITL), lists the use cases, and tells the stories of the bugs found live. Start it with `cd guide && pnpm install && pnpm dev`.
 
 ## Live run
 
@@ -205,13 +190,13 @@ Requests are billed as Claude Code traffic on a personal session — fine for ma
 ## Development
 
 ```bash
-uv run pytest                        # 29 tests: gate, RAG, routing, API/webhooks, whole-graph e2e (LLMs faked)
-docker compose up -d postgres && uv run pytest -m integration   # pgvector round-trip
+uv run pytest                        # 59 tests: gate, repo tools, routing, API/webhooks, whole-graph e2e (LLMs faked)
+docker compose up -d postgres && uv run pytest -m integration   # Postgres Store round-trip
 uv run pytest -m live                # one real structured call per configured model (costs money)
 uv run ruff check . && uv run mypy src
 ```
 
-The graph e2e tests use real git, a real Python gate and real RAG, with fake LLM agents. They cover:
+The graph e2e tests use real git and a real Python gate, with fake LLM agents. They cover:
 
 - spec rejection and revision
 - a gate failure fed back to the coder
@@ -223,9 +208,8 @@ The graph e2e tests use real git, a real Python gate and real RAG, with fake LLM
 
 ```
 src/agentflow/
-  agents/        orchestrator · test_generator · coder · reviewer (+ referee)
+  agents/        orchestrator · test_generator · coder · reviewer (+ referee) · repo_tools (glob/grep/read)
   graph/         state · context (DI) · nodes · routing · build
-  rag/           chunking · embeddings · indexer · store (pgvector/in-memory) · retriever · tools
   gate/          python · typescript · detection
   memory/        lessons (LangGraph Store)
   integrations/  workspace (git) · github · telegram

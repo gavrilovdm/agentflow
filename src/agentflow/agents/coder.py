@@ -20,12 +20,11 @@ from langchain.agents.middleware import (
 )
 from langchain_core.tools import BaseTool, tool
 
+from agentflow.agents.repo_tools import make_repo_tools
 from agentflow.config import get_settings
 from agentflow.gate import ACCEPTANCE_TEST_DIR
 from agentflow.integrations.workspace import PathEscapeError, resolve_in_workspace
 from agentflow.models import chat_model
-from agentflow.rag.retriever import HybridRetriever
-from agentflow.rag.tools import make_search_tools
 from agentflow.schemas import CoderResult, Spec, Task
 
 MAX_MODEL_CALLS = 25
@@ -51,7 +50,6 @@ class CoderContext:
     workspace: Path
     language: str
     test_content: str = ""
-    retrieved_context: str = ""
     lessons: list[str] = field(default_factory=list)
     human_hint: str | None = None
 
@@ -129,11 +127,9 @@ def system_prompt(ctx: CoderContext) -> str:
         )
     if ctx.lessons:
         sections.append("## Lessons from past reviews of this repository\n" + "\n".join(f"- {x}" for x in ctx.lessons))
-    if ctx.retrieved_context:
-        sections.append(f"## Retrieved repository context\n{ctx.retrieved_context}")
     sections.append(
         "## Instructions\n"
-        "1. Use search_codebase / search_docs to find existing code and conventions before writing new code\n"
+        "1. Use glob_files / grep / read_file to find existing code and conventions before writing new code\n"
         "2. Reuse the names and signatures that existing code and the task already use — later tasks depend on them\n"
         "3. Write each required file with write_file (full content)\n"
         "4. Do NOT modify acceptance tests; do NOT add features beyond the task\n"
@@ -143,12 +139,13 @@ def system_prompt(ctx: CoderContext) -> str:
     return "\n\n".join(sections)
 
 
-async def run_coder(ctx: CoderContext, retriever: HybridRetriever | None, feedback: str | None = None) -> CoderResult:
+async def run_coder(ctx: CoderContext, feedback: str | None = None) -> CoderResult:
     s = get_settings()
     written: dict[str, str] = {}
-    tools = build_file_tools(ctx.workspace, written)
-    if retriever is not None:
-        tools += make_search_tools(retriever)
+    # read_file stays the coder's own: it returns the raw text the coder edits and writes
+    # back whole, where numbered lines would invite pasting the numbers into write_file.
+    search = [t for t in make_repo_tools(ctx.workspace) if t.name != "read_file"]
+    tools = [*build_file_tools(ctx.workspace, written), *search]
 
     middleware: list[Any] = [
         ModelCallLimitMiddleware(run_limit=MAX_MODEL_CALLS, exit_behavior="end"),

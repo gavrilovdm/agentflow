@@ -1,6 +1,6 @@
 """Reviewer and referee.
 
-The reviewer is an agent, not a single prompt: it can search the codebase to check
+The reviewer is an agent, not a single prompt: it can grep and read the workspace to check
 a diff against existing conventions and call sites, and it must finish with a
 structured `ReviewDecision`. A malformed or failed review is reported as a
 *malfunction* cycle, which the graph does not charge to the task's budget.
@@ -9,6 +9,7 @@ structured `ReviewDecision`. A malformed or failed review is reported as a
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from langchain.agents import create_agent
@@ -16,10 +17,9 @@ from langchain.agents.middleware import ModelCallLimitMiddleware, ModelFallbackM
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agentflow.agents.repo_tools import make_repo_tools
 from agentflow.config import get_settings
 from agentflow.models import chat_model, structured
-from agentflow.rag.retriever import HybridRetriever
-from agentflow.rag.tools import make_search_tools
 from agentflow.schemas import FailureRuling, ReviewCycle, ReviewDecision, Spec, Task
 
 log = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ Definition of Done and the acceptance test. The automated gate (types, tests, li
 Approve if the change does what the task asks, is consistent with existing code, and has no real bugs.
 Request changes only for incorrect logic, missing required behaviour, or clear violations of the
 spec or the repository's conventions — not for style preferences.
-You may use search_codebase to check how the changed code fits existing modules.
+You may use glob_files, grep and read_file to check how the changed code fits existing modules.
 Each change request must name the file and the exact fix needed."""
 
 REFEREE_SYSTEM = """You settle a deadlock between a test and an implementation. The same failure has
@@ -63,13 +63,11 @@ def _middleware(primary: str, fallback: str) -> list[Any]:
     return middleware
 
 
-async def review_diff(
-    task: Task, spec: Spec, test_content: str, diff: str, retriever: HybridRetriever | None
-) -> ReviewCycle:
+async def review_diff(task: Task, spec: Spec, test_content: str, diff: str, workspace: Path | None) -> ReviewCycle:
     s = get_settings()
     agent = create_agent(
         reviewer_chat_model(s.reviewer_model),
-        tools=make_search_tools(retriever) if retriever else [],
+        tools=make_repo_tools(workspace) if workspace else [],
         system_prompt=REVIEW_SYSTEM,
         response_format=ReviewDecision,
         middleware=_middleware(s.reviewer_model, s.fallback_model),

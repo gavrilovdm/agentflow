@@ -1,7 +1,7 @@
 """MCP server: lets any MCP client (Claude Desktop, Claude Code, IDEs) drive agentflow.
 
-Tools: start a run, inspect it, approve/reject a checkpoint, and search an indexed
-repository with the same hybrid retriever the agents use.
+Tools: start a run, inspect it, approve/reject a checkpoint, and decide on a task
+that ran out of budget.
 
     uv run agentflow-mcp                      # stdio
     uv run agentflow-mcp --http               # streamable HTTP on :8001
@@ -18,14 +18,11 @@ from arq.connections import RedisSettings
 from mcp.server.mcpserver import MCPServer
 
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
-from agentflow.rag.embeddings import get_embeddings
-from agentflow.rag.retriever import HybridRetriever, pack_context
-from agentflow.rag.store import PgVectorStore
 from agentflow.runner import open_persistence, snapshot, validate_decision
 
 mcp = MCPServer(
     "agentflow",
-    instructions="Start and supervise autonomous coding runs; search indexed repositories.",
+    instructions="Start and supervise autonomous coding runs.",
 )
 
 
@@ -74,14 +71,6 @@ async def resolve_failed_task(thread_id: str, action: str, hint: str | None = No
     await q.enqueue_job("resume_run_job", thread_id, decision, _job_id=f"resume:{thread_id}:{snap.checkpoint_id}")
     await q.aclose()
     return {"thread_id": thread_id, "status": "resuming"}
-
-
-@mcp.tool()
-async def search_codebase(repo: str, query: str, k: int = 8) -> str:
-    """Hybrid (vector + keyword) search over an indexed repository, e.g. repo="octo/shop"."""
-    s = get_settings()
-    retriever = HybridRetriever(PgVectorStore(s.database_url, s.embedding_dim), get_embeddings(), repo)
-    return pack_context(await retriever.search(query, k=k), budget_tokens=6000) or "No results."
 
 
 def main() -> None:

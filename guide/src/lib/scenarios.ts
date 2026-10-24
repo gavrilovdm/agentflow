@@ -54,7 +54,7 @@ export const SCENARIOS: Scenario[] = [
 export function simulatedReferee(): RunRecord {
   const path: [string, Record<string, unknown>][] = [
     ['__start__', { user_prompt: 'Add slugify(title) to shop.text: lowercase, spaces to hyphens, strip punctuation.' }],
-    ['prepare_workspace', { note: 'Workspace cloned and indexed.' }],
+    ['prepare_workspace', { note: 'Workspace cloned.' }],
     ['generate_spec', { note: 'Spec written.' }],
     ['await_spec_approval', { note: 'Approved.' }],
     ['generate_tasks', { note: 'One task: task-slugify, interface shop.text.slugify(title: str) -> str.' }],

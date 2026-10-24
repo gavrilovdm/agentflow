@@ -18,7 +18,7 @@ export function ToolsWidget() {
     })
     return out
   }, [])
-  const [k, setK] = useState(() => Math.max(0, examples.findIndex((e) => e.label.includes('search_codebase'))))
+  const [k, setK] = useState(() => Math.max(0, examples.findIndex((e) => e.label.includes('read_file'))))
   const ex = examples[k]
   const structured = ex.call.output.tool_calls.some((t) => SCHEMAS.has(t.name))
   return (

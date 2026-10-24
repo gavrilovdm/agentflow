@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg17
+        image: postgres:17
         env: { POSTGRES_USER: agentflow, POSTGRES_PASSWORD: agentflow, POSTGRES_DB: agentflow }
         ports: ["5432:5432"]
         options: >-
@@ -38,14 +38,8 @@ jobs:
         run: uv run mypy src
       - name: Unit + graph e2e tests (LLMs faked)
         run: uv run pytest -q
-      - name: Integration tests (pgvector)
+      - name: Integration tests (Postgres)
         run: uv run pytest -q -m integration
-      - name: Retrieval eval gate
-        # Without VOYAGE_API_KEY the dense half is hash noise, so the eval gates the lexical
-        # half; with the key set it gates hybrid retrieval.
-        env:
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
-        run: uv run python -m evals.retrieval_eval --min-recall 0.8
 
   deploy-artifacts:
     runs-on: ubuntu-latest

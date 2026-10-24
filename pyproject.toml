@@ -1,7 +1,7 @@
 [project]
 name = "agentflow"
 version = "0.1.0"
-description = "Multi-agent coding workflow on LangGraph: spec → plan → code → gate → review → PR, with RAG over the target repo."
+description = "Multi-agent coding workflow on LangGraph: spec → plan → code → gate → review → PR."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,9 +11,6 @@ dependencies = [
     "langchain-core>=1.0",
     "langchain-anthropic>=1.0",
     "langchain-openai>=1.0",
-    "langchain-postgres>=0.0.15",
-    "langchain-voyageai>=0.1",
-    "langchain-text-splitters>=0.3",
     "langsmith>=0.4",
     "psycopg[binary,pool]>=3.2",
     "pydantic>=2.9",
@@ -29,7 +26,6 @@ dependencies = [
     "mcp>=1.2",
     "prometheus-client>=0.21",
     "structlog>=24.4",
-    "tiktoken>=0.8",
 ]
 
 [dependency-groups]

@@ -123,24 +123,6 @@ def resume(thread_id: str) -> None:
 
 
 @app.command()
-def search(path: Path, query: str, k: int = 5) -> None:
-    """Index a local repo in memory and run a hybrid search — a quick look at what agents retrieve."""
-    from agentflow.rag.embeddings import get_embeddings
-    from agentflow.rag.indexer import index_repo
-    from agentflow.rag.retriever import HybridRetriever
-    from agentflow.rag.store import InMemoryStore
-
-    async def go() -> None:
-        store, emb = InMemoryStore(), get_embeddings()
-        stats = await index_repo(path.resolve(), "cli", store, emb)
-        console.print(f"[dim]indexed {stats.files_seen} files / {stats.chunks_embedded} chunks[/dim]")
-        for h in await HybridRetriever(store, emb, "cli").search(query, k=k):
-            console.print(f"[bold]{h.path}[/bold]:{h.start_line}-{h.end_line}  [dim]rrf={h.score:.4f}[/dim]")
-
-    asyncio.run(go())
-
-
-@app.command()
 def serve(host: str = "0.0.0.0", port: int = 8000) -> None:
     """Start the REST API (the worker runs separately: `arq agentflow.worker.WorkerSettings`)."""
     import uvicorn

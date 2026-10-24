@@ -33,7 +33,6 @@ class WorkflowState(TypedDict, total=False):
     workspace: str
     branch: str
     repo_id: str
-    index_stats: dict[str, Any]
 
     # spec / plan lifecycle (human-in-the-loop)
     spec: Spec | None

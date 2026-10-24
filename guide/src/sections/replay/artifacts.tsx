@@ -95,17 +95,12 @@ function Escalation({ step, task }: ArtifactProps) {
 
 const RENDERERS: Record<string, Renderer> = {
   __start__: ({ step }) => <Code>{step.delta.user_prompt as string}</Code>,
-  prepare_workspace: ({ step }) => {
-    const st = step.delta.index_stats as Record<string, number> | undefined
-    if (!st) return null
-    return (
+  prepare_workspace: ({ step }) =>
+    step.delta.branch ? (
       <P>
-        Cloned <b>{step.delta.repo_id as string}</b> onto branch <code>{step.delta.branch as string}</code>. Index:{' '}
-        {st.files_seen} files seen, <b>{st.files_embedded}</b> re-embedded ({st.chunks_embedded} chunks); unchanged files
-        were skipped.
+        Cloned <b>{step.delta.repo_id as string}</b> onto branch <code>{step.delta.branch as string}</code>.
       </P>
-    )
-  },
+    ) : null,
   generate_spec: ({ step }) => (step.delta.spec ? <SpecCard spec={step.delta.spec as Spec} /> : null),
   await_spec_approval: () => <P>Paused (an <b>interrupt</b>) until a human approved — here via the REST API. Nothing is held in memory while waiting; the state lives in Postgres.</P>,
   await_task_approval: () => <P>Second checkpoint: the plan was approved the same way.</P>,
@@ -156,7 +151,7 @@ const RENDERERS: Record<string, Renderer> = {
   },
   complete_task: ({ task }) => {
     const commit = pr.commits.find((c) => c.messageHeadline.includes(task ?? '~'))
-    return <P>Committed code + test{commit ? <> as <code>{commit.messageHeadline}</code></> : ''}, re-indexed the repo, and stored any validated review feedback as lessons.</P>
+    return <P>Committed code + test{commit ? <> as <code>{commit.messageHeadline}</code></> : ''} and stored any validated review feedback as lessons.</P>
   },
   escalate: Escalation,
   replan: ({ step }) => {

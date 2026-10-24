@@ -4,7 +4,6 @@ import type { ComponentType, ReactNode } from 'react'
 import { Term } from '../../components/ui'
 import type { ConceptId } from '../../lib/content'
 import { ToolsWidget } from './ToolsWidget'
-import { RagWidget } from './RagWidget'
 import { HitlWidget } from './HitlWidget'
 import { RoutingWidget } from './RoutingWidget'
 import { MemoryWidget } from './MemoryWidget'
@@ -36,25 +35,6 @@ export const CONCEPTS: ConceptEntry[] = [
               <Term t="structured output" /> is the same trick used to get data instead of actions: the “tool” is a
               Pydantic schema, so the answer is guaranteed to have <code>title</code>, <code>goal</code>,{' '}
               <code>acceptance_criteria</code>… Every planning and review step here works that way.
-            </p>
-          </>
-    ),
-  },
-  {
-    id: 'rag',
-    title: 'RAG: letting the model see the right code',
-    where: ['src/agentflow/rag/chunking.py', 'src/agentflow/rag/store.py', 'src/agentflow/rag/retriever.py'],
-    Widget: RagWidget,
-    plain: (
-<>
-            <p>
-              The repo is too big to paste into every prompt. <Term t="RAG" /> means: search first, paste only what’s
-              relevant. Here code is cut into chunks along function/class boundaries, each chunk becomes an{' '}
-              <Term t="embedding" />, and both the vectors and a keyword index live in Postgres.
-            </p>
-            <p>
-              A search runs <Term t="vector search" /> (meaning) and <Term t="full-text search" /> (exact words), then
-              merges the two lists with <Term t="RRF" />. Agents call this as a tool whenever they need context.
             </p>
           </>
     ),
@@ -105,7 +85,7 @@ export const CONCEPTS: ConceptEntry[] = [
             <p>
               Short-term memory is the run’s own state (the checkpoints above) — it ends with the run. Long-term memory
               outlives it: when a reviewer’s change request leads to an approved fix, that request is stored as a
-              “lesson” for this repository and searched by meaning next time a coder starts a similar task.
+              “lesson” for this repository, and the most recent lessons go into the next coder’s prompt.
             </p>
           </>
     ),
@@ -128,13 +108,13 @@ export const CONCEPTS: ConceptEntry[] = [
   {
     id: 'evals',
     title: 'Evals & tracing',
-    where: ['evals/retrieval_eval.py', 'evals/spec_eval.py', 'evals/e2e_eval.py'],
+    where: ['evals/spec_eval.py', 'evals/e2e_eval.py'],
     Widget: EvalsWidget,
     plain: (
 <>
             <p>
-              Tests check code; evals check behaviour that isn’t exactly right or wrong. Retrieval quality is measured
-              on a fixed set of questions with known answers. Spec quality is graded by another model with a rubric (
+              Tests check code; evals check behaviour that isn’t exactly right or wrong. Spec quality is graded by
+              another model with a rubric (
               <Term t="LLM-as-judge" />
               ). Every call is recorded as a <Term t="trace" /> in LangSmith — the replay above is built from one.
             </p>

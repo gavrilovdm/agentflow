@@ -58,7 +58,6 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    voyage_api_key: str = ""
     # cursor-proxy: OpenAI-compatible, translates to Anthropic using the Claude Code OAuth
     # session, so no Anthropic key is needed. Models named cpx* go through it.
     claude_proxy_url: str = "http://127.0.0.1:8787/v1"
@@ -70,9 +69,6 @@ class Settings(BaseSettings):
     test_generator_model: str = "cpxopus"
     coder_model: str = "deepseek-v4-flash"
     fallback_model: str = "claude-sonnet-5"
-
-    embedding_model: str = "voyage-code-3"
-    embedding_dim: int = 1024
 
     database_url: str = "postgresql://agentflow:agentflow@localhost:5432/agentflow"
     redis_url: str = "redis://localhost:6379"
