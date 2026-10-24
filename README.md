@@ -175,6 +175,36 @@ hides a broken fallback until the day the primary goes down.
 Claude can be reached directly (`claude-*` model names, `ANTHROPIC_API_KEY`) or through an OpenAI-compatible proxy
 (`cpx*` names, `CLAUDE_PROXY_URL` / `CLAUDE_PROXY_KEY`).
 
+### Claude through cursor-proxy
+
+The orchestrator (spec, plan, replan, PR description), the test generator and the reviewer (including the referee)
+default to `cpxopus`: Opus through the local
+[cursor-proxy](https://github.com/gavrilovdm/cursor-proxy), the same setup vacancy-parser uses. The proxy takes
+OpenAI-format requests and forwards them to Anthropic with the Claude Code OAuth session, so no Anthropic key is needed.
+
+```bash
+cd ~/cursor-proxy
+node dist/cli.js status               # loggedIn must be true
+node dist/cli.js import-claude-code   # if false or "Session expired"
+node dist/cli.js start                # listens on 127.0.0.1:8787
+node dist/cli.js key                  # prints the cpx_… key once → CLAUDE_PROXY_KEY in .env
+```
+
+docker-compose reaches it at `host.docker.internal:8787`; the Helm chart pins `claude-opus-5` because a cluster has no
+local proxy. `CursorProxyChat` in `models.py` is shaped around what the proxy really forwards (checked live); the reviewer's
+multi-turn tool use (`tool` messages, assistant `tool_calls`) goes through it unchanged:
+
+| Limitation | Workaround |
+|---|---|
+| `system` messages never reach the model — silently | folded into the first `user` message |
+| `temperature` is forwarded as is; Opus answers it with 400 | never sent |
+| `response_format` is not forwarded | structured output via forced tool call (`function_calling`) |
+| `claude-*` names are not accepted | `cpxopus` / `cpxsonnet` / `cpxhaiku` |
+| empty text next to `tool_calls` becomes an empty block → 400 | dropped |
+
+The session lasts about a day; when requests start failing, re-run `import-claude-code` and restart the proxy.
+Requests are billed as Claude Code traffic on a personal session — fine for manual runs, a deliberate choice for anything scheduled.
+
 ## Development
 
 ```bash
