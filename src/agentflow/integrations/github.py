@@ -33,9 +33,9 @@ async def comment_on_issue(target: TargetRepo, issue_number: int, body: str) -> 
     await asyncio.to_thread(_comment)
 
 
-def verify_signature(secret: str, body: bytes, signature_header: str | None) -> bool:
+def verify_signature(secret: str, body: bytes, signature_header: str | None, *, insecure_dev: bool = False) -> bool:
     if not secret:
-        return True  # verification disabled (local dev)
+        return insecure_dev  # an unset secret must not mean "anyone may start a run"
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
