@@ -84,7 +84,7 @@ honoured only from `TELEGRAM_CHAT_ID`.
 You can also wire up these triggers:
 
 - **GitHub webhook** → `POST /webhooks/github` (event: issues). Labelling an issue `agentflow` starts a run; the PR body says `Closes #N`.
-- **Telegram** → `POST /webhooks/telegram` with `TELEGRAM_MODE=webhook` (needs a public HTTPS URL), or `TELEGRAM_MODE=polling`, where the api pulls updates itself; docker-compose defaults to polling, because on a laptop Telegram has nowhere to deliver a button press. The worker posts the spec or plan with ✅/❌ buttons, and `/reject <thread> <feedback>` rejects with feedback. When a task runs out of budget, it posts the dossier with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop buttons; `/hint <thread> <guidance>` retries with guidance.
+- **Telegram** → `POST /webhooks/telegram` with `TELEGRAM_MODE=webhook` (needs a public HTTPS URL), or `TELEGRAM_MODE=polling`, where the api pulls updates itself; docker-compose defaults to polling, because on a laptop Telegram has nowhere to deliver a button press. The worker posts the spec or plan with ✅/❌ buttons, and `/reject <thread> <feedback>` rejects with feedback. When a task runs out of budget, it posts the dossier with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop buttons; `/hint <thread> <guidance>` retries with guidance. A pressed question loses its buttons and says who answered; each worker job keeps one silent status card up to date (phase, current step, tasks), edited at most every few seconds; `/status [thread]` reports a run on demand (no thread = the latest one).
 - **Failed task via REST** → `POST /runs/<thread_id>/decision` with `{"action": "retry" | "replan" | "skip" | "abort", "hint": "..."}`.
 - **MCP**: `uv run agentflow-mcp` (stdio) or `--http` (127.0.0.1:8001; every request needs `Authorization: Bearer $MCP_TOKEN`, and an empty token refuses to start unless `INSECURE_DEV=true`). `ecosystem.config.js` runs it and the chat layer under pm2. Add it to Claude Desktop or Claude Code to start and approve runs from chat.
 - **Chat in plain language**: [`chat/`](chat/README.md) is a second Telegram bot on the Claude Agent SDK over the same MCP server. «найди репозиторий на Python с fastapi, активным CI и лицензией MIT и добавь туда эндпоинт X» → `find_repos` → «Запустить в X?» → `start_run`.
@@ -228,7 +228,7 @@ src/agentflow/
   graph/         state · context (DI) · nodes · routing · build
   gate/          python · typescript · detection
   integrations/  workspace (git) · github · telegram
-  api/ worker.py mcp_server.py repos.py cli.py runner.py observability.py
+  api/ worker.py mcp_server.py repos.py cli.py runner.py progress.py observability.py
 chat/   separate package: Claude Agent SDK session per chat + Telegram bridge, MCP-only
 evals/  tests/  docker/  .github/workflows/
 ```

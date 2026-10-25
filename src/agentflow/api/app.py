@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.integrations import github, telegram
 from agentflow.observability import setup_logging
+from agentflow.progress import LAST_THREAD_KEY, render
 from agentflow.runner import open_persistence, snapshot, validate_decision
 from agentflow.schemas import FailureAction
 
@@ -190,12 +191,12 @@ TELEGRAM_ACTIONS: dict[str, dict[str, Any]] = {
     **{a: {"action": a} for a in ("retry", "replan", "skip", "abort")},
 }
 TELEGRAM_REPLIES = {
-    "approve": "Approved ✅",
-    "reject": "Rejected ❌",
-    "retry": "Retrying 🔁",
-    "replan": "Re-planning 🗺",
-    "skip": "Skipped ⏭",
-    "abort": "Stopped 🛑",
+    "approve": "✅ Approved",
+    "reject": "❌ Rejected",
+    "retry": "🔁 Retrying",
+    "replan": "🗺 Re-planning",
+    "skip": "⏭ Skipped",
+    "abort": "🛑 Stopped",
 }
 TEXT_COMMANDS = {
     "/reject": lambda g: {"approved": False, "feedback": g},
@@ -240,12 +241,19 @@ async def handle_telegram_update(app: FastAPI, update: dict[str, Any]) -> str:
     if cb := update.get("callback_query"):
         action, _, thread_id = (cb.get("data") or "").partition("|")
         if thread_id and action in TELEGRAM_ACTIONS:
+            note = None
             try:
                 await _enqueue_resume(app, thread_id, TELEGRAM_ACTIONS[action], "telegram")
                 reply = TELEGRAM_REPLIES[action]
+                who = (cb.get("from") or {}).get("first_name")
+                note = f"{reply}{f' by {who}' if who else ''} — queued; progress follows below"
             except ResumeRejected as exc:
                 reply = "Nothing to answer" if exc.status == 409 else exc.detail[:150]
+                if exc.status == 409:  # already answered (or the run moved on): stale buttons
+                    note = "☑️ Already answered"
             await telegram.answer_callback(cb["id"], reply)
+            if note:
+                await telegram.mark_answered(cb.get("message") or {}, note)
         return "ok"
 
     # Text commands carrying guidance:
@@ -254,11 +262,28 @@ async def handle_telegram_update(app: FastAPI, update: dict[str, Any]) -> str:
     #   /replan <thread> <how to restructure>  (re-plan around a failed task)
     text = (update.get("message") or {}).get("text", "")
     command, *rest = text.split(maxsplit=2) if text.startswith("/") else [""]
+    command = command.split("@", 1)[0]  # "/status@agentflow_bot" in group chats
+    if command == "/status":
+        await telegram.send_message(await _status_text(app, rest[0] if rest else None))
+        return "ok"
     if command in TEXT_COMMANDS and rest:
         thread_id, guidance = rest[0], rest[1] if len(rest) > 1 else None
         with contextlib.suppress(ResumeRejected):
             await _enqueue_resume(app, thread_id, TEXT_COMMANDS[command](guidance), "telegram")
     return "ok"
+
+
+async def _status_text(app: FastAPI, thread_id: str | None) -> str:
+    if not thread_id:
+        with contextlib.suppress(Exception):
+            last = await app.state.queue.get(LAST_THREAD_KEY)
+            thread_id = last.decode() if isinstance(last, bytes) else last
+    if not thread_id:
+        return "No run yet. Use `/status <thread>`."
+    snap = await snapshot(app.state.persistence.graph, thread_id)
+    if not snap.values:
+        return f"No run `{thread_id}`."
+    return render(snap)
 
 
 @app.get("/healthz")
