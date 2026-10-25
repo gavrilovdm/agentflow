@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     mcp_token: str = Field(default="", description="Sent as a Bearer token if agentflow's MCP is behind auth")
 
     # Point the SDK at an Anthropic-format gateway (e.g. a local proxy) instead of api.anthropic.com.
-    # Empty = the SDK's own credentials: ANTHROPIC_API_KEY or a logged-in Claude Code session.
+    # Empty = the SDK's own credentials: ANTHROPIC_API_KEY, or Bedrock / Vertex via CLAUDE_CODE_USE_*.
     anthropic_base_url: str = ""
     anthropic_auth_token: str = ""
 
