@@ -83,6 +83,10 @@ class Gate(Protocol):
     language: str
     test_file_suffix: str
 
+    def test_suffix_for(self, content: str) -> str:
+        """The acceptance test's file suffix, which may depend on what the test contains."""
+        ...
+
     def test_prompt_rules(self) -> str:
         """Framework, import-path and mocking rules injected into the test generator."""
         ...

@@ -108,8 +108,9 @@ async def generate_test(
         raise RuntimeError(f"test generation failed for {task.id}") from last_error
 
     name = Path(result.file_name).name
-    if not name.endswith(gate.test_file_suffix):
-        name = Path(name).stem.split(".")[0] + gate.test_file_suffix
+    suffix = gate.test_suffix_for(result.content)
+    if not name.endswith(suffix):
+        name = name.split(".")[0] + suffix
     if gate.language == "python" and not name.startswith("test_"):
         name = "test_" + name
     rel = f"{ACCEPTANCE_TEST_DIR}/{name}"

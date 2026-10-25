@@ -168,6 +168,14 @@ BUGS.push(
     commit: 'gate runner PR',
   },
   {
+    id: 'gate-jsx', title: 'A component test that could never load',
+    symptom: 'The next run on the same React site failed the gate four times with “Expected > but found data”; the coder rewrote vite.config.ts, the referee regenerated the test, and the task escalated.',
+    cause: 'The test writer rendered <Home /> — the natural test for a UI task — but the gate always saved tests as .test.ts, where JSX does not parse. Even as .tsx it would have failed next: jsdom and Testing Library were in neither the repo nor the gate, and the gate ignored the project’s vite config, so the coder’s edits to it changed nothing.',
+    fix: 'JSX tests are saved as .test.tsx; the gate’s runner ships jsdom and Testing Library (resolved against the repo’s React); its config is layered over the project’s vite config. npm ci instead of npm install stops the lockfile churn that would have reached the PR.',
+    lesson: 'If the checker cannot run the kind of test the task calls for, every failure is the checker’s, not the coder’s.',
+    commit: 'gate components PR',
+  },
+  {
     id: 'reviewer-call-limit', title: 'A reviewer that never got to answer',
     symptom: 'Right after that, three reviews in a row ended “reviewer finished without a structured decision” and the task escalated, although nobody had found anything wrong with the code.',
     cause: 'The reviewer agent is capped at a number of model calls. It spent all 8 on read_file / grep, and the cap ended the loop before the call that returns the verdict.',

@@ -91,29 +91,65 @@ async def test_ts_gate_brings_its_own_vitest_and_leaves_the_repo_alone(tmp_path:
 
     async def fake_install(args, cwd, **kw):
         calls.append((args, cwd))
-        (cwd / "node_modules" / ".bin").mkdir(parents=True)
+        (cwd / "node_modules" / ".bin").mkdir(parents=True, exist_ok=True)
         (cwd / "node_modules" / ".bin" / "vitest").write_text("")
         return ts.CommandResult(True, 0, "")
 
     monkeypatch.setattr(ts, "run_command", fake_install)
+    assert await ts._ensure_runner() is None
+    assert calls[0][1] == runner and (runner / "package.json").read_text() == ts.RUNNER_MANIFEST.read_text()
+    await ts._ensure_runner()
+    assert len(calls) == 1  # installed once
+
     repo = tmp_path / "repo"
     repo.mkdir()
-    vitest, err = await ts._vitest_bin(repo)
-    assert err is None and vitest == str(runner / "node_modules" / ".bin" / "vitest")
-    assert calls[0][1] == runner and f"vitest@{ts.VITEST_VERSION}" in calls[0][0]
-    await ts._vitest_bin(repo)
-    assert len(calls) == 1  # installed once
+    assert ts._vitest_bin(repo) == str(runner / "node_modules" / ".bin" / "vitest")
+    cfg = ts._gate_config(repo, ts._vitest_bin(repo), None)
+    assert repo not in cfg.parents and "import(" not in cfg.read_text()
+    assert '"environment": "jsdom"' in cfg.read_text() and "@testing-library/react" in cfg.read_text()
 
     (repo / "node_modules" / ".bin").mkdir(parents=True)
     (repo / "node_modules" / ".bin" / "vitest").write_text("")
-    assert (await ts._vitest_bin(repo))[0] == str(repo / "node_modules" / ".bin" / "vitest")
-
-    cfg = ts._gate_config(repo)
-    assert repo not in cfg.parents and "import" not in cfg.read_text()
+    assert ts._vitest_bin(repo) == str(repo / "node_modules" / ".bin" / "vitest")
+    # The repo's own vitest without jsdom: keep the project's node environment.
+    assert '"environment": "node"' in ts._gate_config(repo, ts._vitest_bin(repo), None).read_text()
 
     owned = "tests/acceptance/a.test.ts(1,38): error TS2307: Cannot find module 'vitest' or its type declarations."
     assert ts._gate_owned_import(owned)
+    assert ts._gate_owned_import(owned.replace("'vitest'", "'@testing-library/react'"))
     assert not ts._gate_owned_import("src/a.ts(1,1): error TS2307: Cannot find module 'react'.")
+
+
+def test_component_tests_get_a_tsx_suffix():
+    """A test rendering <Home /> was saved as .test.ts and never parsed, on every attempt."""
+    gate = TypeScriptGate()
+    assert gate.test_suffix_for('render(<Home />); expect(screen.getByText("x")).toBeTruthy()') == ".test.tsx"
+    assert gate.test_suffix_for("vi.mock('./a', () => ({ default: () => <div data-testid=\"bg\"></div> }))") == (
+        ".test.tsx"
+    )
+    assert gate.test_suffix_for("expect(add(1, 2) < 3).toBe(false); const x = a<b>(c);") == ".test.ts"
+
+
+async def test_gate_installs_from_the_lockfile_without_rewriting_it(tmp_path: Path, monkeypatch):
+    """`npm install` dropped fields from package-lock.json and that churn reached the PR."""
+    from agentflow.gate import typescript as ts
+
+    calls = []
+
+    async def fake(args, cwd, **kw):
+        calls.append(args[:2])
+        return ts.CommandResult(True, 0, "")
+
+    monkeypatch.setattr(ts, "run_command", fake)
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "package-lock.json").write_text("{}")
+    await TypeScriptGate()._ensure_deps(tmp_path)
+    assert calls == [["npm", "ci"]]
+    calls.clear()
+    (tmp_path / "package-lock.json").unlink()
+    (tmp_path / "package.json").write_text('{"name": "x"}')
+    await TypeScriptGate()._ensure_deps(tmp_path)
+    assert calls == [["npm", "install"]]
 
 
 @pytest.mark.skipif(shutil.which("npm") is None, reason="npm not installed")
@@ -136,3 +172,40 @@ async def test_ts_gate_runs_acceptance_test_in_a_repo_without_vitest(tmp_path: P
     assert "Test failures" not in result.errors, result.summary
     assert (repo / "package.json").read_text() == before
     assert not list(repo.glob("vitest*"))
+
+
+@pytest.mark.skipif(shutil.which("npm") is None, reason="npm not installed")
+async def test_ts_gate_renders_components_with_the_projects_aliases(tmp_path: Path, monkeypatch):
+    """A React site: the test renders <Home /> via an `@/` alias from the project's vite
+    config, with Testing Library and jsdom the repo does not have."""
+    from agentflow.config import get_settings
+    from agentflow.gate.base import run_command
+
+    monkeypatch.setenv("JS_RUNNER_DIR", str(tmp_path / "runner"))
+    get_settings.cache_clear()
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests" / "acceptance").mkdir(parents=True)
+    (repo / "package.json").write_text(
+        '{"name": "site", "type": "module", "private": true,'
+        ' "dependencies": {"react": "19.1.0", "react-dom": "19.1.0"}, "devDependencies": {"vite": "6.3.5"}}'
+    )
+    assert (await run_command(["npm", "install", "--no-audit", "--no-fund"], repo)).ok
+    lock = (repo / "package-lock.json").read_text()
+    (repo / "vite.config.ts").write_text(
+        'import { defineConfig } from "vite";\nimport path from "node:path";\n'
+        'export default defineConfig(() => ({ resolve: { alias: { "@": path.resolve(__dirname, "src") } },'
+        ' test: { include: ["nothing/**"] } }));\n'
+    )
+    (repo / "src" / "Home.tsx").write_text(
+        'export function Home() { return <a href="https://linkedin.com/in/x">LinkedIn</a>; }\n'
+    )
+    (repo / "tests" / "acceptance" / "home.test.tsx").write_text(
+        'import { describe, it, expect } from "vitest";\nimport { render, screen } from "@testing-library/react";\n'
+        'import { Home } from "@/Home";\n'
+        'describe("home", () => { it("links", () => { render(<Home />);\n'
+        '  expect(screen.getByText("LinkedIn")).toHaveAttribute("href", "https://linkedin.com/in/x"); }); });\n'
+    )
+    result = await TypeScriptGate().run(repo, ["tests/acceptance/home.test.tsx"], enable_lint=False)
+    assert "Test failures" not in result.errors, result.summary
+    assert (repo / "package-lock.json").read_text() == lock
