@@ -33,7 +33,7 @@ The SDK runs the Claude Code CLI bundled with it. By default it reaches Claude t
 This bot needs its own token from @BotFather: agentflow's bot uses a webhook, and a token can't have a webhook and long polling at the same time. Put both bots in one group if you want a single chat.
 
 ```bash
-uv run agentflow-mcp --http                  # in agentflow: MCP on :8001
+uv run agentflow-mcp --http                  # in agentflow: MCP on :8001 (MCP_TOKEN in ../.env)
 cd chat
 export CHAT_TELEGRAM_BOT_TOKEN=...           # the second bot
 export CHAT_ALLOWED_CHAT_IDS=123456789       # empty refuses everyone
@@ -44,7 +44,7 @@ uv run agentflow-chat
 | Variable | Default | |
 |---|---|---|
 | `CHAT_MCP_URL` | `http://127.0.0.1:8001/mcp` | agentflow's MCP over streamable HTTP |
-| `CHAT_MCP_TOKEN` | empty | sent as `Authorization: Bearer` if the MCP server sits behind a proxy with auth |
+| `CHAT_MCP_TOKEN` | `MCP_TOKEN` | sent as `Authorization: Bearer`; agentflow's MCP over HTTP requires it |
 | `CHAT_ANTHROPIC_BASE_URL` / `CHAT_ANTHROPIC_AUTH_TOKEN` | `CLAUDE_PROXY_URL` / `CLAUDE_PROXY_KEY`, else `http://127.0.0.1:8787` | an Anthropic-format gateway; a trailing `/v1` is dropped. Set the URL to empty to use `ANTHROPIC_API_KEY` |
 | `CHAT_MODEL` / `CHAT_EFFORT` | `claude-opus-5` / `medium` | |
 | `CHAT_CONFIRM_TIMEOUT_S` | `600` | an unanswered confirmation cancels the run |

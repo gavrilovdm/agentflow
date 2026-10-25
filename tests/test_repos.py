@@ -146,3 +146,30 @@ async def test_find_repos_sorts_matches_first(whitelist, monkeypatch):
 def test_no_license_file_or_never_run_ci_is_a_failure_not_unknown():
     m = evaluate(_facts(license="none", ci_status="none"), Criteria(license="MIT", ci_passing=True))
     assert not m.matched and len(m.failed) == 2
+
+
+async def _status(app, headers=None):
+    import httpx
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        return (await c.get("/x", headers=headers or {})).status_code
+
+
+async def _ok_app(scope, receive, send):
+    await send({"type": "http.response.start", "status": 200, "headers": []})
+    await send({"type": "http.response.body", "body": b"ok"})
+
+
+async def test_mcp_http_requires_the_bearer_token():
+    app = mcp_server.BearerAuth(_ok_app, "s3cret")
+    assert await _status(app) == 401
+    assert await _status(app, {"Authorization": "Bearer wrong"}) == 401
+    assert await _status(app, {"Authorization": "Bearer s3cret"}) == 200
+
+
+def test_mcp_http_refuses_to_start_without_token_outside_dev(monkeypatch):
+    monkeypatch.setenv("MCP_TOKEN", "")
+    monkeypatch.setenv("INSECURE_DEV", "false")
+    get_settings.cache_clear()
+    with pytest.raises(SystemExit):
+        mcp_server.http_app()

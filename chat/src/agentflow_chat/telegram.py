@@ -20,6 +20,7 @@ from agentflow_chat.policy import is_yes, with_reply_context
 
 log = logging.getLogger(__name__)
 API = "https://api.telegram.org/bot{token}/{method}"
+RETRY_S = 5
 HELP = (
     "Пишите задачу словами: «добавь в мобильный бэкенд эндпоинт X» или «найди репозиторий на Python "
     "с fastapi и зелёным CI». Перед запуском я уточню репозиторий. Ответьте реплаем на уведомление "
@@ -171,13 +172,24 @@ class TelegramBridge(Confirmer):
         offset = 0
         while True:
             try:
-                updates = await self.call(
-                    "getUpdates", {"offset": offset, "timeout": 50, "allowed_updates": ["message", "callback_query"]}
+                r = await self.http.post(
+                    API.format(token=self.s.telegram_bot_token, method="getUpdates"),
+                    json={"offset": offset, "timeout": 50, "allowed_updates": ["message", "callback_query"]},
                 )
-            except httpx.HTTPError as exc:
+                body = r.json()
+            except (httpx.HTTPError, ValueError) as exc:
                 log.warning("getUpdates failed: %s", type(exc).__name__)
-                await asyncio.sleep(3)
+                await asyncio.sleep(RETRY_S)
                 continue
+            # Without these two checks a rejected token made the loop hammer Telegram
+            # about ten times a second, forever.
+            if r.status_code == 401:
+                raise SystemExit("CHAT_TELEGRAM_BOT_TOKEN was rejected by Telegram (401)")
+            if not body.get("ok"):
+                log.warning("getUpdates error %s: %s", r.status_code, str(body)[:200])
+                await asyncio.sleep(RETRY_S)
+                continue
+            updates = body.get("result")
             for u in updates or []:
                 offset = u["update_id"] + 1
                 try:

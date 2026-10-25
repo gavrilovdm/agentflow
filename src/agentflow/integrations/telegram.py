@@ -1,11 +1,14 @@
 """Telegram: run notifications and inline Approve/Reject buttons for HITL checkpoints.
 
-Button presses arrive at POST /webhooks/telegram and resume the paused graph thread.
+Button presses arrive at POST /webhooks/telegram (TELEGRAM_MODE=webhook) or are pulled by
+`poll` (TELEGRAM_MODE=polling), and resume the paused graph thread.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -78,3 +81,49 @@ async def request_failure_decision(thread_id: str, dossier_text: str, options: l
 
 async def answer_callback(callback_id: str, text: str) -> None:
     await _call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})
+
+
+POLL_TIMEOUT_S = 50
+POLL_RETRY_S = 5
+
+
+async def poll(handle: Callable[[dict[str, Any]], Awaitable[Any]]) -> None:
+    """Long-poll getUpdates forever and hand each update to `handle`.
+
+    A bad token is fatal (every retry would fail the same way, so we stop and say so);
+    anything else is retried after a pause rather than in a tight loop.
+    """
+    s = get_settings()
+    api = API.format(token=s.telegram_bot_token, method="{}")
+    async with httpx.AsyncClient(timeout=POLL_TIMEOUT_S + 15) as client:
+        # Polling and a webhook are mutually exclusive per bot.
+        await client.post(api.format("deleteWebhook"), json={"drop_pending_updates": False})
+        offset = 0
+        while True:
+            try:
+                r = await client.post(
+                    api.format("getUpdates"),
+                    json={
+                        "offset": offset,
+                        "timeout": POLL_TIMEOUT_S,
+                        "allowed_updates": ["message", "callback_query"],
+                    },
+                )
+                body = r.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                log.warning("telegram getUpdates failed: %s", type(exc).__name__)
+                await asyncio.sleep(POLL_RETRY_S)
+                continue
+            if r.status_code == 401:
+                log.error("telegram polling stopped: TELEGRAM_BOT_TOKEN was rejected (401)")
+                return
+            if not body.get("ok"):
+                log.warning("telegram getUpdates error %s: %s", r.status_code, str(body)[:200])
+                await asyncio.sleep(POLL_RETRY_S)
+                continue
+            for update in body.get("result", []):
+                offset = update["update_id"] + 1
+                try:
+                    await handle(update)
+                except Exception:
+                    log.exception("telegram update %s failed", update.get("update_id"))

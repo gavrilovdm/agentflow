@@ -4,12 +4,13 @@ Tools: pick a repo from the whitelist (list/inspect/find), start a run, inspect 
 approve/reject a checkpoint, and decide on a task that ran out of budget.
 
     uv run agentflow-mcp                      # stdio
-    uv run agentflow-mcp --http               # streamable HTTP on :8001
+    uv run agentflow-mcp --http               # streamable HTTP on 127.0.0.1:8001, needs MCP_TOKEN
 """
 
 from __future__ import annotations
 
 import asyncio
+import hmac
 import sys
 import uuid
 from typing import Any
@@ -137,9 +138,46 @@ async def resolve_failed_task(thread_id: str, action: str, hint: str | None = No
     return {"thread_id": thread_id, "status": "resuming"}
 
 
+class BearerAuth:
+    """ASGI guard for MCP over HTTP. These tools start runs that push to GitHub with our
+    token, so the HTTP transport refuses anyone without MCP_TOKEN; stdio needs no guard
+    because only the process that spawned the server can talk to it."""
+
+    def __init__(self, app: Any, token: str):
+        self.app = app
+        self.expected = f"Bearer {token}".encode()
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            auth = dict(scope.get("headers") or []).get(b"authorization", b"")
+            if not hmac.compare_digest(auth, self.expected):
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [(b"content-type", b"text/plain"), (b"www-authenticate", b"Bearer")],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"invalid or missing bearer token"})
+                return
+        await self.app(scope, receive, send)
+
+
+def http_app() -> Any:
+    s = get_settings()
+    app = mcp.streamable_http_app()
+    if s.mcp_token:
+        return BearerAuth(app, s.mcp_token)
+    if s.insecure_dev:
+        return app
+    raise SystemExit("MCP_TOKEN is not set: refusing to serve MCP over HTTP without auth (or set INSECURE_DEV=true)")
+
+
 def main() -> None:
     if "--http" in sys.argv:
-        mcp.run("streamable-http", port=8001)
+        import uvicorn
+
+        uvicorn.run(http_app(), host="127.0.0.1", port=8001)
     else:
         mcp.run("stdio")
 

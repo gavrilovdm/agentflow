@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     allowed_chat_ids: str = ""
 
     mcp_url: str = "http://127.0.0.1:8001/mcp"
-    mcp_token: str = Field(default="", description="Sent as a Bearer token if agentflow's MCP is behind auth")
+    # agentflow's MCP over HTTP requires MCP_TOKEN; the shared .env supplies it.
+    mcp_token: str = Field(default="", validation_alias=AliasChoices("CHAT_MCP_TOKEN", "MCP_TOKEN"))
 
     # Same cursor-proxy as agentflow's orchestrator by default (CLAUDE_PROXY_URL / CLAUDE_PROXY_KEY).
     # It passes Anthropic-format /v1/messages through on the Claude Code OAuth session. Set

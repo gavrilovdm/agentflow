@@ -81,3 +81,34 @@ def test_proxy_values_are_shared_with_agentflow(monkeypatch):
     assert (s.anthropic_base_url, s.anthropic_auth_token) == ("http://127.0.0.1:9999/v1", "cpx_shared")
     monkeypatch.setenv("CHAT_ANTHROPIC_BASE_URL", "")
     assert Settings(_env_file=None).anthropic_base_url == ""
+
+
+async def test_sole_repo_waiver_only_counts_for_the_current_turn():
+    """repos.toml can grow between turns; a remembered "only one repo" must not skip the question."""
+    s, c = _session()
+    s.state.whitelist = ["octo/api"]
+
+    class NoClient:
+        async def query(self, text):
+            pass
+
+        async def receive_response(self):
+            return
+            yield
+
+    s._client = NoClient()  # type: ignore[assignment]
+
+    async def reply(_):
+        pass
+
+    await s.send("почини логин", reply)
+    r = await s.can_use_tool("mcp__agentflow__start_run", {"prompt": "fix", "repo": "octo/api"}, CTX)
+    assert isinstance(r, PermissionResultAllow) and c.asked  # asked, because no list_repos ran this turn
+
+
+def test_mcp_token_shared_with_agentflow(monkeypatch):
+    monkeypatch.setenv("MCP_TOKEN", "m1")
+    assert Settings(_env_file=None).mcp_token == "m1"
+    assert ChatSession(1, FakeConfirmer((True, None)), Settings(_env_file=None)).options().mcp_servers["agentflow"][
+        "headers"
+    ] == {"Authorization": "Bearer m1"}

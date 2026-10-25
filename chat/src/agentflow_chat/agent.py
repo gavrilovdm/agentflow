@@ -133,6 +133,9 @@ class ChatSession:
     async def send(self, text: str, reply: Reply) -> None:
         """Run one user turn, relaying each assistant text as it arrives (tool calls can take a while)."""
         self.state.last_user_text = text
+        # Only a list_repos seen in this turn may waive the confirmation: the whitelist can
+        # change between turns, and a stale "only one repo" would start a run unasked.
+        self.state.whitelist = None
         if self._client is None:
             self._client = ClaudeSDKClient(self.options())
             await self._client.connect()
