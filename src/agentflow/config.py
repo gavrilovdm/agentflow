@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     github_token: str = ""
     github_webhook_secret: str = ""
     github_trigger_label: str = "agentflow"
+    # Whitelist of repos the MCP tools may list, inspect and start runs in (see repos.example.toml).
+    repos_file: str = "repos.toml"
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
