@@ -49,6 +49,16 @@ async def _markdown_call(method: str, payload: dict[str, Any]) -> httpx.Response
     return resp
 
 
+def verbatim(text: str, limit: int = 1500) -> str:
+    """Raw tool output as a code block, which Telegram shows exactly as written.
+
+    As Markdown, GitPython's credential mask `https://*****:*****@` lost its asterisks to
+    bold markers and read `https://:@`, so a rejected token looked like a missing one.
+    A backtick would close the block early, hence the swap.
+    """
+    return "```\n" + text[:limit].replace("`", "'") + "\n```"
+
+
 async def send_message(
     text: str, buttons: list[list[dict[str, str]]] | None = None, *, silent: bool = False
 ) -> int | None:

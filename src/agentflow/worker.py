@@ -52,7 +52,7 @@ async def _after(snap: RunSnapshot, card: StatusCard | None = None) -> dict[str,
     if error.startswith(CRASH_PREFIX):
         spec = snap.values.get("spec")
         await telegram.send_message(
-            f"❌ *Run failed* `{snap.thread_id}`\n*Feature:* {spec.title if spec else '?'}\n{error}"
+            f"❌ *Run failed* `{snap.thread_id}`\n*Feature:* {spec.title if spec else '?'}\n{telegram.verbatim(error)}"
         )
     if snap.interrupt:
         kind = snap.interrupt.get("type", "approval")
