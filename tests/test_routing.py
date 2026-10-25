@@ -37,8 +37,10 @@ def test_review_budgets_are_separate():
 
 def test_stall_goes_to_referee_once():
     stalled = {"a": Stall(signature="x", repeats=2)}
-    assert routing.after_review(state(t("a"), stalls=stalled), CFG) == "adjudicate"
+    assert routing.after_review(state(t("a"), stalls=stalled, tests={"a": "t.py"}), CFG) == "adjudicate"
     assert routing.after_review(state(t("a"), stalls=stalled, adjudicated={"a": True}), CFG) == "escalate"
+    # A repo without a test suite has no target test: nothing for the referee to judge.
+    assert routing.after_review(state(t("a"), stalls=stalled), CFG) == "escalate"
 
 
 def test_adjudication_outcome():
@@ -95,7 +97,7 @@ def test_stall_catches_oscillation_not_just_streaks():
     assert s.repeats == 1
     s = routing.next_stall(s, "A", approved=False)
     assert s.repeats == routing.STALL_REPEATS  # third A → referee
-    assert routing.after_review(state(t("a"), stalls={"a": s}), CFG) == "adjudicate"
+    assert routing.after_review(state(t("a"), stalls={"a": s}, tests={"a": "t.py"}), CFG) == "adjudicate"
     assert routing.next_stall(s, "A", approved=True) == Stall()
 
 

@@ -91,8 +91,13 @@ async def review_diff(task: Task, spec: Spec, test_content: str, diff: str, work
     prompt = (
         f"## Spec: {spec.title}\n**Goal:** {spec.goal}\n\n"
         f"## Task: {task.title}\n{task.description}\n\n**Definition of Done:** {task.definition_of_done}\n\n"
-        f"## Acceptance test\n```\n{test_content}\n```\n\n"
-        f"## Diff\n```diff\n{diff or '(no changes staged)'}\n```"
+        + (
+            f"## Acceptance test\n```\n{test_content}\n```\n\n"
+            if test_content
+            else "## Acceptance test\n(none: the repository has no test suite; the gate ran its type check, build "
+            "and lint. Judge the change against the Definition of Done yourself.)\n\n"
+        )
+        + f"## Diff\n```diff\n{diff or '(no changes staged)'}\n```"
     )
     try:
         result = await agent.ainvoke(

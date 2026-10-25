@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -33,6 +35,11 @@ REPO_CONFIGS = tuple(f"{n}.config.{e}" for n in ("vitest", "vite") for e in ("ts
 # A component test (`render(<Home />)`) is JSX; saved as .ts it never even parses.
 _JSX = re.compile(r"<[A-Za-z][\w.]*(\s[^<>]*)?/>|</[A-Za-z][\w.]*>")
 _runner_lock = asyncio.Lock()
+TEST_FRAMEWORKS = ("vitest", "jest", "@playwright/test", "mocha", "ava")
+_NPM_DEFAULT_TEST = "no test specified"
+_TEST_FILE = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")
+# workspace → does `npm run build` pass on the commit the run started from
+_baseline_build: dict[str, bool] = {}
 ESLINT_CONFIGS = (
     "eslint.config.js",
     "eslint.config.mjs",
@@ -81,6 +88,19 @@ class TypeScriptGate:
     def test_suffix_for(self, content: str) -> str:
         return ".test.tsx" if _JSX.search(content) else ".test.ts"
 
+    def has_test_suite(self, workspace: Path) -> bool:
+        """Whether the project tests itself. Only then does a target test belong in its PR:
+        on a site with no tests, agentflow wrote vitest tests the repo could never run, and
+        two live runs were spent fixing the gate's test setup instead of the task."""
+        pkg = _package_json(workspace)
+        deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+        if any(f in deps for f in TEST_FRAMEWORKS):
+            return True
+        script = str(pkg.get("scripts", {}).get("test", ""))
+        if script and _NPM_DEFAULT_TEST not in script:
+            return True
+        return any(_TEST_FILE.search(f) and not f.startswith(ACCEPTANCE_TEST_DIR) for f in _tracked_files(workspace))
+
     def test_prompt_rules(self) -> str:
         return f"""- Use vitest: `import {{ describe, it, expect, vi }} from "vitest"`. ESM imports only.
 - Tests run in jsdom. For UI behaviour, render the component with `@testing-library/react`
@@ -127,10 +147,18 @@ class TypeScriptGate:
         targets = ["src"] if lint_paths is None else lintable(workspace, lint_paths, (".ts", ".tsx"))
         lint_on = enable_lint and bool(targets) and _has_eslint(workspace)
 
-        tsc, tests, lint = await asyncio.gather(
+        # No target test and no suite of its own: the project's checks (types, build, lint)
+        # are the gate; there is nothing for vitest to run.
+        run_tests = bool(paths) or self.has_test_suite(workspace)
+        if run_tests:
+            tests_cmd = _run_tests(vitest, workspace, paths) if not runner_error else _failed(runner_error)
+        else:
+            tests_cmd = _done()
+        tsc, tests, lint, build = await asyncio.gather(
             run_command(["npx", "tsc", "--noEmit"], workspace),
-            _run_tests(vitest, workspace, paths) if not runner_error else _failed(runner_error),
+            tests_cmd,
             run_command(["npx", "eslint", *targets, "--max-warnings", "0"], workspace) if lint_on else _done(),
+            _build(workspace),
         )
         # TS18003 "No inputs were found": a scaffolding task has no sources yet. That is a
         # project-shape condition, not a defect, and wedged every run's first task.
@@ -151,6 +179,7 @@ class TypeScriptGate:
                 "Dependency install": [install_error] if install_error else [],
                 "TypeScript errors": [] if tsc.ok else with_fallback(tsc_errors, tsc.output),
                 "Test failures": [] if tests.ok else with_fallback(extract_vitest_failures(tests.output), tests.output),
+                "Build errors": [] if build.ok else tail(build.output),
                 "Lint errors": [] if lint.ok else tail(lint.output),
             }
         )
@@ -162,6 +191,53 @@ async def _done() -> CommandResult:
 
 async def _failed(message: str) -> CommandResult:
     return CommandResult(False, 1, message)
+
+
+def _tracked_files(workspace: Path) -> list[str]:
+    try:
+        out = subprocess.run(["git", "ls-files"], cwd=workspace, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return out.stdout.splitlines() if out.returncode == 0 else []
+
+
+def _package_json(workspace: Path) -> dict:
+    try:
+        data = json.loads((workspace / "package.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def _build(workspace: Path) -> CommandResult:
+    """`npm run build`, the check a site without tests actually relies on. Skipped when the
+    build was already broken before the run touched anything: no source edit in the task
+    can be expected to clear that, and it would wedge every attempt."""
+    if "build" not in _package_json(workspace).get("scripts", {}):
+        return _OK
+    key = str(workspace.resolve())
+    if key not in _baseline_build:
+        _baseline_build[key] = await _builds_at_head(workspace)
+    if not _baseline_build[key]:
+        return _OK
+    return await run_command(["npm", "run", "build"], workspace)
+
+
+async def _builds_at_head(workspace: Path) -> bool:
+    """Build the last commit in a scratch worktree (the coder's edits are uncommitted until
+    a task completes), sharing the installed node_modules."""
+    tmp = Path(tempfile.mkdtemp(prefix="agentflow-baseline-"))
+    tree = tmp / "tree"
+    try:
+        added = await run_command(["git", "worktree", "add", "--detach", str(tree), "HEAD"], workspace)
+        if not added.ok:
+            return True  # can't tell: assume the build is meaningful
+        if (workspace / "node_modules").exists():
+            (tree / "node_modules").symlink_to(workspace / "node_modules")
+        return (await run_command(["npm", "run", "build"], tree)).ok
+    finally:
+        await run_command(["git", "worktree", "remove", "--force", str(tree)], workspace)
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 _GATE_MODULES = re.compile(r"'(vitest|@testing-library/[\w-]+)'")

@@ -6,7 +6,7 @@ const CFG: Budgets = { maxCoderFixAttempts: 2, maxReviewCycles: 2, maxGateFailur
 const task = (o: Partial<TaskCounters> = {}): TaskCounters => ({
   coderFixAttempts: 0, reviewCycles: 0, gateFailures: 0, reviewerMalfunctions: 0, ...o,
 })
-const review = (o: Partial<{ approved: boolean; stallRepeats: number; adjudicated: boolean }> = {}) => ({
+const review = (o: Partial<{ approved: boolean; stallRepeats: number; adjudicated: boolean; hasTest: boolean }> = {}) => ({
   approved: false, stallRepeats: 0, adjudicated: false, ...o,
 })
 
@@ -22,6 +22,7 @@ describe('routing parity with graph/routing.py', () => {
   it('stall goes to the referee once', () => {
     expect(afterReview(task(), review({ stallRepeats: 2 }), CFG).next).toBe('adjudicate')
     expect(afterReview(task(), review({ stallRepeats: 2, adjudicated: true }), CFG).next).toBe('escalate')
+    expect(afterReview(task(), review({ stallRepeats: 2, hasTest: false }), CFG).next).toBe('escalate')
   })
   it('reviewer malfunctions are capped', () => {
     expect(afterReview(task({ reviewerMalfunctions: 2 }), review(), CFG).next).toBe('run_coder')

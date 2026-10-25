@@ -58,6 +58,9 @@ class PythonGate:
     def test_suffix_for(self, content: str) -> str:
         return self.test_file_suffix
 
+    def has_test_suite(self, workspace: Path) -> bool:
+        return True  # the gate brings pytest into its own venv, so a target test always runs
+
     def test_prompt_rules(self) -> str:
         return f"""- Use pytest. Plain `assert` statements, fixtures over setup methods.
 - Mock ALL external I/O (HTTP, DB, filesystem outside tmp_path) with unittest.mock / monkeypatch.
