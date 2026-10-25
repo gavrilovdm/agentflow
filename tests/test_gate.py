@@ -76,3 +76,63 @@ async def test_python_gate_lints_only_task_files(tmp_path: Path):
     (tmp_path / "calc" / "new.py").write_text("import json\n\n\ndef f() -> int:\n    return 1\n")
     dirty = await gate.run(tmp_path, ["tests/acceptance/test_new.py"], True, lint_paths=["calc/new.py"])
     assert "Lint errors" in dirty.errors
+
+
+async def test_ts_gate_brings_its_own_vitest_and_leaves_the_repo_alone(tmp_path: Path, monkeypatch):
+    """A Vite site without tests failed every run with "Cannot find package 'vitest'" until
+    the coder added vitest to the repo's package.json, which then shipped in the PR."""
+    from agentflow.config import get_settings
+    from agentflow.gate import typescript as ts
+
+    runner = tmp_path / "runner"
+    monkeypatch.setenv("JS_RUNNER_DIR", str(runner))
+    get_settings.cache_clear()
+    calls = []
+
+    async def fake_install(args, cwd, **kw):
+        calls.append((args, cwd))
+        (cwd / "node_modules" / ".bin").mkdir(parents=True)
+        (cwd / "node_modules" / ".bin" / "vitest").write_text("")
+        return ts.CommandResult(True, 0, "")
+
+    monkeypatch.setattr(ts, "run_command", fake_install)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    vitest, err = await ts._vitest_bin(repo)
+    assert err is None and vitest == str(runner / "node_modules" / ".bin" / "vitest")
+    assert calls[0][1] == runner and f"vitest@{ts.VITEST_VERSION}" in calls[0][0]
+    await ts._vitest_bin(repo)
+    assert len(calls) == 1  # installed once
+
+    (repo / "node_modules" / ".bin").mkdir(parents=True)
+    (repo / "node_modules" / ".bin" / "vitest").write_text("")
+    assert (await ts._vitest_bin(repo))[0] == str(repo / "node_modules" / ".bin" / "vitest")
+
+    cfg = ts._gate_config(repo)
+    assert repo not in cfg.parents and "import" not in cfg.read_text()
+
+    owned = "tests/acceptance/a.test.ts(1,38): error TS2307: Cannot find module 'vitest' or its type declarations."
+    assert ts._gate_owned_import(owned)
+    assert not ts._gate_owned_import("src/a.ts(1,1): error TS2307: Cannot find module 'react'.")
+
+
+@pytest.mark.skipif(shutil.which("npm") is None, reason="npm not installed")
+async def test_ts_gate_runs_acceptance_test_in_a_repo_without_vitest(tmp_path: Path, monkeypatch):
+    from agentflow.config import get_settings
+
+    monkeypatch.setenv("JS_RUNNER_DIR", str(tmp_path / "runner"))
+    get_settings.cache_clear()
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests" / "acceptance").mkdir(parents=True)
+    (repo / "package.json").write_text('{"name": "site", "type": "module", "private": true}')
+    (repo / "src" / "m.ts").write_text("export const add = (a: number, b: number) => a + b;\n")
+    (repo / "tests" / "acceptance" / "m.test.ts").write_text(
+        'import { describe, it, expect } from "vitest";\nimport { add } from "../../src/m";\n'
+        'describe("m", () => { it("adds", () => { expect(add(1, 2)).toBe(3); }); });\n'
+    )
+    before = (repo / "package.json").read_text()
+    result = await TypeScriptGate().run(repo, ["tests/acceptance/m.test.ts"], enable_lint=False)
+    assert "Test failures" not in result.errors, result.summary
+    assert (repo / "package.json").read_text() == before
+    assert not list(repo.glob("vitest*"))

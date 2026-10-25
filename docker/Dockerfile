@@ -5,6 +5,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_COMPILE_BYTECODE=1 UV_LINK_M
 RUN apt-get update && apt-get install -y --no-install-recommends git nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
+# The TypeScript gate's own test runner, so target repos need not have vitest (keep the
+# version in sync with gate/typescript.py VITEST_VERSION).
+ENV JS_RUNNER_DIR=/opt/agentflow/js-runner
+RUN mkdir -p $JS_RUNNER_DIR && cd $JS_RUNNER_DIR && echo '{"private": true}' > package.json \
+    && npm install --no-audit --no-fund vitest@3.2.4 && npm cache clean --force
 WORKDIR /app
 
 FROM base AS deps
