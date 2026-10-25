@@ -91,7 +91,7 @@ def render(snap: Any, node: str | None = None) -> str:
     if pr:
         lines.append(f"\n{pr.url}")
     if snap.status == "failed" and v.get("error"):
-        lines.append(f"\n{str(v['error'])[:500]}")
+        lines.append("\n" + telegram.verbatim(str(v["error"]), 500))
     lines.append(f"\nthread: `{snap.thread_id}`")
     return "\n".join(lines)
 

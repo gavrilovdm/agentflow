@@ -1,4 +1,4 @@
-from agentflow import progress
+from agentflow import progress, worker
 from agentflow.runner import RunSnapshot
 from agentflow.schemas import PullRequest, Spec, Task
 
@@ -34,6 +34,26 @@ def test_render_shows_phase_current_task_and_waits():
     failed = RunSnapshot("r-1", "failed", None, {"status": "failed", "tasks_approved": True, "error": "boom"})
     text = progress.render(failed)
     assert "✅ spec · ✅ plan · ❌ code" in text and "boom" in text
+
+
+CLONE_CRASH = "Run crashed: GitCommandError: git clone -- https://*****:*****@github.com/o/r.git `x`"
+
+
+async def test_errors_reach_telegram_verbatim(monkeypatch):
+    """As Markdown, GitPython's `*****:*****` credential mask vanished into bold markers and
+    the URL read https://:@github.com, which looked like an empty token."""
+    shown = "```\nRun crashed: GitCommandError: git clone -- https://*****:*****@github.com/o/r.git 'x'\n```"
+    failed = RunSnapshot("r-1", "failed", None, {"status": "failed", "error": CLONE_CRASH})
+    assert shown in progress.render(failed)
+
+    sent = []
+
+    async def send(text, buttons=None, *, silent=False):
+        sent.append(text)
+
+    monkeypatch.setattr(worker.telegram, "send_message", send)
+    await worker._after(failed)
+    assert len(sent) == 1 and shown in sent[0]
 
 
 async def test_status_card_edits_one_message_throttled_and_never_raises(monkeypatch):

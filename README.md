@@ -84,7 +84,7 @@ honoured only from `TELEGRAM_CHAT_ID`.
 You can also wire up these triggers:
 
 - **GitHub webhook** → `POST /webhooks/github` (event: issues). Labelling an issue `agentflow` starts a run; the PR body says `Closes #N`.
-- **Telegram** → `POST /webhooks/telegram` with `TELEGRAM_MODE=webhook` (needs a public HTTPS URL), or `TELEGRAM_MODE=polling`, where the api pulls updates itself; docker-compose defaults to polling, because on a laptop Telegram has nowhere to deliver a button press. The worker posts the spec or plan with ✅/❌ buttons, and `/reject <thread> <feedback>` rejects with feedback. When a task runs out of budget, it posts the dossier with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop buttons; `/hint <thread> <guidance>` retries with guidance. A pressed question loses its buttons and says who answered; each worker job keeps one silent status card up to date (phase, current step, tasks), edited at most every few seconds; `/status [thread]` reports a run on demand (no thread = the latest one).
+- **Telegram** → `POST /webhooks/telegram` with `TELEGRAM_MODE=webhook` (needs a public HTTPS URL), or `TELEGRAM_MODE=polling`, where the api pulls updates itself; docker-compose defaults to polling, because on a laptop Telegram has nowhere to deliver a button press. The worker posts the spec or plan with ✅/❌ buttons, and `/reject <thread> <feedback>` rejects with feedback. When a task runs out of budget, it posts the dossier with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop buttons; `/hint <thread> <guidance>` retries with guidance. A pressed question loses its buttons and says who answered; each worker job keeps one silent status card up to date (phase, current step, tasks), edited at most every few seconds; `/status [thread]` reports a run on demand (no thread = the latest one); errors arrive verbatim in a code block.
 - **Failed task via REST** → `POST /runs/<thread_id>/decision` with `{"action": "retry" | "replan" | "skip" | "abort", "hint": "..."}`.
 - **MCP**: `uv run agentflow-mcp` (stdio) or `--http` (127.0.0.1:8001; every request needs `Authorization: Bearer $MCP_TOKEN`, and an empty token refuses to start unless `INSECURE_DEV=true`). `ecosystem.config.js` runs it and the chat layer under pm2. Add it to Claude Desktop or Claude Code to start and approve runs from chat.
 - **Chat in plain language**: [`chat/`](chat/README.md) is a second Telegram bot on the Claude Agent SDK over the same MCP server. «найди репозиторий на Python с fastapi, активным CI и лицензией MIT и добавь туда эндпоинт X» → `find_repos` → «Запустить в X?» → `start_run`.
@@ -97,6 +97,13 @@ layout, workflows and the latest CI result, last commit, open PRs, license, CONT
 cached 10 minutes). `find_repos` checks hard criteria against each one and reports passed / failed /
 unknown, where unknown means the fact couldn't be fetched. Topic fit is left to the caller's model,
 which reads the description and README.
+
+**GitHub token.** `GITHUB_TOKEN` needs Contents and Pull requests read/write on the whitelisted repos
+(Issues too for the label trigger); a fine-grained token limited to those repos is the safe choice. Git
+gets it from a credential helper set in the environment of each clone and push, for github.com only. It
+is never written into the workspace's `.git/config`, and the agents' file tools refuse `.git/` outright:
+`read_file` could otherwise put the token into the model's context and traces. In docker-compose a
+`GITHUB_TOKEN` in the shell overrides `.env` (e.g. `GITHUB_TOKEN=$(gh auth token) docker compose up -d`).
 
 ## Design notes
 
