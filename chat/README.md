@@ -43,6 +43,7 @@ uv run agentflow-chat
 |---|---|---|
 | `CHAT_MCP_URL` | `http://127.0.0.1:8001/mcp` | agentflow's MCP over streamable HTTP |
 | `CHAT_MCP_TOKEN` | empty | sent as `Authorization: Bearer` if the MCP server sits behind a proxy with auth |
+| `CHAT_ANTHROPIC_BASE_URL` / `CHAT_ANTHROPIC_AUTH_TOKEN` | empty | route the model through a gateway that speaks the Anthropic Messages API; empty uses `ANTHROPIC_API_KEY` or a logged-in Claude Code session |
 | `CHAT_MODEL` / `CHAT_EFFORT` | `claude-opus-5-5` / `medium` | |
 | `CHAT_CONFIRM_TIMEOUT_S` | `600` | an unanswered confirmation cancels the run |
 

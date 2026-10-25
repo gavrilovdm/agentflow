@@ -65,3 +65,11 @@ def test_tool_json_shapes():
     # one text block per list item
     assert tool_json([{"type": "text", "text": json.dumps(i)} for i in items]) == items
     assert tool_json(items) == items
+
+
+def test_gateway_settings_reach_the_cli_env():
+    s = ChatSession(
+        1, FakeConfirmer((True, None)), Settings(anthropic_base_url="http://127.0.0.1:8787", anthropic_auth_token="k")
+    )
+    assert s.options().env == {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "ANTHROPIC_AUTH_TOKEN": "k"}
+    assert ChatSession(1, FakeConfirmer((True, None)), Settings()).options().env == {}

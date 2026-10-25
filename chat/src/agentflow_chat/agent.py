@@ -83,7 +83,13 @@ class ChatSession:
         server: dict[str, Any] = {"type": "http", "url": s.mcp_url}
         if s.mcp_token:
             server["headers"] = {"Authorization": f"Bearer {s.mcp_token}"}
+        env = {}
+        if s.anthropic_base_url:
+            env["ANTHROPIC_BASE_URL"] = s.anthropic_base_url
+        if s.anthropic_auth_token:
+            env["ANTHROPIC_AUTH_TOKEN"] = s.anthropic_auth_token
         return ClaudeAgentOptions(
+            env=env,
             system_prompt=SYSTEM_PROMPT,
             mcp_servers={"agentflow": server},  # type: ignore[dict-item]
             strict_mcp_config=True,
