@@ -104,6 +104,9 @@ gets it from a credential helper set in the environment of each clone and push, 
 is never written into the workspace's `.git/config`, and the agents' file tools refuse `.git/` outright:
 `read_file` could otherwise put the token into the model's context and traces. In docker-compose a
 `GITHUB_TOKEN` in the shell overrides `.env` (e.g. `GITHUB_TOKEN=$(gh auth token) docker compose up -d`).
+Commits are by the token's owner, under their GitHub noreply address (`<id>+<login>@users.noreply.github.com`),
+so GitHub and Vercel can tie them to the account; with no identity, git used `user@<container id>` and
+Vercel refused to deploy. `GIT_AUTHOR_*` / `GIT_COMMITTER_*` in the environment override it.
 
 ## Design notes
 
