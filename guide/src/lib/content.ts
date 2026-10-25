@@ -19,7 +19,7 @@ export const NODES: Record<string, NodeInfo> = {
   generate_tasks: { title: 'Plan the tasks', who: 'Opus (orchestrator)', what: 'Explore the repo with read-only glob, grep and read tools, then split the spec into small tasks with dependencies (a DAG), each naming real files and a binding interface. Cycles and dangling dependencies get repaired automatically.', concept: 'tools', file: 'src/agentflow/agents/orchestrator.py' },
   await_task_approval: { title: 'Human checks the plan', who: 'You', what: 'Second checkpoint: approve the plan, or reject it with feedback and it gets re-planned.', concept: 'state', file: 'src/agentflow/graph/nodes.py' },
   select_next_task: { title: 'Pick next task', who: 'Python', what: 'Choose the first pending task whose dependencies are all done. None left → go open the PR.', concept: 'routing', file: 'src/agentflow/graph/routing.py' },
-  generate_task_test: { title: 'Write the failing test', who: 'Opus (test generator)', what: 'Before any code: write the acceptance test from the task’s interface and Definition of Done, then check it fails (red). A test that already passes asserts nothing and is rewritten.', concept: 'tools', file: 'src/agentflow/agents/test_generator.py' },
+  generate_task_test: { title: 'Write the failing test', who: 'Opus (test generator)', what: 'Before any code: write the acceptance test from the task’s interface and Definition of Done, then check it fails (red). A test that already passes asserts nothing and is rewritten. Skipped when the repo has no test suite of its own: its types, build and lint are the gate.', concept: 'tools', file: 'src/agentflow/agents/test_generator.py' },
   run_coder: { title: 'Make it pass', who: 'DeepSeek (coder agent)', what: 'A tool-using agent greps and reads the codebase and writes code until the failing test can pass. It also gets the reviewer’s feedback from earlier attempts.', concept: 'tools', file: 'src/agentflow/agents/coder.py' },
   run_review: { title: 'Gate, then review', who: 'pytest/ruff + Opus (reviewer)', what: 'Deterministic checks first (types, tests, lint). Only if they pass does a reviewer agent judge the diff — and it can grep and read the repo while doing so.', concept: 'routing', file: 'src/agentflow/graph/nodes.py' },
   adjudicate: { title: 'Referee', who: 'Opus (referee)', what: 'When the same failure repeats 3×, decide whether the test is wrong rather than the code. If so, rewrite the test and try again.', concept: 'routing', file: 'src/agentflow/agents/reviewer.py' },
@@ -176,6 +176,14 @@ BUGS.push(
     commit: 'gate components PR',
   },
   {
+    id: 'foreign-tests', title: 'Tests the repo could never run',
+    symptom: 'Two live runs on a React site with no tests were spent fixing the gate’s own vitest setup, and the PR would have shipped test files the project cannot run.',
+    cause: 'Every task got a target test, whether or not the project tests itself — so agentflow imposed a test runner on a repo that only builds.',
+    fix: 'Target tests only for repos with a test suite (framework, real test script or test files). Otherwise the gate is the project’s own checks — types, npm run build (unless already broken at the start) and lint — and the reviewer judges against the Definition of Done.',
+    lesson: 'Verify with what the project already trusts before adding machinery of your own.',
+    commit: 'target tests PR',
+  },
+  {
     id: 'reviewer-call-limit', title: 'A reviewer that never got to answer',
     symptom: 'Right after that, three reviews in a row ended “reviewer finished without a structured decision” and the task escalated, although nobody had found anything wrong with the code.',
     cause: 'The reviewer agent is capped at a number of model calls. It spent all 8 on read_file / grep, and the cap ended the loop before the call that returns the verdict.',
@@ -291,7 +299,7 @@ export const INTERVIEW: { q: string; a: string }[] = [
   },
   {
     q: 'Is it test-driven? Why the tests before the code?',
-    a: 'Yes, contract-first. The first version was TDD, but the test generator had to invent names and deadlocked the coder, so it moved to writing tests after the code. That fixed the deadlock but let tests mirror the code, bugs included. Now the planner fixes each task’s interface, the test is written from it before any code and must fail first, and the coder gets an executable target on its first attempt. A referee still handles a test that contradicts its task.',
+    a: 'Target tests rather than TDD: one acceptance test per task, written by a different agent before the code, as the task’s stop condition — no red/green/refactor cycles. Repos without a test suite get none; their own types, build and lint are the gate. History: the first version was TDD, but the test generator had to invent names and deadlocked the coder, so it moved to writing tests after the code. That fixed the deadlock but let tests mirror the code, bugs included. Now the planner fixes each task’s interface, the test is written from it before any code and must fail first, and the coder gets an executable target on its first attempt. A referee still handles a test that contradicts its task.',
   },
   {
     q: 'Why not a single agent with all the tools?',

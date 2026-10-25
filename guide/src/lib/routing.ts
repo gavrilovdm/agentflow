@@ -29,6 +29,7 @@ export interface ReviewState {
   approved: boolean
   stallRepeats: number
   adjudicated: boolean
+  hasTest?: boolean // false when the repo has no test suite, so no target test was written
 }
 
 export type AfterReview = 'complete_task' | 'run_coder' | 'escalate' | 'adjudicate'
@@ -49,6 +50,8 @@ export function afterReview(task: TaskCounters, review: ReviewState, b: Budgets)
       next: 'escalate',
       reason: `The reviewer itself kept failing (${task.reviewerMalfunctions}/${b.maxReviewerMalfunctions}) — e.g. an API outage.`,
     }
+  if (review.stallRepeats >= STALL_REPEATS && review.hasTest === false)
+    return { next: 'escalate', reason: 'Same failure a 3rd time and there is no test for a referee to judge — ask a human.' }
   if (review.stallRepeats >= STALL_REPEATS)
     return review.adjudicated
       ? { next: 'escalate', reason: 'Same failure a 3rd time and the referee already ruled — ask a human.' }

@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 
@@ -209,3 +210,61 @@ async def test_ts_gate_renders_components_with_the_projects_aliases(tmp_path: Pa
     result = await TypeScriptGate().run(repo, ["tests/acceptance/home.test.tsx"], enable_lint=False)
     assert "Test failures" not in result.errors, result.summary
     assert (repo / "package-lock.json").read_text() == lock
+
+
+def _git_repo(path: Path, files: dict[str, str]) -> Path:
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    for rel, content in files.items():
+        (path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (path / rel).write_text(content)
+    for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "init"]):
+        subprocess.run(["git", *cmd], cwd=path, check=True)
+    return path
+
+
+def test_target_tests_only_for_repos_that_test_themselves(tmp_path: Path):
+    """On a site with no tests agentflow wrote vitest tests the repo could never run."""
+    gate = TypeScriptGate()
+    npm_default = '{"scripts": {"test": "echo \\"Error: no test specified\\" && exit 1", "build": "vite build"}}'
+    assert not gate.has_test_suite(_git_repo(tmp_path / "site", {"package.json": npm_default}))
+    assert gate.has_test_suite(_git_repo(tmp_path / "dep", {"package.json": '{"devDependencies": {"vitest": "3"}}'}))
+    assert gate.has_test_suite(_git_repo(tmp_path / "script", {"package.json": '{"scripts": {"test": "node t.js"}}'}))
+    files = {"package.json": "{}", "src/a.spec.tsx": "x"}
+    assert gate.has_test_suite(_git_repo(tmp_path / "files", files))
+
+
+@pytest.mark.skipif(shutil.which("npm") is None or shutil.which("git") is None, reason="npm/git not installed")
+async def test_no_suite_means_project_checks_and_a_baseline_aware_build(tmp_path: Path, monkeypatch):
+    from agentflow.gate import typescript as ts
+
+    real = ts.run_command
+
+    async def no_npx(args, cwd, **kw):  # tsc/eslint are not what this test is about
+        return ts.CommandResult(True, 0, "") if args[0] == "npx" else await real(args, cwd, **kw)
+
+    async def no_vitest(*a, **k):
+        raise AssertionError("vitest must not run when the repo has no tests and there is no target test")
+
+    monkeypatch.setattr(ts, "run_command", no_npx)
+    monkeypatch.setattr(ts, "_run_tests", no_vitest)
+    monkeypatch.setattr(ts, "_ensure_runner", lambda: _none())
+    build = "node -e \"process.exit(require('fs').existsSync('src/broken') ? 1 : 0)\""
+    repo = _git_repo(tmp_path / "site", {"package.json": json.dumps({"scripts": {"build": build}})})
+
+    assert (await TypeScriptGate().run(repo, None, enable_lint=False)).passed
+    (repo / "src").mkdir()
+    (repo / "src" / "broken").write_text("")
+    result = await TypeScriptGate().run(repo, None, enable_lint=False)
+    assert "Build errors" in result.errors  # the change broke a build that worked before
+
+    # A build already broken before the run touched anything is not the task's to fix.
+    broken = _git_repo(
+        tmp_path / "broken", {"package.json": json.dumps({"scripts": {"build": build}}), "src/broken": ""}
+    )
+    assert (await TypeScriptGate().run(broken, None, enable_lint=False)).passed
+
+
+async def _none():
+    return None

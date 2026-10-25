@@ -66,10 +66,12 @@ def after_review(state: WorkflowState, config: WorkflowConfig) -> str:
     ):
         return "escalate"
     # Repeating the same failure: remaining attempts would go the same way. Give the
-    # referee one chance to spot an unsatisfiable test before writing the task off.
+    # referee one chance to spot an unsatisfiable test before writing the task off
+    # (no target test — a repo without a suite — leaves the referee nothing to judge).
     stall = state.get("stalls", {}).get(task_id)
     if stall and stall.repeats >= STALL_REPEATS:
-        return "escalate" if state.get("adjudicated", {}).get(task_id) else "adjudicate"
+        no_test = task_id not in state.get("tests", {})
+        return "escalate" if no_test or state.get("adjudicated", {}).get(task_id) else "adjudicate"
     return "run_coder"
 
 

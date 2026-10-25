@@ -179,6 +179,9 @@ async def generate_task_test(state: WorkflowState, runtime: Runtime[Deps]) -> di
         return {}  # keep the target stable across the coder→gate→review retry loop
     task, spec, root, gate = task_by_id(state, task_id), state["spec"], _ws(state), _gate(state)
     assert spec
+    if not gate.has_test_suite(root):
+        progress(runtime, "the repo has no test suite — checking with its own types/build/lint", task=task_id)
+        return {}
 
     # The generator must still see the code the task modifies: a draft once asserted that an
     # untouched insert() returns a dict instead of its id, and coder and reviewer then
@@ -486,7 +489,7 @@ async def create_pr(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     # lets the PR state plainly whether everything builds and passes together.
     final = await _gate(state).run(root, None, cfg.enable_lint)
     verification = (
-        "✅ Full typecheck and test suite pass."
+        "✅ The project's full checks pass (types, tests, build where present)."
         if final.passed
         else f"⚠️ Final verification did not fully pass:\n\n```\n{final.summary[:1500]}\n```"
     )
