@@ -55,6 +55,9 @@ class PythonGate:
     language = "python"
     test_file_suffix = ".py"
 
+    def test_suffix_for(self, content: str) -> str:
+        return self.test_file_suffix
+
     def test_prompt_rules(self) -> str:
         return f"""- Use pytest. Plain `assert` statements, fixtures over setup methods.
 - Mock ALL external I/O (HTTP, DB, filesystem outside tmp_path) with unittest.mock / monkeypatch.
