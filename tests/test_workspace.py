@@ -1,11 +1,13 @@
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from git import Repo
 
 from agentflow.config import TargetRepo, get_settings
+from agentflow.integrations import github
 from agentflow.integrations import workspace as ws
 
 TOKEN = "github_pat_test_0123456789"
@@ -35,11 +37,12 @@ def _fake_github(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setenv("GIT_CONFIG_COUNT", str(n + 1))
     monkeypatch.setenv(f"GIT_CONFIG_KEY_{n}", f"url.{bare.as_uri()}.insteadOf")
     monkeypatch.setenv(f"GIT_CONFIG_VALUE_{n}", "https://github.com/o/r.git")
-    for var in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
-        monkeypatch.setenv(var, "a")
-    for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
-        monkeypatch.setenv(var, "a@b")
+    for var in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.delenv(var, raising=False)  # they would override the workspace's identity
     return bare
+
+
+OWNER = ("Octo Cat", "7+octo@users.noreply.github.com")
 
 
 def test_clone_and_push_keep_the_token_out_of_the_workspace(tmp_path, monkeypatch, token):
@@ -47,7 +50,7 @@ def test_clone_and_push_keep_the_token_out_of_the_workspace(tmp_path, monkeypatc
     bare = _fake_github(tmp_path, monkeypatch)
     monkeypatch.setattr(ws, "WORKSPACE_ROOT", tmp_path / "runs")
 
-    dest = ws.prepare_workspace(TargetRepo(owner="o", repo="r"), "agentflow/feature")
+    dest = ws.prepare_workspace(TargetRepo(owner="o", repo="r"), "agentflow/feature", identity=OWNER)
     (dest / "a.txt").write_text("a\n")
     assert ws.commit(dest, ["a.txt"], "add a")
     ws.push(dest, "agentflow/feature")
@@ -56,6 +59,31 @@ def test_clone_and_push_keep_the_token_out_of_the_workspace(tmp_path, monkeypatc
     assert Repo(dest).remote().url == "https://github.com/o/r.git"
     leaked = [p for p in (dest / ".git").rglob("*") if p.is_file() and TOKEN.encode() in p.read_bytes()]
     assert leaked == []
+
+    # Committed as agentflow@<container id>, Vercel refused to build the PR.
+    pushed = Repo(bare).commit("agentflow/feature")
+    assert (pushed.author.name, pushed.author.email) == OWNER
+    assert (pushed.committer.name, pushed.committer.email) == OWNER
+
+
+async def test_commit_identity_is_the_token_owner(monkeypatch, token):
+    users = iter([
+        SimpleNamespace(name="Octo Cat", login="octo", id=7),
+        SimpleNamespace(name=None, login="octo", id=7),
+    ])  # fmt: skip
+    monkeypatch.setattr(github, "_client", lambda: SimpleNamespace(get_user=lambda: next(users)))
+    assert await github.commit_identity() == OWNER
+    assert await github.commit_identity() == ("octo", "7+octo@users.noreply.github.com")
+
+    def broken():
+        raise RuntimeError("401")
+
+    monkeypatch.setattr(github, "_client", broken)
+    assert await github.commit_identity() is None  # never fails the run; git falls back to user@host
+
+    monkeypatch.setenv("GITHUB_TOKEN", "")
+    get_settings.cache_clear()
+    assert await github.commit_identity() is None
 
 
 def test_the_token_goes_to_github_only(monkeypatch, token):

@@ -13,7 +13,7 @@ export interface NodeInfo {
 
 export const NODES: Record<string, NodeInfo> = {
   __start__: { title: 'Request arrives', who: 'You', what: 'A feature request comes in — from the CLI, the REST API, MCP, or a labelled GitHub issue.', file: 'src/agentflow/runner.py' },
-  prepare_workspace: { title: 'Prepare workspace', who: 'Python', what: 'Clone the target repo into a temp folder on a new branch. Nothing is indexed: the agents explore it later with read-only glob, grep and read tools.', concept: 'tools', file: 'src/agentflow/graph/nodes.py' },
+  prepare_workspace: { title: 'Prepare workspace', who: 'Python', what: 'Clone the target repo into a temp folder on a new branch, committing as the GitHub token’s owner. Nothing is indexed: the agents explore it later with read-only glob, grep and read tools.', concept: 'tools', file: 'src/agentflow/graph/nodes.py' },
   generate_spec: { title: 'Write the spec', who: 'Opus (orchestrator)', what: 'Turn a one-line request into a precise spec with testable acceptance criteria — after exploring the repo with glob, grep and read so it reuses real names.', concept: 'tools', file: 'src/agentflow/agents/orchestrator.py' },
   await_spec_approval: { title: 'Human checks the spec', who: 'You', what: 'The graph pauses and saves its state. It resumes only when someone approves or rejects with feedback — via API, Telegram or MCP.', concept: 'state', file: 'src/agentflow/graph/nodes.py' },
   generate_tasks: { title: 'Plan the tasks', who: 'Opus (orchestrator)', what: 'Explore the repo with read-only glob, grep and read tools, then split the spec into small tasks with dependencies (a DAG), each naming real files and a binding interface. Cycles and dangling dependencies get repaired automatically.', concept: 'tools', file: 'src/agentflow/agents/orchestrator.py' },
@@ -198,6 +198,14 @@ BUGS.push(
     fix: 'Git gets the token from a credential helper set in the environment of each clone and push, for github.com only, so it is never written to disk. The file tools refuse anything under .git.',
     lesson: 'Whatever sits in the agent’s sandbox is in the model’s context: keep credentials out of it.',
     commit: 'token PR',
+  },
+  {
+    id: 'commit-author', title: 'A PR that Vercel would not build',
+    symptom: 'The first finished run on a Vercel site opened its PR, but the preview never deployed: Vercel blocked it because the commit author agentflow@f760d0960815 was not a valid email.',
+    cause: 'The worker had no git identity, so GitPython fell back to user@hostname, and a container’s hostname is its id. No GitHub account owns that address.',
+    fix: 'Commits are by the token’s owner, under their GitHub noreply address (id+login@users.noreply.github.com); GIT_AUTHOR_* / GIT_COMMITTER_* still override it.',
+    lesson: 'Every commit names an author: make it one the tools downstream can recognize.',
+    commit: 'commit identity PR',
   },
   {
     id: 'reviewer-call-limit', title: 'A reviewer that never got to answer',

@@ -82,13 +82,20 @@ def git_auth_env() -> dict[str, str]:
     }
 
 
-def prepare_workspace(target: TargetRepo | None, branch: str, local_path: str | None = None) -> Path:
+def prepare_workspace(
+    target: TargetRepo | None, branch: str, local_path: str | None = None, identity: tuple[str, str] | None = None
+) -> Path:
+    """`identity` (name, email) is who the run's commits are by; see github.commit_identity."""
     if target is None:
         return Path(local_path or ".").resolve()
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     dest = Path(tempfile.mkdtemp(prefix="run-", dir=WORKSPACE_ROOT))
     url = f"https://github.com/{target.full_name}.git"
     repo = Repo.clone_from(url, dest, env=git_auth_env(), branch=target.base_branch, depth=1, single_branch=True)
+    if identity:
+        with repo.config_writer() as cfg:
+            cfg.set_value("user", "name", identity[0])
+            cfg.set_value("user", "email", identity[1])
     repo.git.checkout("-b", branch)
     return dest
 

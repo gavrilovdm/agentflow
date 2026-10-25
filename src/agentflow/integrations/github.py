@@ -5,15 +5,40 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 
 from github import Auth, Github
 
 from agentflow.config import TargetRepo, get_settings
 from agentflow.schemas import PullRequest
 
+log = logging.getLogger(__name__)
+
 
 def _client() -> Github:
     return Github(auth=Auth.Token(get_settings().github_token))
+
+
+async def commit_identity() -> tuple[str, str] | None:
+    """The token's owner as a git author: (name, GitHub noreply address).
+
+    Without one the worker committed as `agentflow@<container id>`. Vercel could not tie
+    that address to any account and refused to build the PR. GIT_AUTHOR_* / GIT_COMMITTER_*
+    in the environment still win. None (with a warning) when the token has no user, e.g.
+    an app installation token.
+    """
+    if not get_settings().github_token:
+        return None
+
+    def _me() -> tuple[str, str]:
+        user = _client().get_user()
+        return user.name or user.login, f"{user.id}+{user.login}@users.noreply.github.com"
+
+    try:
+        return await asyncio.to_thread(_me)
+    except Exception as exc:  # noqa: BLE001 — a missing identity must not stop the run
+        log.warning("no commit identity from the GitHub token (%s); git falls back to user@host", type(exc).__name__)
+        return None
 
 
 async def open_pull_request(target: TargetRepo, head: str, title: str, body: str) -> PullRequest:

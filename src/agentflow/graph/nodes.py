@@ -59,7 +59,8 @@ def _read(path: Path) -> str:
 async def prepare_workspace(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     cfg = runtime.context.config
     branch = f"agentflow/{int(time.time())}"
-    path = await asyncio.to_thread(ws.prepare_workspace, cfg.target_repo, branch, cfg.local_path)
+    identity = await github.commit_identity() if cfg.target_repo else None
+    path = await asyncio.to_thread(ws.prepare_workspace, cfg.target_repo, branch, cfg.local_path, identity)
     repo_id = ws.repo_id(cfg.target_repo, path)
     progress(runtime, "workspace ready", repo=repo_id)
     return {
