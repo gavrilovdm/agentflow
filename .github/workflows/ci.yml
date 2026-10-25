@@ -41,6 +41,23 @@ jobs:
       - name: Integration tests (Postgres)
         run: uv run pytest -q -m integration
 
+  chat:
+    # A separate package with its own lockfile: it must stay installable without agentflow.
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: chat }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true, cache-dependency-glob: chat/uv.lock }
+      - run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check src tests && uv run ruff format --check src tests
+      - name: Typecheck
+        run: uv run mypy src
+      - name: Tests (SDK and Telegram faked)
+        run: uv run pytest -q
+
   guide:
     # The guide's routing parity and graph layout sync tests are what catch drift
     # between graph/ and the guide; Vercel only builds, it never runs them.

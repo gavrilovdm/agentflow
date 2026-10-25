@@ -1,7 +1,7 @@
 """MCP server: lets any MCP client (Claude Desktop, Claude Code, IDEs) drive agentflow.
 
-Tools: start a run, inspect it, approve/reject a checkpoint, and decide on a task
-that ran out of budget.
+Tools: pick a repo from the whitelist (list/inspect/find), start a run, inspect it,
+approve/reject a checkpoint, and decide on a task that ran out of budget.
 
     uv run agentflow-mcp                      # stdio
     uv run agentflow-mcp --http               # streamable HTTP on :8001
@@ -9,6 +9,7 @@ that ran out of budget.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import uuid
 from typing import Any
@@ -17,6 +18,7 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from mcp.server.mcpserver import MCPServer
 
+from agentflow import repos
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.runner import open_persistence, snapshot, validate_decision
 
@@ -31,9 +33,71 @@ async def _queue():
 
 
 @mcp.tool()
-async def start_run(prompt: str, repo: str | None = None, base_branch: str = "main") -> dict[str, str]:
-    """Start a coding run. `repo` is owner/name (a PR is opened there); omit it for a local in-place run."""
-    cfg = WorkflowConfig(target_repo=TargetRepo.parse(repo, base_branch) if repo else None)
+async def list_repos() -> list[dict[str, Any]]:
+    """Repos runs may target, with a short description, responsible owner and tags. Only these are accepted
+    by start_run. Use inspect_repo / find_repos to check stack, CI, activity, license and permissions."""
+    return [e.model_dump() for e in repos.load_whitelist()]
+
+
+@mcp.tool()
+async def inspect_repo(repo: str, refresh: bool = False) -> dict[str, Any]:
+    """Facts about one whitelisted repo (owner/name): README excerpt, topics, languages, dependencies from
+    manifests, top-level layout, CI workflows and latest default-branch result, last commit, open PRs,
+    license, CONTRIBUTING, push permission. `errors` lists facts that could not be fetched. Cached 10 min."""
+    entry = repos.check_allowed(repo)
+    return (await repos.inspect(entry, refresh=refresh)).model_dump(mode="json")
+
+
+@mcp.tool()
+async def find_repos(
+    keywords: list[str] | None = None,
+    language: str | None = None,
+    framework: str | None = None,
+    license: str | None = None,
+    ci_passing: bool | None = None,
+    has_ci: bool | None = None,
+    active_within_days: int | None = None,
+    has_paths: list[str] | None = None,
+    can_push: bool | None = None,
+    has_contributing: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Check the whitelist against hard criteria; every given criterion must hold. Returns every repo with
+    passed/failed/unknown criteria and its description + README excerpt, matches first. `unknown` means the
+    fact could not be fetched, not that it fails. Keywords are a literal substring hint only: judge what a
+    project is about from the description and README yourself."""
+    c = repos.Criteria(
+        keywords=keywords or [],
+        language=language,
+        framework=framework,
+        license=license,
+        ci_passing=ci_passing,
+        has_ci=has_ci,
+        active_within_days=active_within_days,
+        has_paths=has_paths or [],
+        can_push=can_push,
+        has_contributing=has_contributing,
+    )
+    facts = await asyncio.gather(*(repos.inspect(e) for e in repos.load_whitelist()))
+    out = [
+        repos.evaluate(f, c).model_dump()
+        | {"description": f.description or f.github_description, "readme_excerpt": f.readme_excerpt[:800]}
+        for f in facts
+    ]
+    return sorted(out, key=lambda m: (not m["matched"], len(m["failed"])))
+
+
+@mcp.tool()
+async def start_run(prompt: str, repo: str | None = None, base_branch: str | None = None) -> dict[str, str]:
+    """Start a coding run. `repo` is owner/name and must be in list_repos (a PR is opened there); omit it
+    for a local in-place run. `base_branch` defaults to the whitelist entry's branch, else "main"."""
+    target = None
+    if repo:
+        try:
+            entry = repos.check_allowed(repo)
+        except repos.RepoNotAllowed as exc:
+            return {"status": "rejected", "error": str(exc)}
+        target = TargetRepo.parse(entry.full_name, base_branch or entry.base_branch or "main")
+    cfg = WorkflowConfig(target_repo=target)
     thread_id = f"mcp-{uuid.uuid4().hex[:12]}"
     q = await _queue()
     await q.enqueue_job("start_run_job", prompt, cfg.model_dump(), thread_id, None, "mcp")

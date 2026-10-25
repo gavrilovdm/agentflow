@@ -1,0 +1,9 @@
+# Copy to repos.toml (or point REPOS_FILE elsewhere). Runs started over MCP may only target
+# repos listed here; the chat layer picks among them from the user's criteria.
+
+[[repo]]
+full_name = "gavrilovdm/agentflow"
+description = "Multi-agent coding workflow on LangGraph: spec, plan, TDD code, gate, review, PR"
+owner = "Daniil"
+tags = ["python", "langgraph", "agents", "fastapi"]
+# base_branch = "main"   # omit to use the repo's default branch
