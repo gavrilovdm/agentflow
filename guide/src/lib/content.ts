@@ -160,6 +160,22 @@ BUGS.push(
     commit: 'escalation PR',
   },
   {
+    id: 'gate-vitest', title: 'The gate made the coder add vitest',
+    symptom: 'On a Vite site with no tests, the first correct change failed the gate with “Cannot find package vitest”. The coder rewrote the gate’s config, then added vitest to the repo’s package.json — which would have shipped in the PR.',
+    cause: 'The TypeScript gate assumed the target repo already had vitest: it wrote its config (importing vitest/config) into the repo root and ran npx vitest. Every failure looked like the coder’s fault, and the gate rewrote the config on each run.',
+    fix: 'The gate brings its own pinned vitest, installed outside the repo (preinstalled in the image), with a config that lives outside the repo too; a repo with its own vitest still uses it. tsc errors about the gate’s vitest import are not reported to the coder.',
+    lesson: 'The verifier’s own tooling is not the project’s dependency: never make the agent fix the checker.',
+    commit: 'gate runner PR',
+  },
+  {
+    id: 'reviewer-call-limit', title: 'A reviewer that never got to answer',
+    symptom: 'Right after that, three reviews in a row ended “reviewer finished without a structured decision” and the task escalated, although nobody had found anything wrong with the code.',
+    cause: 'The reviewer agent is capped at a number of model calls. It spent all 8 on read_file / grep, and the cap ended the loop before the call that returns the verdict.',
+    fix: 'Raise the cap to 14, and when it is still hit, make one tool-free call with the diff and everything it read, forcing a verdict.',
+    lesson: 'A budget on exploration must leave room for the answer.',
+    commit: 'gate runner PR',
+  },
+  {
     id: 'silent-approve', title: 'Approved, then silence',
     symptom: 'After pressing Approve on a plan, the buttons stayed live and the chat said nothing for the whole coding phase; there was no way to tell whether the run had picked the work up.',
     cause: 'A press only answered the callback (a popup that vanishes in a second). Progress existed inside the graph but never reached Telegram until the next question or the PR.',

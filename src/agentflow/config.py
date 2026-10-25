@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     github_trigger_label: str = "agentflow"
     # Whitelist of repos the MCP tools may list, inspect and start runs in (see repos.example.toml).
     repos_file: str = "repos.toml"
+    # Where the TypeScript gate keeps its own vitest (target repos need not have one).
+    js_runner_dir: str = "~/.cache/agentflow/js-runner"
 
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

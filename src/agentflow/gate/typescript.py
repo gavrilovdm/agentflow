@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import re
+import tempfile
 from pathlib import Path
 
+from agentflow.config import get_settings
 from agentflow.gate.base import (
     ACCEPTANCE_TEST_DIR,
     CommandResult,
@@ -20,10 +23,12 @@ from agentflow.gate.base import (
 from agentflow.schemas import GateResult
 
 STAMP = "node_modules/.agentflow-install-stamp"
-# The gate owns its vitest config. The coder repeatedly narrowed `include` in the
-# project's vitest.config.ts to a directory it had invented, silently filtering out
-# the acceptance tests — vitest then ran zero files and no source edit could clear it.
-GATE_VITEST_CONFIG = "vitest.agentflow.config.ts"
+# The gate brings its own vitest, installed outside the target repo. It used to assume the
+# repo had vitest: on a Vite site without tests every run failed "Cannot find package
+# 'vitest'", whatever the code, until the coder added vitest to the repo's package.json —
+# a dependency the task never asked for, shipped in the PR.
+VITEST_VERSION = "3.2.4"
+_runner_lock = asyncio.Lock()
 ESLINT_CONFIGS = (
     "eslint.config.js",
     "eslint.config.mjs",
@@ -96,26 +101,26 @@ class TypeScriptGate:
         self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None
     ) -> GateResult:
         install_error = await self._ensure_deps(workspace)
-        (workspace / GATE_VITEST_CONFIG).write_text(
-            'import { defineConfig } from "vitest/config";\n\n'
-            "export default defineConfig({\n"
-            '  test: { include: ["tests/**/*.test.ts", "src/**/*.test.ts"] },\n'
-            "});\n"
-        )
-        test_args = ["npx", "vitest", "run", "--config", GATE_VITEST_CONFIG, "--reporter=verbose"]
+        vitest, runner_error = await _vitest_bin(workspace)
+        test_args = [vitest, "run", "--config", str(_gate_config(workspace)), "--root", ".", "--reporter=verbose"]
         test_args += [os.path.normpath(p) for p in (test_paths or [])]
         targets = ["src"] if lint_paths is None else lintable(workspace, lint_paths, (".ts", ".tsx"))
         lint_on = enable_lint and bool(targets) and _has_eslint(workspace)
 
         tsc, tests, lint = await asyncio.gather(
             run_command(["npx", "tsc", "--noEmit"], workspace),
-            run_command(test_args, workspace),
+            run_command(test_args, workspace) if not runner_error else _failed(runner_error),
             run_command(["npx", "eslint", *targets, "--max-warnings", "0"], workspace) if lint_on else _done(),
         )
         # TS18003 "No inputs were found": a scaffolding task has no sources yet. That is a
         # project-shape condition, not a defect, and wedged every run's first task.
         if not tsc.ok and "error TS18003" in tsc.output:
             tsc = _OK
+        tsc_errors = [
+            line for line in tsc.output.splitlines() if re.search(r"error TS\d+", line) and not _gate_owned_import(line)
+        ]
+        if not tsc.ok and not tsc_errors and re.search(r"error TS\d+", tsc.output):
+            tsc = _OK  # the only errors were about vitest, which the repo does not (and need not) have
         # eslint without the TS parser reports "Parsing error" on every file — unfixable
         # by editing code, and tsc already covers syntax.
         if not lint.ok and re.search(r"Parsing error|Cannot find module '@typescript-eslint", lint.output):
@@ -124,11 +129,7 @@ class TypeScriptGate:
         return summarize(
             {
                 "Dependency install": [install_error] if install_error else [],
-                "TypeScript errors": []
-                if tsc.ok
-                else with_fallback(
-                    [line for line in tsc.output.splitlines() if re.search(r"error TS\d+", line)], tsc.output
-                ),
+                "TypeScript errors": [] if tsc.ok else with_fallback(tsc_errors, tsc.output),
                 "Test failures": [] if tests.ok else with_fallback(extract_vitest_failures(tests.output), tests.output),
                 "Lint errors": [] if lint.ok else tail(lint.output),
             }
@@ -137,3 +138,47 @@ class TypeScriptGate:
 
 async def _done() -> CommandResult:
     return _OK
+
+
+async def _failed(message: str) -> CommandResult:
+    return CommandResult(False, 1, message)
+
+
+def _gate_owned_import(tsc_line: str) -> bool:
+    """tsc on a repo whose tsconfig includes tests/ cannot resolve the gate's vitest; that is
+    not something the coder should fix by adding the package."""
+    return tsc_line.startswith(ACCEPTANCE_TEST_DIR) and "'vitest'" in tsc_line and "TS2307" in tsc_line
+
+
+def _gate_config(workspace: Path) -> Path:
+    """The gate's vitest config, outside the repo. Kept in the repo, the coder repeatedly
+    narrowed its `include` to a directory it had invented (vitest then ran zero files) or
+    rewrote it; and it must never reach the PR. It imports nothing, so it loads with
+    either vitest (the repo's or ours)."""
+    key = hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()[:16]
+    d = Path(tempfile.gettempdir()) / "agentflow-gate" / key
+    d.mkdir(parents=True, exist_ok=True)
+    cfg = d / "vitest.config.mjs"
+    test = {"include": ["tests/**/*.test.ts", "src/**/*.test.ts"]}
+    cfg.write_text(f"export default {json.dumps({'cacheDir': str(d / 'vite'), 'test': test})};\n")
+    return cfg
+
+
+async def _vitest_bin(workspace: Path) -> tuple[str, str | None]:
+    """The repo's own vitest when it has one (the version its tests are written for),
+    otherwise ours, installed once into JS_RUNNER_DIR (the Docker image ships it)."""
+    own = workspace / "node_modules" / ".bin" / "vitest"
+    if own.exists():
+        return str(own), None
+    runner = Path(get_settings().js_runner_dir).expanduser()
+    bin_ = runner / "node_modules" / ".bin" / "vitest"
+    async with _runner_lock:
+        if not bin_.exists():
+            runner.mkdir(parents=True, exist_ok=True)
+            (runner / "package.json").write_text('{"private": true}\n')
+            result = await run_command(
+                ["npm", "install", "--no-audit", "--no-fund", f"vitest@{VITEST_VERSION}"], runner
+            )
+            if not result.ok:
+                return str(bin_), "installing the gate's vitest failed:\n" + "\n".join(tail(result.output, 8))
+    return str(bin_), None

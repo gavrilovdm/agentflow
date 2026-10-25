@@ -15,7 +15,7 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from agentflow.agents.repo_tools import make_repo_tools
 from agentflow.config import get_settings
@@ -53,9 +53,16 @@ def reviewer_chat_model(name: str) -> BaseChatModel:
     return chat_model(name, forces_tool_choice=True)
 
 
+# Model calls the reviewer may spend exploring before it must answer. At 8 a live review
+# spent every call on read_file/grep and ended with no verdict three times in a row, which
+# escalated a task whose code was correct.
+REVIEW_CALL_LIMIT = 14
+READ_NOTES_CHARS = 24_000
+
+
 def _middleware(primary: str, fallback: str) -> list[Any]:
     middleware: list[Any] = [
-        ModelCallLimitMiddleware(run_limit=8, exit_behavior="end"),
+        ModelCallLimitMiddleware(run_limit=REVIEW_CALL_LIMIT, exit_behavior="end"),
         ModelRetryMiddleware(max_retries=2),
     ]
     if fallback and fallback != primary:
@@ -86,7 +93,7 @@ async def review_diff(task: Task, spec: Spec, test_content: str, diff: str, work
         )
         decision: ReviewDecision | None = result.get("structured_response")
         if decision is None:
-            raise ValueError("reviewer finished without a structured decision")
+            decision = await _forced_verdict(prompt, result.get("messages", []), task.id)
     except Exception as exc:  # noqa: BLE001
         # One reviewer's bad response is not a reason to destroy a run holding committed work.
         reason = str(exc).splitlines()[0][:300] if str(exc) else type(exc).__name__
@@ -100,6 +107,25 @@ async def review_diff(task: Task, spec: Spec, test_content: str, diff: str, work
     return ReviewCycle(
         verdict=decision.verdict, comments=decision.summary, change_requests=decision.change_requests, diff=diff
     )
+
+
+async def _forced_verdict(prompt: str, messages: list[Any], task_id: str) -> ReviewDecision:
+    """The agent ran out of calls while still reading: ask once more, with no tools, for a
+    verdict on the diff plus what it had read. Cutting it off used to count as a reviewer
+    malfunction, and three of those escalate the task."""
+    notes = "\n\n".join(f"### {m.name or 'tool'}\n{m.text}" for m in messages if isinstance(m, ToolMessage))
+    log.info("reviewer hit its call limit on %s; forcing a verdict", task_id)
+    runnable = structured(get_settings().reviewer_model, ReviewDecision)
+    decision = await runnable.ainvoke(
+        [
+            SystemMessage(REVIEW_SYSTEM + "\n\nYour time for exploring is over. Give your verdict now."),
+            HumanMessage(f"{prompt}\n\n## What you read while reviewing\n{notes[-READ_NOTES_CHARS:] or '(nothing)'}"),
+        ],
+        config={"tags": ["reviewer", "forced-verdict", f"task:{task_id}"]},
+    )
+    if not isinstance(decision, ReviewDecision):
+        raise ValueError("reviewer finished without a structured decision")
+    return decision
 
 
 async def adjudicate(task: Task, spec: Spec, test_content: str, failure: str) -> FailureRuling:

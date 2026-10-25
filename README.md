@@ -136,7 +136,7 @@ Unattended runs keep the old behaviour with `on_task_failure="skip"`. Each task 
 
 This follows how production harnesses treat budget exhaustion: stop and escalate with the evidence, rather than "try harder" or drop work silently. Stall detection counts a failure's repeats over a window rather than only back-to-back, the way OpenHands' stuck detector also catches alternating patterns. The first live test-first run failed exactly that way: the test failed, the reviewer rejected the fix, and the cycle repeated.
 
-**Gate per language.** `gate/` detects the target repo's language: Python gets pytest + ruff + mypy (or compileall); TypeScript gets tsc + vitest + eslint. Each gate reports the reason a check failed, not just the test name. It also never fails on conditions the coder can't fix, such as a scaffolding task with no sources yet.
+**Gate per language.** `gate/` detects the target repo's language: Python gets pytest + ruff + mypy (or compileall); TypeScript gets tsc + vitest + eslint. The TS gate brings its own vitest (pinned, installed into `JS_RUNNER_DIR`, preinstalled in the Docker image) and keeps its config outside the repo, so a target repo without tests still gets its acceptance tests run and its `package.json` is never touched for the gate's sake; a repo that has its own vitest uses it. Each gate reports the reason a check failed, not just the test name. It also never fails on conditions the coder can't fix, such as a scaffolding task with no sources yet.
 
 ## Evals
 
