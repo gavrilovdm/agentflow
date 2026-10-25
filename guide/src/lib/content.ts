@@ -197,7 +197,7 @@ Events:       Issues`,
     steps: [
       'When a run pauses, the worker sends the spec (or plan) with ✅ / ❌ buttons.',
       'If a task runs out of budget, it sends the evidence with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop; /hint <thread> <guidance> retries with your guidance.',
-      'A button press hits /webhooks/telegram, which enqueues a resume for exactly that checkpoint.',
+      'A button press reaches the api (webhook, or long polling on a laptop), which enqueues a resume for exactly that checkpoint.',
       'Double-tapping is safe: the job id is derived from the checkpoint, so it resumes once.',
       'To reject with feedback, reply /reject <thread> <what to change>.',
     ],

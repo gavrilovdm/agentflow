@@ -14,7 +14,9 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["127.0.0.1:6379:6379"]
+    # REDIS_PORT: another Redis on the host (brew) often holds 6379. MCP on the host then needs
+    # REDIS_URL=redis://localhost:$REDIS_PORT, or it queues runs no worker will ever see.
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
 
   api:
     build: { context: ., dockerfile: docker/Dockerfile }
@@ -27,6 +29,8 @@ services:
       # Local dev only: empty API_TOKEN / webhook secrets are accepted. Safe because every
       # port is bound to 127.0.0.1; never copy this into a deployment.
       INSECURE_DEV: "true"
+      # A laptop has no public URL for Telegram's webhook, so the api pulls updates itself.
+      TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
     ports: ["127.0.0.1:8010:8000"]  # 8000 is often taken locally
     depends_on:
       postgres: { condition: service_healthy }

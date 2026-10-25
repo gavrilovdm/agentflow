@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hmac
 import logging
@@ -32,7 +33,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.queue = await create_pool(RedisSettings.from_dsn(s.redis_url))
     async with open_persistence() as p:
         app.state.persistence = p
+        poller = None
+        if s.telegram_mode == "polling" and s.telegram_bot_token:
+            poller = asyncio.create_task(telegram.poll(lambda u: handle_telegram_update(app, u)))
         yield
+        if poller:
+            poller.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await poller
     await app.state.queue.aclose()
 
 
@@ -85,11 +93,11 @@ class ResumeRejected(Exception):
         self.status, self.detail = status, detail
 
 
-async def _enqueue_resume(request: Request, thread_id: str, decision: dict[str, Any], channel: str = "api") -> None:
+async def _enqueue_resume(app: FastAPI, thread_id: str, decision: dict[str, Any], channel: str = "api") -> None:
     """Queue a resume for the checkpoint the run is paused at, after checking the decision
     fits the question being asked. The job id is derived from that checkpoint, so a
     double-clicked button (or API + Telegram racing) resumes once."""
-    snap = await snapshot(request.app.state.persistence.graph, thread_id)
+    snap = await snapshot(app.state.persistence.graph, thread_id)
     if snap.interrupt is None:
         raise ResumeRejected(409, f"run is not waiting for a decision (status: {snap.status})")
     try:
@@ -97,7 +105,7 @@ async def _enqueue_resume(request: Request, thread_id: str, decision: dict[str, 
     except (ValueError, ValidationError) as exc:
         raise ResumeRejected(422, str(exc)) from exc
     log.info("resume", extra={"data": {"thread_id": thread_id, "channel": channel, "decision": decision}})
-    await request.app.state.queue.enqueue_job(
+    await app.state.queue.enqueue_job(
         "resume_run_job", thread_id, decision, _job_id=f"resume:{thread_id}:{snap.checkpoint_id}"
     )
 
@@ -132,7 +140,7 @@ async def get_run(thread_id: str, request: Request) -> dict[str, Any]:
 async def approve(thread_id: str, body: Approval, request: Request) -> dict[str, str]:
     """Approve or reject the spec / plan a run is paused on."""
     try:
-        await _enqueue_resume(request, thread_id, body.model_dump())
+        await _enqueue_resume(request.app, thread_id, body.model_dump())
     except ResumeRejected as exc:
         raise HTTPException(exc.status, exc.detail) from exc
     return {"thread_id": thread_id, "status": "resuming"}
@@ -142,7 +150,7 @@ async def approve(thread_id: str, body: Approval, request: Request) -> dict[str,
 async def decide(thread_id: str, body: Decision, request: Request) -> dict[str, str]:
     """Resolve a task that ran out of budget: retry (with a hint), replan, skip or abort."""
     try:
-        await _enqueue_resume(request, thread_id, body.model_dump())
+        await _enqueue_resume(request.app, thread_id, body.model_dump())
     except ResumeRejected as exc:
         raise HTTPException(exc.status, exc.detail) from exc
     return {"thread_id": thread_id, "status": "resuming"}
@@ -216,11 +224,16 @@ async def telegram_webhook(
             raise HTTPException(401, "bad secret")
     elif not s.insecure_dev:
         raise HTTPException(503, "TELEGRAM_WEBHOOK_SECRET is not configured")
-    update = await request.json()
+    return {"status": await handle_telegram_update(request.app, await request.json())}
+
+
+async def handle_telegram_update(app: FastAPI, update: dict[str, Any]) -> str:
+    """One update from the bot, whether pushed to the webhook or pulled by polling."""
+    s = get_settings()
     # Anyone can message the bot; only the configured chat may steer runs (a /hint is
     # injected into the coder's prompt).
     if not _from_allowed_chat(update, s.telegram_chat_id, s.insecure_dev):
-        return {"status": "ignored"}
+        return "ignored"
 
     # Inline buttons: "<action>|<thread>" — approve/reject for spec & plan,
     # retry/replan/skip/abort for a task that ran out of budget.
@@ -228,12 +241,12 @@ async def telegram_webhook(
         action, _, thread_id = (cb.get("data") or "").partition("|")
         if thread_id and action in TELEGRAM_ACTIONS:
             try:
-                await _enqueue_resume(request, thread_id, TELEGRAM_ACTIONS[action], "telegram")
+                await _enqueue_resume(app, thread_id, TELEGRAM_ACTIONS[action], "telegram")
                 reply = TELEGRAM_REPLIES[action]
             except ResumeRejected as exc:
                 reply = "Nothing to answer" if exc.status == 409 else exc.detail[:150]
             await telegram.answer_callback(cb["id"], reply)
-        return {"status": "ok"}
+        return "ok"
 
     # Text commands carrying guidance:
     #   /reject <thread> <what to change>      (spec / plan)
@@ -244,8 +257,8 @@ async def telegram_webhook(
     if command in TEXT_COMMANDS and rest:
         thread_id, guidance = rest[0], rest[1] if len(rest) > 1 else None
         with contextlib.suppress(ResumeRejected):
-            await _enqueue_resume(request, thread_id, TEXT_COMMANDS[command](guidance), "telegram")
-    return {"status": "ok"}
+            await _enqueue_resume(app, thread_id, TEXT_COMMANDS[command](guidance), "telegram")
+    return "ok"
 
 
 @app.get("/healthz")

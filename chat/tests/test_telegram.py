@@ -107,3 +107,39 @@ async def test_stale_button_is_rejected(bridge):
     cb = {"id": "q", "data": "c|dead|y", "message": {"chat": {"id": CHAT}, "message_id": 7}}
     await b.handle_update({"update_id": 2, "callback_query": cb})
     assert http.calls[-1] == ("answerCallbackQuery", {"callback_query_id": "q", "text": "Устарело"})
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+
+    def json(self):
+        return self._body
+
+
+class ScriptedHttp(FakeHttp):
+    def __init__(self, polls):
+        super().__init__()
+        self.polls = polls
+
+    async def post(self, url, json):
+        method = url.rsplit("/", 1)[-1]
+        self.calls.append((method, json))
+        if method == "getUpdates":
+            return self.polls.pop(0)
+        return _Resp(200, {"ok": True, "result": True})
+
+
+async def test_rejected_token_exits_instead_of_spinning(monkeypatch):
+    """A 401 used to be retried with no pause, ~10 requests a second, forever."""
+    http = ScriptedHttp([_Resp(502, {"ok": False}), _Resp(401, {"ok": False, "error_code": 401})])
+    sleeps = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    b = TelegramBridge(Settings(telegram_bot_token="t", allowed_chat_ids=str(CHAT)), http=http)  # type: ignore[arg-type]
+    with pytest.raises(SystemExit):
+        await b.run()
+    assert sleeps == [5]

@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
+    # "webhook": Telegram POSTs to /webhooks/telegram (needs a public HTTPS URL).
+    # "polling": the api pulls updates itself — for a laptop, where button presses on a
+    # webhook bot never arrive because Telegram has nowhere to send them.
+    telegram_mode: Literal["webhook", "polling"] = "webhook"
+
+    # Bearer token for the MCP server over HTTP. Empty refuses every request unless INSECURE_DEV.
+    mcp_token: str = ""
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"  # the guide app's dev server
     api_token: str = Field(default="", description="Bearer token for the REST API; empty refuses every request")
