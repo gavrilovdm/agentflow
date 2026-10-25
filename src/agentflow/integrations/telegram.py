@@ -36,22 +36,67 @@ async def _call(method: str, payload: dict[str, Any]) -> httpx.Response | None:
     return None
 
 
-async def send_message(text: str, buttons: list[list[dict[str, str]]] | None = None) -> None:
-    payload: dict[str, Any] = {
-        "chat_id": get_settings().telegram_chat_id,
-        "text": text[:4000],
-        "parse_mode": "Markdown",
-    }
-    if buttons:
-        payload["reply_markup"] = {"inline_keyboard": buttons}
-    resp = await _call("sendMessage", payload)
+async def _markdown_call(method: str, payload: dict[str, Any]) -> httpx.Response | None:
+    payload = {**payload, "parse_mode": "Markdown"}
+    resp = await _call(method, payload)
     # Failure messages embed raw tool output (stray * and _) that Telegram rejects as bad
     # Markdown with a 400 — losing exactly the message that mattered. Resend as plain text.
-    if resp is not None and resp.status_code == 400:
+    if resp is not None and resp.status_code == 400 and "not modified" not in resp.text:
         payload.pop("parse_mode")
-        resp = await _call("sendMessage", payload)
+        resp = await _call(method, payload)
+    if resp is not None and resp.status_code >= 400 and "not modified" not in resp.text:
+        log.warning("telegram %s error %s: %s", method, resp.status_code, resp.text[:300])
+    return resp
+
+
+async def send_message(
+    text: str, buttons: list[list[dict[str, str]]] | None = None, *, silent: bool = False
+) -> int | None:
+    """Send to the configured chat; returns the message id (None if it was not sent)."""
+    payload: dict[str, Any] = {"chat_id": get_settings().telegram_chat_id, "text": text[:4000]}
+    if buttons:
+        payload["reply_markup"] = {"inline_keyboard": buttons}
+    if silent:
+        payload["disable_notification"] = True
+    resp = await _markdown_call("sendMessage", payload)
+    if resp is None or resp.status_code >= 400:
+        return None
+    try:
+        return int(resp.json()["result"]["message_id"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+async def edit_message(message_id: int, text: str) -> None:
+    await _markdown_call(
+        "editMessageText",
+        {"chat_id": get_settings().telegram_chat_id, "message_id": message_id, "text": text[:4000]},
+    )
+
+
+async def mark_answered(message: dict[str, Any], note: str) -> None:
+    """Take the buttons off a question that has been answered and say what happened.
+
+    A popup alone vanished in a second and left Approve/Reject live, so the chat never
+    showed that the press landed or that the run had moved on.
+    """
+    chat_id, message_id = (message.get("chat") or {}).get("id"), message.get("message_id")
+    if not chat_id or not message_id:
+        return
+    original = message.get("text") or ""
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": f"{original[:3900]}\n\n{note}",
+        "reply_markup": {"inline_keyboard": []},
+    }
+    # Plain text plus the original entities keeps its formatting without re-parsing Markdown
+    # (the text we get back has the markup stripped). Cutting the text could split an entity.
+    if message.get("entities") and len(original) <= 3900:
+        payload["entities"] = message["entities"]
+    resp = await _call("editMessageText", payload)
     if resp is not None and resp.status_code >= 400:
-        log.warning("telegram error %s: %s", resp.status_code, resp.text[:300])
+        log.warning("telegram editMessageText error %s: %s", resp.status_code, resp.text[:300])
 
 
 async def request_approval(thread_id: str, kind: str, summary: str) -> None:

@@ -191,3 +191,43 @@ async def test_telegram_only_from_configured_chat(client, monkeypatch):
     owner = {"message": {"chat": {"id": 42}, "text": "/hint t-x mock the client"}}
     await client.post("/webhooks/telegram", json=owner, headers=headers)
     assert app.state.queue.jobs[-1][1] == ("t-x", {"action": "retry", "hint": "mock the client"})
+
+
+async def test_telegram_press_takes_buttons_off_and_status_answers(client, monkeypatch):
+    """The popup alone left Approve/Reject live and the chat silent, so nobody could tell
+    whether the press landed or the run had picked the work up."""
+    from agentflow.integrations import telegram
+    from agentflow.runner import RunSnapshot
+
+    marked, sent = [], []
+
+    async def fake_mark(message, note):
+        marked.append((message.get("message_id"), note))
+
+    async def fake_send(text, buttons=None, **kw):
+        sent.append(text)
+
+    pending = {"type": "tasks_approval", "tasks": []}
+    state = {"pending": pending}
+
+    async def fake_snapshot(graph, thread_id):
+        return RunSnapshot(thread_id, "awaiting_approval", state["pending"], {"status": "task_review"}, "cp-1")
+
+    monkeypatch.setattr(telegram, "mark_answered", fake_mark)
+    monkeypatch.setattr(telegram, "send_message", fake_send)
+    monkeypatch.setattr("agentflow.api.app.snapshot", fake_snapshot)
+    press = {"callback_query": {"id": "1", "data": "approve|t-p", "from": {"first_name": "Dana"},
+                                "message": {"message_id": 55, "chat": {"id": 1}, "text": "plan"}}}  # fmt: skip
+
+    await client.post("/webhooks/telegram", json=press)
+    assert marked == [(55, "✅ Approved by Dana — queued; progress follows below")]
+
+    state["pending"] = None  # the run moved on; an old button is pressed again
+    await client.post("/webhooks/telegram", json=press)
+    assert marked[-1] == (55, "☑️ Already answered")
+    assert len(app.state.queue.jobs) == 1
+
+    await client.post("/webhooks/telegram", json={"message": {"text": "/status t-p"}})
+    assert "thread: `t-p`" in sent[-1]
+    await client.post("/webhooks/telegram", json={"message": {"text": "/status"}})
+    assert "No run yet" in sent[-1]  # FakeQueue keeps no last-thread key

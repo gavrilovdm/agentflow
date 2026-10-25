@@ -7,6 +7,7 @@ the worker asks for approval on Telegram.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -16,12 +17,37 @@ from agentflow.config import WorkflowConfig, get_settings
 from agentflow.graph.escalation import dossier_text
 from agentflow.integrations import telegram
 from agentflow.observability import setup_logging
-from agentflow.runner import CRASH_PREFIX, RunSnapshot, open_persistence, resume_run, start_run
+from agentflow.progress import LAST_THREAD_KEY, StatusCard, render
+from agentflow.runner import CRASH_PREFIX, RunSnapshot, open_persistence, resume_run, snapshot, start_run
 
 log = logging.getLogger("agentflow.worker")
 
 
-async def _after(snap: RunSnapshot) -> dict[str, Any]:
+async def _card(ctx: dict, thread_id: str, first: str) -> tuple[StatusCard, Any]:
+    """Post the run's status card and return a step callback that keeps it current."""
+    card = StatusCard(thread_id)
+    await card.show(first, force=True)
+    if redis := ctx.get("redis"):
+        # `/status` with no thread answers about the run that moved last.
+        with contextlib.suppress(Exception):
+            await redis.set(LAST_THREAD_KEY, thread_id)
+
+    async def on_step(node: str) -> None:
+        if not card.due():  # skip the checkpoint read when the edit would be throttled anyway
+            return
+        try:
+            snap = await snapshot(ctx["persistence"].graph, thread_id)
+        except Exception:  # noqa: BLE001 — a raise here would be recorded as the run crashing
+            log.warning("status snapshot failed for %s", thread_id, exc_info=True)
+            return
+        await card.show(render(snap, node))
+
+    return card, on_step
+
+
+async def _after(snap: RunSnapshot, card: StatusCard | None = None) -> dict[str, Any]:
+    if card:
+        await card.show(render(snap), force=True)
     error = snap.values.get("error") or ""
     if error.startswith(CRASH_PREFIX):
         spec = snap.values.get("spec")
@@ -50,22 +76,25 @@ async def start_run_job(
     ctx: dict, prompt: str, config: dict, thread_id: str, issue_number: int | None = None, trigger: str = "api"
 ) -> dict:
     log.info("run started", extra={"data": {"thread_id": thread_id, "trigger": trigger}})
+    card, on_step = await _card(ctx, thread_id, f"⏳ *Started* ({trigger})\n\nthread: `{thread_id}`")
     snap = await start_run(
         ctx["persistence"],
         prompt,
         WorkflowConfig.model_validate(config),
         thread_id=thread_id,
         issue_number=issue_number,
+        on_step=on_step,
     )
-    return await _after(snap)
+    return await _after(snap, card)
 
 
 async def resume_run_job(ctx: dict, thread_id: str, decision: dict | bool, feedback: str | None = None) -> dict:
     # Jobs enqueued before decisions became dicts carry (approved, feedback).
     if isinstance(decision, bool):
         decision = {"approved": decision, "feedback": feedback}
-    snap = await resume_run(ctx["persistence"], thread_id, decision)
-    return await _after(snap)
+    card, on_step = await _card(ctx, thread_id, f"⏳ *Picked up* — continuing\n\nthread: `{thread_id}`")
+    snap = await resume_run(ctx["persistence"], thread_id, decision, on_step=on_step)
+    return await _after(snap, card)
 
 
 async def startup(ctx: dict) -> None:

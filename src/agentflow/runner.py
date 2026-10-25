@@ -98,10 +98,11 @@ async def start_run(
     thread_id: str | None = None,
     issue_number: int | None = None,
     on_event: Any = None,
+    on_step: Any = None,
 ) -> RunSnapshot:
     thread_id = thread_id or f"run-{uuid.uuid4().hex[:12]}"
     inp = {"user_prompt": prompt, "issue_number": issue_number, "run_config": config.model_dump()}
-    await _drive(p, inp, config, thread_id, on_event)
+    await _drive(p, inp, config, thread_id, on_event, on_step)
     return await snapshot(p.graph, thread_id)
 
 
@@ -127,6 +128,7 @@ async def resume_run(
     approved: bool | None = None,
     feedback: str | None = None,
     on_event: Any = None,
+    on_step: Any = None,
 ) -> RunSnapshot:
     """Answer the question a paused run is waiting on and continue it.
 
@@ -142,15 +144,18 @@ async def resume_run(
         raise ValueError(f"run {thread_id} is not waiting for a decision (status: {current.status})")
     resume = validate_decision(current.interrupt, decision)
     config = WorkflowConfig.model_validate(current.values["run_config"])
-    await _drive(p, Command(resume=resume), config, thread_id, on_event)
+    await _drive(p, Command(resume=resume), config, thread_id, on_event, on_step)
     return await snapshot(p.graph, thread_id)
 
 
 CRASH_PREFIX = "Run crashed: "
 
 
-async def _drive(p: Persistence, inp: Any, config: WorkflowConfig, thread_id: str, on_event: Any) -> None:
-    """Run until the graph finishes or pauses at an interrupt, forwarding progress events.
+async def _drive(
+    p: Persistence, inp: Any, config: WorkflowConfig, thread_id: str, on_event: Any, on_step: Any = None
+) -> None:
+    """Run until the graph finishes or pauses at an interrupt, forwarding progress events
+    (`on_event`: what a node emits) and finished node names (`on_step`).
 
     A node that still fails after its retries and fallbacks would otherwise leave the run
     with no terminal status — pollers wait forever and nobody is told. Record it as failed
@@ -158,10 +163,15 @@ async def _drive(p: Persistence, inp: Any, config: WorkflowConfig, thread_id: st
     """
     try:
         async for chunk in p.graph.astream(  # type: ignore[call-overload]
-            inp, _config(thread_id), context=make_deps(p, config), stream_mode="custom"
+            inp, _config(thread_id), context=make_deps(p, config), stream_mode=["custom", "updates"]
         ):
-            if on_event:
-                await on_event(chunk)
+            mode, data = chunk
+            if mode == "custom" and on_event:
+                await on_event(data)
+            elif mode == "updates" and on_step:
+                for node in data:
+                    if not node.startswith("__"):
+                        await on_step(node)
     except Exception as exc:  # noqa: BLE001
         log.exception("run %s crashed", thread_id)
         error = f"{CRASH_PREFIX}{type(exc).__name__}: {str(exc)[:1000]}"
