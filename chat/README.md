@@ -28,6 +28,8 @@ Example: «найди репозиторий на Python с fastapi, актив�
 
 ## Run
 
+The SDK runs the Claude Code CLI bundled with it, so it uses the same credentials Claude Code does. By default that is your Claude subscription's OAuth session: either `claude login` on the machine, or a token from `claude setup-token` in `CLAUDE_CODE_OAUTH_TOKEN` (handy for a server or container). No proxy is needed: cursor-proxy, which agentflow's roles use, translates OpenAI-format requests onto that same session, and the SDK already speaks Anthropic's format.
+
 This bot needs its own token from @BotFather: agentflow's bot uses a webhook, and a token can't have a webhook and long polling at the same time. Put both bots in one group if you want a single chat.
 
 ```bash
@@ -35,7 +37,8 @@ uv run agentflow-mcp --http                  # in agentflow: MCP on :8001
 cd chat
 export CHAT_TELEGRAM_BOT_TOKEN=...           # the second bot
 export CHAT_ALLOWED_CHAT_IDS=123456789       # empty refuses everyone
-export ANTHROPIC_API_KEY=...                 # or a logged-in Claude Code session
+claude setup-token                           # once: prints a long-lived OAuth token for your Claude subscription
+export CLAUDE_CODE_OAUTH_TOKEN=...           # or run `claude login` on this machine, or set ANTHROPIC_API_KEY
 uv run agentflow-chat
 ```
 
