@@ -53,16 +53,24 @@ def reviewer_chat_model(name: str) -> BaseChatModel:
     return chat_model(name, forces_tool_choice=True)
 
 
-# Model calls the reviewer may spend exploring before it must answer. At 8 a live review
-# spent every call on read_file/grep and ended with no verdict three times in a row, which
-# escalated a task whose code was correct.
-REVIEW_CALL_LIMIT = 14
+# Model calls the reviewer may spend exploring before it must answer, scaled by how many
+# files the diff touches (the diff itself is in the prompt; calls go to surrounding code).
+# A flat 8 ended a live review with no verdict three times in a row. These numbers are a
+# starting point: tune them from the reviewer's call counts in traces.
+REVIEW_CALLS_BASE = 8
+REVIEW_CALLS_PER_FILE = 3
+REVIEW_CALLS_MAX = 40
 READ_NOTES_CHARS = 24_000
 
 
-def _middleware(primary: str, fallback: str) -> list[Any]:
+def call_budget(diff: str) -> int:
+    files = sum(line.startswith("diff --git ") for line in diff.splitlines())
+    return min(REVIEW_CALLS_BASE + REVIEW_CALLS_PER_FILE * max(files, 1), REVIEW_CALLS_MAX)
+
+
+def _middleware(primary: str, fallback: str, call_limit: int = REVIEW_CALLS_BASE) -> list[Any]:
     middleware: list[Any] = [
-        ModelCallLimitMiddleware(run_limit=REVIEW_CALL_LIMIT, exit_behavior="end"),
+        ModelCallLimitMiddleware(run_limit=call_limit, exit_behavior="end"),
         ModelRetryMiddleware(max_retries=2),
     ]
     if fallback and fallback != primary:
@@ -77,7 +85,7 @@ async def review_diff(task: Task, spec: Spec, test_content: str, diff: str, work
         tools=make_repo_tools(workspace) if workspace else [],
         system_prompt=REVIEW_SYSTEM,
         response_format=ReviewDecision,
-        middleware=_middleware(s.reviewer_model, s.fallback_model),
+        middleware=_middleware(s.reviewer_model, s.fallback_model, call_budget(diff)),
         name="reviewer",
     )
     prompt = (

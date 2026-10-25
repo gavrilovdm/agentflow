@@ -43,3 +43,11 @@ async def test_reviewer_out_of_calls_is_forced_to_a_verdict(monkeypatch):
     cycle = await reviewer.review_diff(task, spec, "test", "+x", None)
     assert cycle.verdict == "approved" and not cycle.reviewer_malfunction
     assert "export const CONTACTS" in seen["prompt"]
+
+
+def test_review_budget_scales_with_the_diff():
+    one = "diff --git a/src/a.ts b/src/a.ts\n+x\n"
+    assert reviewer.call_budget(one) == 11
+    assert reviewer.call_budget(one * 5) == 23
+    assert reviewer.call_budget(one * 100) == reviewer.REVIEW_CALLS_MAX
+    assert reviewer.call_budget("") == 11

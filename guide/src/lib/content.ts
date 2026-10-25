@@ -171,7 +171,7 @@ BUGS.push(
     id: 'reviewer-call-limit', title: 'A reviewer that never got to answer',
     symptom: 'Right after that, three reviews in a row ended “reviewer finished without a structured decision” and the task escalated, although nobody had found anything wrong with the code.',
     cause: 'The reviewer agent is capped at a number of model calls. It spent all 8 on read_file / grep, and the cap ended the loop before the call that returns the verdict.',
-    fix: 'Raise the cap to 14, and when it is still hit, make one tool-free call with the diff and everything it read, forcing a verdict.',
+    fix: 'Scale the cap with the diff (8 + 3 per changed file, at most 40), and when it is still hit, make one tool-free call with the diff and everything it read, forcing a verdict.',
     lesson: 'A budget on exploration must leave room for the answer.',
     commit: 'gate runner PR',
   },
