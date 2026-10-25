@@ -213,6 +213,16 @@ Events:       Issues`,
     code: `claude mcp add agentflow -- uv --directory ~/agentflow run agentflow-mcp`,
   },
   {
+    id: 'chat', title: 'Ask for it in plain language', who: 'You, in Telegram',
+    steps: [
+      'Write to the second bot (chat/): “find a Python repo with fastapi, green CI and MIT, and add endpoint X”.',
+      'It calls list_repos and find_repos: hard criteria are checked from GitHub, and topic fit is judged from the README.',
+      'Before start_run it asks “Run in X?” with buttons, unless you named the repo or only one is whitelisted.',
+      'Spec and plan still arrive from agentflow’s own bot. Reply to one in words and the layer calls review_checkpoint.',
+    ],
+    code: `cd chat && CHAT_TELEGRAM_BOT_TOKEN=… CHAT_ALLOWED_CHAT_IDS=… uv run agentflow-chat`,
+  },
+  {
     id: 'cli', title: 'Run it locally on a repo', who: 'A developer trying it out',
     steps: [
       'No Docker needed: state is kept in memory.',
@@ -234,6 +244,8 @@ export const CODE_MAP: { concept: string; files: string[] }[] = [
   { concept: 'Start / resume / inspect runs', files: ['src/agentflow/runner.py'] },
   { concept: 'API, webhooks, queue worker', files: ['src/agentflow/api/app.py', 'src/agentflow/worker.py'] },
   { concept: 'MCP server', files: ['src/agentflow/mcp_server.py'] },
+  { concept: 'Repo whitelist & selection facts', files: ['src/agentflow/repos.py'] },
+  { concept: 'Conversational layer (Agent SDK + Telegram)', files: ['chat/src/agentflow_chat/agent.py', 'chat/src/agentflow_chat/telegram.py'] },
   { concept: 'Evals', files: ['evals/spec_eval.py', 'evals/e2e_eval.py'] },
   { concept: 'Tests (graph e2e with fake LLMs)', files: ['tests/test_workflow_e2e.py', 'tests/test_routing.py'] },
   { concept: 'Deploy', files: ['docker/Dockerfile', 'docker-compose.yml'] },
@@ -278,6 +290,6 @@ export const INTERVIEW: { q: string; a: string }[] = [
   },
   {
     q: 'What would you do next?',
-    a: 'Run the end-to-end eval as an A/B against the last RAG version to confirm that exploring plans better than retrieving, add cost tracking per run, and turn the Telegram bot into a conversational front end over the same actions the MCP server exposes.',
+    a: 'Run the end-to-end eval as an A/B against the last RAG version to confirm that exploring plans better than retrieving, add cost tracking per run, and put auth in front of the MCP server over HTTP now that a chat front end drives it.',
   },
 ]

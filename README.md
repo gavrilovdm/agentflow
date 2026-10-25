@@ -48,7 +48,8 @@ flowchart TD
 | **Recovery from failure** | Separate budgets, windowed stall detection (catches A↔B oscillation), a referee that can rewrite an unsatisfiable test, then escalation: a human picks retry-with-hint, re-plan, skip or abort |
 | **API integrations, event-driven** | GitHub webhook (issue labelled → run → PR that closes it), Telegram inline buttons resume paused runs, Redis job queue |
 | **Human-in-the-loop** | `interrupt()` at spec, plan, and whenever a task exhausts its budget (with an evidence dossier); answered via Telegram, REST, MCP or CLI; resumes deduplicated by checkpoint id |
-| **MCP** | `mcp_server.py`: `start_run`, `get_run`, `review_checkpoint`, `resolve_failed_task` |
+| **MCP** | `mcp_server.py`: `start_run`, `get_run`, `review_checkpoint`, `resolve_failed_task`, plus repo selection over a whitelist (`list_repos`, `inspect_repo`, `find_repos`) |
+| **Conversational layer** | `chat/`: a separate package on the Claude Agent SDK with a Telegram bridge; picks the repo from your criteria, confirms in code, talks to agentflow only through MCP |
 | **Evaluation** | `evals/`: spec LLM-as-judge, e2e agent runs; all logged to LangSmith |
 | **Tracing** | LangSmith traces tagged by role and task; JSON logs |
 | **Docker, CI** | Multi-stage Dockerfile, docker-compose for the whole service; GitHub Actions CI |
@@ -86,6 +87,16 @@ You can also wire up these triggers:
 - **Telegram webhook** → `POST /webhooks/telegram`. The worker posts the spec or plan with ✅/❌ buttons, and `/reject <thread> <feedback>` rejects with feedback. When a task runs out of budget, it posts the dossier with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop buttons; `/hint <thread> <guidance>` retries with guidance.
 - **Failed task via REST** → `POST /runs/<thread_id>/decision` with `{"action": "retry" | "replan" | "skip" | "abort", "hint": "..."}`.
 - **MCP**: `uv run agentflow-mcp` (stdio) or `--http`. Add it to Claude Desktop or Claude Code to start and approve runs from chat.
+- **Chat in plain language**: [`chat/`](chat/README.md) is a second Telegram bot on the Claude Agent SDK over the same MCP server. «найди репозиторий на Python с fastapi, активным CI и лицензией MIT и добавь туда эндпоинт X» → `find_repos` → «Запустить в X?» → `start_run`.
+
+**Repo whitelist.** Runs started over MCP may only target repos listed in `repos.toml` (`REPOS_FILE`; copy
+`repos.example.toml`). A model that guessed a repo name could otherwise push to anything the GitHub token
+reaches. With no whitelist, `start_run` with a repo is refused unless `INSECURE_DEV=true`. `inspect_repo`
+reads facts from the GitHub API without cloning (README, topics, languages, dependencies from manifests,
+layout, workflows and the latest CI result, last commit, open PRs, license, CONTRIBUTING, push permission;
+cached 10 minutes). `find_repos` checks hard criteria against each one and reports passed / failed /
+unknown, where unknown means the fact couldn't be fetched. Topic fit is left to the caller's model,
+which reads the description and README.
 
 ## Design notes
 
@@ -217,6 +228,7 @@ src/agentflow/
   graph/         state · context (DI) · nodes · routing · build
   gate/          python · typescript · detection
   integrations/  workspace (git) · github · telegram
-  api/ worker.py mcp_server.py cli.py runner.py observability.py
+  api/ worker.py mcp_server.py repos.py cli.py runner.py observability.py
+chat/   separate package: Claude Agent SDK session per chat + Telegram bridge, MCP-only
 evals/  tests/  docker/  .github/workflows/
 ```
