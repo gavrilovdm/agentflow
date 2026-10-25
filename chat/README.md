@@ -28,7 +28,7 @@ Example: «найди репозиторий на Python с fastapi, актив�
 
 ## Run
 
-The SDK runs the Claude Code CLI bundled with it and authenticates with an Anthropic API key (`ANTHROPIC_API_KEY`), or with Bedrock / Vertex through the usual Claude Code variables (`CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1`). Anthropic's Agent SDK docs say products built on the SDK should use API-key authentication, not claude.ai login, unless Anthropic approved otherwise, so a subscription OAuth session is not the default here.
+The SDK runs the Claude Code CLI bundled with it. By default it reaches Claude the same way agentflow's orchestrator does: through the local [cursor-proxy](https://github.com/gavrilovdm/cursor-proxy), using `CLAUDE_PROXY_URL` and `CLAUDE_PROXY_KEY` from agentflow's `.env` (read from `../.env`). The proxy passes Anthropic-format `/v1/messages` through, so the model is the real id `claude-opus-5`, which is what the orchestrator's `cpxopus` alias resolves to. To use an API key instead, set `CHAT_ANTHROPIC_BASE_URL=""` and `ANTHROPIC_API_KEY` (or Bedrock / Vertex via `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX`). Anthropic's Agent SDK docs ask products built on the SDK to use API keys rather than claude.ai login, so the proxy route fits a personal bot, not one offered to others.
 
 This bot needs its own token from @BotFather: agentflow's bot uses a webhook, and a token can't have a webhook and long polling at the same time. Put both bots in one group if you want a single chat.
 
@@ -37,7 +37,7 @@ uv run agentflow-mcp --http                  # in agentflow: MCP on :8001
 cd chat
 export CHAT_TELEGRAM_BOT_TOKEN=...           # the second bot
 export CHAT_ALLOWED_CHAT_IDS=123456789       # empty refuses everyone
-export ANTHROPIC_API_KEY=...                 # or CLAUDE_CODE_USE_BEDROCK=1 / CLAUDE_CODE_USE_VERTEX=1
+# CLAUDE_PROXY_URL / CLAUDE_PROXY_KEY come from ../.env, same as the orchestrator
 uv run agentflow-chat
 ```
 
@@ -45,8 +45,8 @@ uv run agentflow-chat
 |---|---|---|
 | `CHAT_MCP_URL` | `http://127.0.0.1:8001/mcp` | agentflow's MCP over streamable HTTP |
 | `CHAT_MCP_TOKEN` | empty | sent as `Authorization: Bearer` if the MCP server sits behind a proxy with auth |
-| `CHAT_ANTHROPIC_BASE_URL` / `CHAT_ANTHROPIC_AUTH_TOKEN` | empty | route the model through a gateway that speaks the Anthropic Messages API; empty uses `ANTHROPIC_API_KEY` (or Bedrock / Vertex) |
-| `CHAT_MODEL` / `CHAT_EFFORT` | `claude-opus-5-5` / `medium` | |
+| `CHAT_ANTHROPIC_BASE_URL` / `CHAT_ANTHROPIC_AUTH_TOKEN` | `CLAUDE_PROXY_URL` / `CLAUDE_PROXY_KEY`, else `http://127.0.0.1:8787` | an Anthropic-format gateway; a trailing `/v1` is dropped. Set the URL to empty to use `ANTHROPIC_API_KEY` |
+| `CHAT_MODEL` / `CHAT_EFFORT` | `claude-opus-5` / `medium` | |
 | `CHAT_CONFIRM_TIMEOUT_S` | `600` | an unanswered confirmation cancels the run |
 
 `/new` drops the conversation. Sessions live in memory, one per chat.

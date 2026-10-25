@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="CHAT_", extra="ignore")
+    # ../.env is agentflow's: the proxy URL and key are shared with its orchestrator.
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"), env_prefix="CHAT_", extra="ignore", populate_by_name=True
+    )
 
     # A second bot: agentflow's own bot owns its webhook (approval buttons), and a token
     # can have either a webhook or long polling, not both.
@@ -21,12 +24,20 @@ class Settings(BaseSettings):
     mcp_url: str = "http://127.0.0.1:8001/mcp"
     mcp_token: str = Field(default="", description="Sent as a Bearer token if agentflow's MCP is behind auth")
 
-    # Point the SDK at an Anthropic-format gateway (e.g. a local proxy) instead of api.anthropic.com.
-    # Empty = the SDK's own credentials: ANTHROPIC_API_KEY, or Bedrock / Vertex via CLAUDE_CODE_USE_*.
-    anthropic_base_url: str = ""
-    anthropic_auth_token: str = ""
+    # Same cursor-proxy as agentflow's orchestrator by default (CLAUDE_PROXY_URL / CLAUDE_PROXY_KEY).
+    # It passes Anthropic-format /v1/messages through on the Claude Code OAuth session. Set
+    # CHAT_ANTHROPIC_BASE_URL="" to use ANTHROPIC_API_KEY (or Bedrock / Vertex) instead.
+    anthropic_base_url: str = Field(
+        default="http://127.0.0.1:8787",
+        validation_alias=AliasChoices("CHAT_ANTHROPIC_BASE_URL", "CLAUDE_PROXY_URL"),
+    )
+    anthropic_auth_token: str = Field(
+        default="", validation_alias=AliasChoices("CHAT_ANTHROPIC_AUTH_TOKEN", "CLAUDE_PROXY_KEY")
+    )
 
-    model: str = "claude-opus-5-5"
+    # What the orchestrator's cpxopus resolves to. The proxy maps cpx* aliases only on its
+    # OpenAI route; /v1/messages is passed through, so it needs the real model id.
+    model: str = "claude-opus-5"
     effort: str = "medium"
     max_turns: int = 30
     confirm_timeout_s: int = 600

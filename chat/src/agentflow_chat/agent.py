@@ -85,7 +85,8 @@ class ChatSession:
             server["headers"] = {"Authorization": f"Bearer {s.mcp_token}"}
         env = {}
         if s.anthropic_base_url:
-            env["ANTHROPIC_BASE_URL"] = s.anthropic_base_url
+            # CLAUDE_PROXY_URL ends in /v1 for OpenAI clients; Claude Code appends /v1/messages itself.
+            env["ANTHROPIC_BASE_URL"] = s.anthropic_base_url.rstrip("/").removesuffix("/v1")
         if s.anthropic_auth_token:
             env["ANTHROPIC_AUTH_TOKEN"] = s.anthropic_auth_token
         return ClaudeAgentOptions(

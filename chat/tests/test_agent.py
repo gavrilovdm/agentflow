@@ -67,9 +67,17 @@ def test_tool_json_shapes():
     assert tool_json(items) == items
 
 
-def test_gateway_settings_reach_the_cli_env():
-    s = ChatSession(
-        1, FakeConfirmer((True, None)), Settings(anthropic_base_url="http://127.0.0.1:8787", anthropic_auth_token="k")
-    )
-    assert s.options().env == {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "ANTHROPIC_AUTH_TOKEN": "k"}
-    assert ChatSession(1, FakeConfirmer((True, None)), Settings()).options().env == {}
+def test_proxy_settings_reach_the_cli_env():
+    st = Settings(anthropic_base_url="http://127.0.0.1:8787/v1", anthropic_auth_token="cpx_k")
+    env = ChatSession(1, FakeConfirmer((True, None)), st).options().env
+    assert env == {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "ANTHROPIC_AUTH_TOKEN": "cpx_k"}
+    assert ChatSession(1, FakeConfirmer((True, None)), Settings(anthropic_base_url="")).options().env == {}
+
+
+def test_proxy_values_are_shared_with_agentflow(monkeypatch):
+    monkeypatch.setenv("CLAUDE_PROXY_URL", "http://127.0.0.1:9999/v1")
+    monkeypatch.setenv("CLAUDE_PROXY_KEY", "cpx_shared")
+    s = Settings(_env_file=None)
+    assert (s.anthropic_base_url, s.anthropic_auth_token) == ("http://127.0.0.1:9999/v1", "cpx_shared")
+    monkeypatch.setenv("CHAT_ANTHROPIC_BASE_URL", "")
+    assert Settings(_env_file=None).anthropic_base_url == ""
