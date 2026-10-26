@@ -1,5 +1,7 @@
 # agentflow — working rules
 
+Навигация: родитель в hub и связи с соседними репо — [`AGENTS.md`](AGENTS.md).
+
 ## Workflow for every change
 1. Branch from `main`: `feat/<topic>` or `fix/<topic>`. Never commit to `main` directly.
 2. Change code **and** the docs that describe it in the same branch. A Stop hook
