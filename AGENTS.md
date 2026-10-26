@@ -1,6 +1,6 @@
 # agentflow
 
-Родитель: [hub/agents-ai](https://github.com/gavrilovdm/hub/blob/main/agents-ai/AGENTS.md)
+Родитель: [hub/projects/non-work/agents-ai](https://github.com/gavrilovdm/hub/blob/main/domains/projects/non-work/agents-ai/AGENTS.md)
 
 Связи: предшественник — [agentic-workflow-v1](https://github.com/gavrilovdm/agentic-workflow-v1); eval-фикстура — [agentflow-sandbox](https://github.com/gavrilovdm/agentflow-sandbox); список целевых репо — `repos.example.toml`
 
