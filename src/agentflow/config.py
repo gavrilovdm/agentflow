@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     github_token: str = ""
     github_webhook_secret: str = ""
     github_trigger_label: str = "agentflow"
+    # The task board: a GitHub Projects (v2) board owned by an organization. Its own
+    # fine-grained token, because a user-owned project would need a classic token that
+    # reaches every repo of the account.
+    github_board_token: str = ""
+    board_org: str = ""
+    board_project: int = 0
     # Whitelist of repos the MCP tools may list, inspect and start runs in (see repos.example.toml).
     repos_file: str = "repos.toml"
     # Where the TypeScript gate keeps its own vitest (target repos need not have one).

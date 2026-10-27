@@ -19,6 +19,7 @@
 | `src/agentflow/agents/`, `schemas.py` | README requirements table; guide NODES / INTERVIEW |
 | `src/agentflow/gate/` | README "Gate per language" |
 | `src/agentflow/api/`, `worker.py`, `mcp_server.py` | README "As a service"; guide USE_CASES |
+| `src/agentflow/board.py` | README "As a service" (Task board) |
 | `src/agentflow/repos.py` | README "As a service" (repo whitelist) + `chat/README.md` (tool table) |
 | `chat/` | `chat/README.md`; README "As a service" if the user-facing flow changed; guide USE_CASES |
 | `evals/` | README "Evals" |
