@@ -20,8 +20,8 @@ from pydantic import BaseModel, Field, ValidationError
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.integrations import github, telegram
 from agentflow.observability import setup_logging
-from agentflow.progress import LAST_THREAD_KEY, render, render_list
-from agentflow.runner import list_runs, open_persistence, snapshot, validate_decision
+from agentflow.progress import LAST_THREAD_KEY, render, render_list, running_threads
+from agentflow.runner import list_runs, mark_stalled, open_persistence, snapshot, validate_decision
 from agentflow.schemas import FailureAction
 
 log = logging.getLogger("agentflow.api")
@@ -131,8 +131,10 @@ async def create_run(body: StartRun, request: Request) -> dict[str, str]:
 
 @app.get("/runs", dependencies=[Auth])
 async def get_runs(request: Request, limit: int = 20, include_finished: bool = False) -> list[dict[str, Any]]:
-    """Recent runs, the ones waiting for a decision first."""
-    return [s.summary() for s in await list_runs(request.app.state.persistence.graph, limit, include_finished)]
+    """Recent runs: waiting for a decision first, then stalled ones with their cause."""
+    running = await running_threads(request.app.state.queue)
+    snaps = await list_runs(request.app.state.persistence.graph, limit, include_finished, running)
+    return [s.summary() for s in snaps]
 
 
 @app.get("/runs/{thread_id}", dependencies=[Auth])
@@ -140,6 +142,7 @@ async def get_run(thread_id: str, request: Request) -> dict[str, Any]:
     snap = await snapshot(request.app.state.persistence.graph, thread_id)
     if not snap.values:
         raise HTTPException(404, "unknown run (or not started yet)")
+    mark_stalled([snap], await running_threads(request.app.state.queue))
     return snap.to_json()
 
 
@@ -274,7 +277,9 @@ async def handle_telegram_update(app: FastAPI, update: dict[str, Any]) -> str:
         return "ok"
     if command == "/runs":
         include_finished = bool(rest) and rest[0] == "all"
-        await telegram.send_message(render_list(await list_runs(app.state.persistence.graph, 15, include_finished)))
+        running = await running_threads(app.state.queue)
+        snaps = await list_runs(app.state.persistence.graph, 15, include_finished, running)
+        await telegram.send_message(render_list(snaps))
         return "ok"
     if command in TEXT_COMMANDS and rest:
         thread_id, guidance = rest[0], rest[1] if len(rest) > 1 else None
@@ -293,6 +298,7 @@ async def _status_text(app: FastAPI, thread_id: str | None) -> str:
     snap = await snapshot(app.state.persistence.graph, thread_id)
     if not snap.values:
         return f"No run `{thread_id}`."
+    mark_stalled([snap], await running_threads(app.state.queue))
     return render(snap)
 
 

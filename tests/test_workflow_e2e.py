@@ -4,6 +4,7 @@ Covers: spec rejection → revision, plan approval, a gate failure fed back to t
 regression tests across tasks, per-task commits, and a run resumed from Postgres.
 """
 
+import asyncio
 import shutil
 import uuid
 from pathlib import Path
@@ -13,7 +14,7 @@ from git import Repo
 
 from agentflow.agents import coder, orchestrator, reviewer, test_generator
 from agentflow.config import WorkflowConfig
-from agentflow.runner import list_runs, open_persistence, resume_run, start_run
+from agentflow.runner import _config, list_runs, make_deps, open_persistence, resume_run, snapshot, start_run
 from agentflow.schemas import CoderResult, ReviewCycle, Spec, Task
 
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="uv needed for the Python gate")
@@ -369,13 +370,65 @@ async def test_list_runs_puts_waiting_first_and_hides_finished(repo: Path, fakes
     assert [s.thread_id for s in everything] == ["waiting", "crashed"]  # waiting first despite being older
     row = active[0].summary()
     assert row["waiting_for"] == "spec_approval" and row["title"] == "Calculator" and row["repo"] is None
-    assert everything[1].summary()["error"].startswith("Run crashed")
+    assert everything[1].summary()["cause"].startswith("Run crashed")
 
 
 @pytest.mark.integration
 async def test_list_runs_reads_threads_from_postgres(repo: Path, fakes):
+    # Run against the dev database this left a run paused at spec approval forever, and
+    # /runs listed it as waiting on you; the thread is deleted whatever the outcome.
     thread = f"pg-{uuid.uuid4().hex[:8]}"
     async with open_persistence() as p:
-        await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id=thread)
-        rows = [s.summary() for s in await list_runs(p.graph, limit=50)]
+        try:
+            await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id=thread)
+            rows = [s.summary() for s in await list_runs(p.graph, limit=50)]
+        finally:
+            assert p.graph.checkpointer is not None
+            await p.graph.checkpointer.adelete_thread(thread)
+        assert not (await snapshot(p.graph, thread)).values
     assert any(r["thread_id"] == thread and r["waiting_for"] == "spec_approval" for r in rows)
+
+
+async def test_cancelled_run_records_why_it_stopped(repo: Path, fakes, monkeypatch):
+    """A worker restart cancelled a run mid-node; CancelledError is not an Exception, so the
+    crash handler missed it and the run read "coding" forever with no cause anywhere."""
+    started = asyncio.Event()
+
+    async def hanging_spec(*a, **k):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(orchestrator, "generate_spec", hanging_spec)
+    async with open_persistence(in_memory=True) as p:
+        job = asyncio.create_task(start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id="cx"))
+        await started.wait()
+        job.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await job
+        snap = await snapshot(p.graph, "cx")
+    assert snap.status == "failed"
+    assert snap.cause().startswith("Run cancelled: worker stopped or job timed out")
+
+
+async def test_run_left_mid_node_is_stalled_with_the_node_error_as_cause(repo: Path, fakes, monkeypatch):
+    """A process that dies records nothing in the run's status; the node's exception is
+    still in the checkpoint, and no worker heartbeat means nobody is on it."""
+
+    async def broken_spec(*a, **k):
+        raise ValueError("credit balance is too low")
+
+    monkeypatch.setattr(orchestrator, "generate_spec", broken_spec)
+    async with open_persistence(in_memory=True) as p:
+        cfg = WorkflowConfig(local_path=str(repo))
+        inp = {"user_prompt": "calc", "issue_number": None, "run_config": cfg.model_dump()}
+        with pytest.raises(ValueError):  # bypass _drive: as if the process died before recording it
+            await p.graph.ainvoke(inp, _config("dead"), context=make_deps(p, cfg))
+
+        unknown = await list_runs(p.graph)  # no heartbeat info: nothing is flagged
+        stalled = await list_runs(p.graph, running=set())
+        alive = await list_runs(p.graph, running={"dead"})
+
+    assert not unknown[0].stalled and not alive[0].stalled
+    row = stalled[0].summary()
+    assert row["stalled"] and row["status"] != "failed"
+    assert row["cause"] == "generate_spec: ValueError('credit balance is too low')"

@@ -231,6 +231,14 @@ BUGS.push(
     lesson: 'Escalation showed the evidence immediately — the dossier, not the logs, is where this was spotted.',
     commit: 'guide-review PR',
   },
+  {
+    id: 'zombie-runs', title: 'Runs that said “coding” for weeks',
+    symptom: 'The first /runs listed four sandbox runs as speccing or coding, a month after anyone had touched them. Nothing said they had stopped, or why.',
+    cause: 'Two were cancelled by a worker restart: CancelledError is a BaseException, so the crash handler (except Exception) never recorded them. Two predate the handler. In every case the run kept its last status, and the only trace of the cause was the node error LangGraph left in the checkpoint.',
+    fix: 'The worker keeps a Redis heartbeat per run; unfinished, unpaused runs without one are flagged stalled, with the checkpoint’s node error as the cause. Cancellation is caught and recorded as failed before it propagates.',
+    lesson: 'Status written by the process doing the work cannot report that process dying. Liveness needs a signal that expires on its own.',
+    commit: 'stalled-runs PR',
+  },
 )
 
 export interface UseCase {
@@ -264,7 +272,7 @@ Events:       Issues`,
       'A button press reaches the api (webhook, or long polling on a laptop), which enqueues a resume for exactly that checkpoint.',
       'Double-tapping is safe: the job id is derived from the checkpoint, so it resumes once. The buttons disappear once pressed, and the message says who answered.',
       'Each job keeps one silent status card up to date (phase, current step, tasks done); /status <thread> (or just /status for the latest run) asks at any time. Errors arrive verbatim, in a code block.',
-      '/runs lists every run in flight, whoever started it, the ones waiting on you first; /runs all adds finished ones.',
+      '/runs lists every run in flight, whoever started it, the ones waiting on you first, then stalled ones (🧟, no worker on them) with the error that stopped them; /runs all adds finished ones.',
       'To reject with feedback, reply /reject <thread> <what to change>.',
     ],
     code: `/reject run-712dd72b01d9 use a dataclass for the result instead of a dict`,

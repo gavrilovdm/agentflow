@@ -7,8 +7,10 @@ the worker asks for approval on Telegram.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from arq.connections import RedisSettings
@@ -17,7 +19,7 @@ from agentflow.config import WorkflowConfig, get_settings
 from agentflow.graph.escalation import dossier_text
 from agentflow.integrations import telegram
 from agentflow.observability import setup_logging
-from agentflow.progress import LAST_THREAD_KEY, StatusCard, render
+from agentflow.progress import HEARTBEAT_TTL_S, LAST_THREAD_KEY, RUNNING_PREFIX, StatusCard, render
 from agentflow.runner import CRASH_PREFIX, RunSnapshot, open_persistence, resume_run, snapshot, start_run
 
 log = logging.getLogger("agentflow.worker")
@@ -43,6 +45,31 @@ async def _card(ctx: dict, thread_id: str, first: str) -> tuple[StatusCard, Any]
         await card.show(render(snap, node))
 
     return card, on_step
+
+
+@contextlib.asynccontextmanager
+async def _heartbeat(ctx: dict, thread_id: str) -> AsyncIterator[None]:
+    """Keep a TTL key alive while this job drives the run. A worker killed outright (OOM,
+    SIGKILL, host reboot) records nothing; the key expiring is what marks the run stalled."""
+    redis = ctx.get("redis")
+    if redis is None:
+        yield
+        return
+    key = RUNNING_PREFIX + thread_id
+
+    async def beat() -> None:
+        while True:
+            with contextlib.suppress(Exception):
+                await redis.set(key, "1", ex=HEARTBEAT_TTL_S)
+            await asyncio.sleep(HEARTBEAT_TTL_S / 3)
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await redis.delete(key)
 
 
 async def _after(snap: RunSnapshot, card: StatusCard | None = None) -> dict[str, Any]:
@@ -77,14 +104,15 @@ async def start_run_job(
 ) -> dict:
     log.info("run started", extra={"data": {"thread_id": thread_id, "trigger": trigger}})
     card, on_step = await _card(ctx, thread_id, f"⏳ *Started* ({trigger})\n\nthread: `{thread_id}`")
-    snap = await start_run(
-        ctx["persistence"],
-        prompt,
-        WorkflowConfig.model_validate(config),
-        thread_id=thread_id,
-        issue_number=issue_number,
-        on_step=on_step,
-    )
+    async with _heartbeat(ctx, thread_id):
+        snap = await start_run(
+            ctx["persistence"],
+            prompt,
+            WorkflowConfig.model_validate(config),
+            thread_id=thread_id,
+            issue_number=issue_number,
+            on_step=on_step,
+        )
     return await _after(snap, card)
 
 
@@ -93,7 +121,8 @@ async def resume_run_job(ctx: dict, thread_id: str, decision: dict | bool, feedb
     if isinstance(decision, bool):
         decision = {"approved": decision, "feedback": feedback}
     card, on_step = await _card(ctx, thread_id, f"⏳ *Picked up* — continuing\n\nthread: `{thread_id}`")
-    snap = await resume_run(ctx["persistence"], thread_id, decision, on_step=on_step)
+    async with _heartbeat(ctx, thread_id):
+        snap = await resume_run(ctx["persistence"], thread_id, decision, on_step=on_step)
     return await _after(snap, card)
 
 
