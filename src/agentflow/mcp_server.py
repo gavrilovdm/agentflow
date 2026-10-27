@@ -1,6 +1,7 @@
 """MCP server: lets any MCP client (Claude Desktop, Claude Code, IDEs) drive agentflow.
 
-Tools: pick a repo from the whitelist (list/inspect/find), start a run, list or inspect runs,
+Tools: pick a repo from the whitelist (list/inspect/find), put a task on the board and list it,
+start a run, list or inspect runs,
 approve/reject a checkpoint, and decide on a task that ran out of budget.
 
     uv run agentflow-mcp                      # stdio
@@ -20,6 +21,7 @@ from arq.connections import RedisSettings
 from mcp.server.mcpserver import MCPServer
 
 from agentflow import repos, runner
+from agentflow.board import Board, Priority, TaskType
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.progress import running_threads
 from agentflow.runner import mark_stalled, open_persistence, snapshot, validate_decision
@@ -134,6 +136,46 @@ async def list_runs(limit: int = 20, include_finished: bool = False) -> list[dic
     running = await _running()
     async with open_persistence() as p:
         return [s.summary() for s in await runner.list_runs(p.graph, limit, include_finished, running)]
+
+
+@mcp.tool()
+async def create_task(
+    repo: str,
+    title: str,
+    goal: str,
+    definition_of_done: list[str],
+    context: str = "",
+    type: TaskType = "coding",
+    priority: Priority = "normal",
+) -> dict[str, Any]:
+    """Put a task on the board's Бэклог as an issue in `repo` (owner/name, from list_repos).
+    `goal`: what should change, 1-3 sentences. `definition_of_done`: checkable conditions,
+    at least one ("returns 404 for an unknown id", not "works well"). `context`: the user's
+    own words, links, constraints. Stage agents pick the card up from the board."""
+    try:
+        entry = repos.check_allowed(repo)
+    except repos.RepoNotAllowed as exc:
+        return {"status": "rejected", "error": str(exc)}
+    b = Board.from_settings()
+    try:
+        card = await b.create_task(
+            entry.full_name, title, goal, definition_of_done, context, type, priority, source="mcp"
+        )
+    finally:
+        await b.aclose()
+    return card.model_dump()
+
+
+@mcp.tool()
+async def list_board(status: str | None = None) -> list[dict[str, Any]]:
+    """Cards on the task board with their column (Status), type, priority, owner (the agent
+    working on it), attempts (times sent back) and blocked reason. `status` limits it to
+    one column: Бэклог, Планируется, Делается, Тестируется, Готово к мержу, Смержено, Блокировка."""
+    b = Board.from_settings()
+    try:
+        return [c.model_dump() for c in await b.cards(status)]
+    finally:
+        await b.aclose()
 
 
 @mcp.tool()
