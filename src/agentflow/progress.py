@@ -96,6 +96,23 @@ def render(snap: Any, node: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def render_list(snaps: list[Any]) -> str:
+    """`/runs`: one line per run, the ones waiting on you first (list_runs' order)."""
+    if not snaps:
+        return "No active runs."
+    lines = []
+    for s in snaps:
+        m = s.summary()
+        if s.interrupt:
+            head = f"⏸ {WAITING.get(m['waiting_for'], 'you')}"
+        else:
+            head = {"completed": "✅ done", "failed": "❌ failed"}.get(s.status, f"⏳ {s.status}")
+        tasks = f" · {m['tasks_done']}/{m['tasks_total']}" if m["tasks_total"] else ""
+        pr = f" · {m['pull_request']}" if m["pull_request"] else ""
+        lines.append(f"{head} · *{m['repo'] or 'local'}* · {m['title']}{tasks}{pr}\n`{s.thread_id}`")
+    return "\n\n".join(lines)
+
+
 class StatusCard:
     """One silent message per worker job, edited in place.
 

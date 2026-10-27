@@ -20,8 +20,8 @@ from pydantic import BaseModel, Field, ValidationError
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.integrations import github, telegram
 from agentflow.observability import setup_logging
-from agentflow.progress import LAST_THREAD_KEY, render
-from agentflow.runner import open_persistence, snapshot, validate_decision
+from agentflow.progress import LAST_THREAD_KEY, render, render_list
+from agentflow.runner import list_runs, open_persistence, snapshot, validate_decision
 from agentflow.schemas import FailureAction
 
 log = logging.getLogger("agentflow.api")
@@ -127,6 +127,12 @@ async def create_run(body: StartRun, request: Request) -> dict[str, str]:
     thread_id = f"run-{uuid.uuid4().hex[:12]}"
     await request.app.state.queue.enqueue_job("start_run_job", body.prompt, cfg.model_dump(), thread_id)
     return {"thread_id": thread_id, "status": "queued"}
+
+
+@app.get("/runs", dependencies=[Auth])
+async def get_runs(request: Request, limit: int = 20, include_finished: bool = False) -> list[dict[str, Any]]:
+    """Recent runs, the ones waiting for a decision first."""
+    return [s.summary() for s in await list_runs(request.app.state.persistence.graph, limit, include_finished)]
 
 
 @app.get("/runs/{thread_id}", dependencies=[Auth])
@@ -265,6 +271,10 @@ async def handle_telegram_update(app: FastAPI, update: dict[str, Any]) -> str:
     command = command.split("@", 1)[0]  # "/status@agentflow_bot" in group chats
     if command == "/status":
         await telegram.send_message(await _status_text(app, rest[0] if rest else None))
+        return "ok"
+    if command == "/runs":
+        include_finished = bool(rest) and rest[0] == "all"
+        await telegram.send_message(render_list(await list_runs(app.state.persistence.graph, 15, include_finished)))
         return "ok"
     if command in TEXT_COMMANDS and rest:
         thread_id, guidance = rest[0], rest[1] if len(rest) > 1 else None
