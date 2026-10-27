@@ -13,7 +13,7 @@ from git import Repo
 
 from agentflow.agents import coder, orchestrator, reviewer, test_generator
 from agentflow.config import WorkflowConfig
-from agentflow.runner import list_runs, open_persistence, resume_run, start_run
+from agentflow.runner import list_runs, open_persistence, resume_run, snapshot, start_run
 from agentflow.schemas import CoderResult, ReviewCycle, Spec, Task
 
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="uv needed for the Python gate")
@@ -374,8 +374,15 @@ async def test_list_runs_puts_waiting_first_and_hides_finished(repo: Path, fakes
 
 @pytest.mark.integration
 async def test_list_runs_reads_threads_from_postgres(repo: Path, fakes):
+    # Run against the dev database this left a run paused at spec approval forever, and
+    # /runs listed it as waiting on you; the thread is deleted whatever the outcome.
     thread = f"pg-{uuid.uuid4().hex[:8]}"
     async with open_persistence() as p:
-        await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id=thread)
-        rows = [s.summary() for s in await list_runs(p.graph, limit=50)]
+        try:
+            await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id=thread)
+            rows = [s.summary() for s in await list_runs(p.graph, limit=50)]
+        finally:
+            assert p.graph.checkpointer is not None
+            await p.graph.checkpointer.adelete_thread(thread)
+        assert not (await snapshot(p.graph, thread)).values
     assert any(r["thread_id"] == thread and r["waiting_for"] == "spec_approval" for r in rows)
