@@ -26,7 +26,6 @@ from agentflow.integrations import github, telegram
 from agentflow.integrations import workspace as ws
 from agentflow.models import text_model, text_of
 from agentflow.schemas import ApprovalDecision, CoderResult, FailureDecision, ReviewCycle, ReviewResult, Stall, Task
-from agentflow.skills import load_skills
 
 log = logging.getLogger("agentflow.graph")
 
@@ -133,15 +132,13 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     assert spec
 
     test_path = state.get("tests", {}).get(task_id)
-    language = _gate(state).language
     ctx = coder.CoderContext(
         task=task,
         spec=spec,
         workspace=root,
-        language=language,
+        language=_gate(state).language,
         test_content=_read(root / test_path) if test_path else "",
         human_hint=state.get("hints", {}).get(task_id) or None,
-        skills=load_skills("coder", language),
     )
 
     # Two failure sources feed a retry: the coder itself erroring out, and the coder

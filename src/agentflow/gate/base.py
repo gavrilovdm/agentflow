@@ -92,6 +92,10 @@ class Gate(Protocol):
         """The acceptance test's file suffix, which may depend on what the test contains."""
         ...
 
+    def test_prompt_rules(self) -> str:
+        """Framework, import-path and mocking rules injected into the test generator."""
+        ...
+
     async def run(
         self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None
     ) -> GateResult:

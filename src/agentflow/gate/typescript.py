@@ -101,6 +101,18 @@ class TypeScriptGate:
             return True
         return any(_TEST_FILE.search(f) and not f.startswith(ACCEPTANCE_TEST_DIR) for f in _tracked_files(workspace))
 
+    def test_prompt_rules(self) -> str:
+        return f"""- Use vitest: `import {{ describe, it, expect, vi }} from "vitest"`. ESM imports only.
+- Tests run in jsdom. For UI behaviour, render the component with `@testing-library/react`
+  (`render`, `screen`) and assert on what the user sees; jest-dom matchers (`toBeInTheDocument`,
+  `toHaveAttribute`) are available. The gate provides these packages — the repo need not have them.
+- Mock ALL external dependencies (API calls, file I/O, DB) with `vi.mock()`.
+- Test names describe the scenario: "returns 404 when user not found".
+- The file is saved to `{ACCEPTANCE_TEST_DIR}/<name>.test.ts` (`.test.tsx` when it contains JSX), TWO
+  directories below the root. Import sources with `../../src/...` — `../src/...` resolves to tests/src
+  and every test fails to load.
+- Cover: happy path, at least one error case, at least one edge case."""
+
     async def _ensure_deps(self, ws: Path) -> str | None:
         pkg = ws / "package.json"
         if not pkg.exists():

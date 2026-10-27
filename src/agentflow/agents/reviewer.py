@@ -21,6 +21,7 @@ from agentflow.agents.repo_tools import make_repo_tools
 from agentflow.config import get_settings
 from agentflow.models import chat_model, structured
 from agentflow.schemas import FailureRuling, ReviewCycle, ReviewDecision, Spec, Task
+from agentflow.skills import role_section
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ Request changes only for incorrect logic, missing required behaviour, or clear v
 spec or the repository's conventions — not for style preferences.
 You may use glob_files, grep and read_file to check how the changed code fits existing modules.
 Each change request must name the file and the exact fix needed."""
+REVIEW_SYSTEM += role_section("reviewer")
 
 REFEREE_SYSTEM = """You settle a deadlock between a test and an implementation. The same failure has
 repeated several times, so one of the two is wrong in a way the coder cannot fix by trying again.
