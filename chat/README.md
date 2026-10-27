@@ -8,7 +8,7 @@ Claude Code / Desktop ───────────────────�
 agentflow's own bot ◀── spec/plan approvals, failed-task dossiers, PR links (unchanged)
 ```
 
-Notifications still come from agentflow's own bot, not from this layer. They arrive even when the layer is down, and the layer never polls in the background: it only answers your messages. To act on a notification in words ("в спеке убери пункт 3"), reply to it. The bridge passes the notification text and its `thread` id to the model, which then calls `review_checkpoint` or `resolve_failed_task`.
+Notifications still come from agentflow's own bot, not from this layer. They arrive even when the layer is down, and the layer never polls in the background: it only answers your messages. To act on a notification in words ("в спеке убери пункт 3"), reply to it. The bridge passes the notification text and its `thread` id to the model, which then calls `review_checkpoint` or `resolve_failed_task`. Without a reply, «что сейчас идёт?» or «одобри план в cursor-proxy» works too: the model calls `list_runs` (all in-flight runs, waiting ones first) to find the thread.
 
 ## Picking a repository
 

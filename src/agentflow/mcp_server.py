@@ -1,6 +1,6 @@
 """MCP server: lets any MCP client (Claude Desktop, Claude Code, IDEs) drive agentflow.
 
-Tools: pick a repo from the whitelist (list/inspect/find), start a run, inspect it,
+Tools: pick a repo from the whitelist (list/inspect/find), start a run, list or inspect runs,
 approve/reject a checkpoint, and decide on a task that ran out of budget.
 
     uv run agentflow-mcp                      # stdio
@@ -19,7 +19,7 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from mcp.server.mcpserver import MCPServer
 
-from agentflow import repos
+from agentflow import repos, runner
 from agentflow.config import TargetRepo, WorkflowConfig, get_settings
 from agentflow.runner import open_persistence, snapshot, validate_decision
 
@@ -111,6 +111,15 @@ async def get_run(thread_id: str) -> dict[str, Any]:
     """Current status of a run: spec, tasks, pending approval, PR link."""
     async with open_persistence() as p:
         return (await snapshot(p.graph, thread_id)).to_json()
+
+
+@mcp.tool()
+async def list_runs(limit: int = 20, include_finished: bool = False) -> list[dict[str, Any]]:
+    """Recent runs across all repos, whoever started them: runs waiting on the user first
+    (`waiting_for`: spec_approval, tasks_approval or task_failed), then the newest. Each has
+    thread_id, repo, title, status, tasks done/total, PR link. Finished runs only on request."""
+    async with open_persistence() as p:
+        return [s.summary() for s in await runner.list_runs(p.graph, limit, include_finished)]
 
 
 @mcp.tool()

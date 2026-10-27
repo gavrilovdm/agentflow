@@ -13,7 +13,7 @@ from git import Repo
 
 from agentflow.agents import coder, orchestrator, reviewer, test_generator
 from agentflow.config import WorkflowConfig
-from agentflow.runner import open_persistence, resume_run, start_run
+from agentflow.runner import list_runs, open_persistence, resume_run, start_run
 from agentflow.schemas import CoderResult, ReviewCycle, Spec, Task
 
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="uv needed for the Python gate")
@@ -348,3 +348,34 @@ async def test_escalation_cap_falls_back_to_skip(repo: Path, stubborn):
         snap = await resume_run(p, "e4", {"action": "retry"})
     assert snap.status == "failed"
     assert snap.values["failure_decisions"]["task-add"].auto is True
+
+
+async def test_list_runs_puts_waiting_first_and_hides_finished(repo: Path, fakes, monkeypatch):
+    """Runs start from Telegram, MCP, REST and issue labels, and each caller knew only its own
+    thread id: there was no way to see what was in flight or which run waited on you."""
+    async with open_persistence(in_memory=True) as p:
+        await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id="waiting")
+
+        async def broken_spec(*a, **k):
+            raise ValueError("provider exploded")
+
+        monkeypatch.setattr(orchestrator, "generate_spec", broken_spec)
+        await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id="crashed")
+
+        active = await list_runs(p.graph)
+        everything = await list_runs(p.graph, include_finished=True)
+
+    assert [s.thread_id for s in active] == ["waiting"]
+    assert [s.thread_id for s in everything] == ["waiting", "crashed"]  # waiting first despite being older
+    row = active[0].summary()
+    assert row["waiting_for"] == "spec_approval" and row["title"] == "Calculator" and row["repo"] is None
+    assert everything[1].summary()["error"].startswith("Run crashed")
+
+
+@pytest.mark.integration
+async def test_list_runs_reads_threads_from_postgres(repo: Path, fakes):
+    thread = f"pg-{uuid.uuid4().hex[:8]}"
+    async with open_persistence() as p:
+        await start_run(p, "calc", WorkflowConfig(local_path=str(repo)), thread_id=thread)
+        rows = [s.summary() for s in await list_runs(p.graph, limit=50)]
+    assert any(r["thread_id"] == thread and r["waiting_for"] == "spec_approval" for r in rows)
