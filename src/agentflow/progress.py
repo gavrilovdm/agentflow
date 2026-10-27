@@ -16,6 +16,21 @@ log = logging.getLogger(__name__)
 
 # Set by the worker whenever a job starts, so `/status` without a thread has an answer.
 LAST_THREAD_KEY = "agentflow:last_thread"
+# Per-thread heartbeat the worker refreshes while a job runs. A run that is unfinished and
+# unpaused but has no heartbeat is stalled: its worker died without saying so.
+RUNNING_PREFIX = "agentflow:running:"
+HEARTBEAT_TTL_S = 120
+
+
+async def running_threads(redis: Any) -> set[str] | None:
+    """Threads a worker is on right now; None when Redis can't say (then nothing is flagged)."""
+    try:
+        keys = [k async for k in redis.scan_iter(match=RUNNING_PREFIX + "*")]
+    except Exception:  # noqa: BLE001
+        log.warning("could not read worker heartbeats", exc_info=True)
+        return None
+    return {(k.decode() if isinstance(k, bytes) else k).removeprefix(RUNNING_PREFIX) for k in keys}
+
 
 NODE_LABELS = {
     "prepare_workspace": "Preparing the workspace",
@@ -59,6 +74,8 @@ def render(snap: Any, node: str | None = None) -> str:
 
     if snap.interrupt:
         head = f"⏸ *Waiting for {WAITING.get(snap.interrupt.get('type'), 'you')}*"
+    elif snap.stalled:
+        head = "🧟 *Stalled* — no worker is running it"
     elif snap.status == "completed":
         head = "✅ *Done*" + (f" — PR #{pr.number}" if pr else "")
     elif snap.status == "failed":
@@ -90,8 +107,8 @@ def render(snap: Any, node: str | None = None) -> str:
             lines.append(f"… and {len(tasks) - 12} more")
     if pr:
         lines.append(f"\n{pr.url}")
-    if snap.status == "failed" and v.get("error"):
-        lines.append("\n" + telegram.verbatim(str(v["error"]), 500))
+    if (snap.status == "failed" or snap.stalled) and (cause := snap.cause()):
+        lines.append("\n" + telegram.verbatim(cause, 500))
     lines.append(f"\nthread: `{snap.thread_id}`")
     return "\n".join(lines)
 
@@ -105,11 +122,14 @@ def render_list(snaps: list[Any]) -> str:
         m = s.summary()
         if s.interrupt:
             head = f"⏸ {WAITING.get(m['waiting_for'], 'you')}"
+        elif s.stalled:
+            head = "🧟 stalled"
         else:
             head = {"completed": "✅ done", "failed": "❌ failed"}.get(s.status, f"⏳ {s.status}")
         tasks = f" · {m['tasks_done']}/{m['tasks_total']}" if m["tasks_total"] else ""
         pr = f" · {m['pull_request']}" if m["pull_request"] else ""
-        lines.append(f"{head} · *{m['repo'] or 'local'}* · {m['title']}{tasks}{pr}\n`{s.thread_id}`")
+        why = f"\n{telegram.verbatim(m['cause'], 200)}" if m["cause"] and (s.stalled or s.status == "failed") else ""
+        lines.append(f"{head} · *{m['repo'] or 'local'}* · {m['title']}{tasks}{pr}\n`{s.thread_id}`{why}")
     return "\n\n".join(lines)
 
 

@@ -244,18 +244,22 @@ async def test_runs_lists_in_flight_runs_over_rest_and_telegram(client, monkeypa
 
     calls: list[bool] = []
 
-    async def fake_list(graph, limit=20, include_finished=False):
+    async def fake_list(graph, limit=20, include_finished=False, running=None):
         calls.append(include_finished)
         values = {"user_prompt": "Add search", "run_config": {"target_repo": {"owner": "octo", "repo": "shop"}}}
-        return [RunSnapshot("t-1", "awaiting_approval", {"type": "tasks_approval"}, values, "cp")]
+        dead = RunSnapshot("t-2", "coding", None, {**values, "status": "coding"}, "cp2", stalled=True)
+        dead.node_errors = ["run_coder: PermissionError(13, 'Permission denied')"]
+        return [RunSnapshot("t-1", "awaiting_approval", {"type": "tasks_approval"}, values, "cp"), dead]
 
     monkeypatch.setattr(telegram, "send_message", fake_send)
     monkeypatch.setattr("agentflow.api.app.list_runs", fake_list)
 
     rows = (await client.get("/runs")).json()
     assert rows[0]["repo"] == "octo/shop" and rows[0]["waiting_for"] == "tasks_approval"
+    assert rows[1]["stalled"] and rows[1]["cause"].startswith("run_coder: PermissionError")
 
     await client.post("/webhooks/telegram", json={"message": {"text": "/runs"}})
     assert "your plan approval" in sent[-1] and "octo/shop" in sent[-1] and "`t-1`" in sent[-1]
+    assert "🧟 stalled" in sent[-1] and "Permission denied" in sent[-1]
     await client.post("/webhooks/telegram", json={"message": {"text": "/runs all"}})
     assert calls == [False, False, True]

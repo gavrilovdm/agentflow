@@ -1,3 +1,5 @@
+import asyncio
+
 from agentflow import progress, worker
 from agentflow.runner import RunSnapshot
 from agentflow.schemas import PullRequest, Spec, Task
@@ -113,3 +115,38 @@ async def test_runner_reports_steps_and_a_broken_status_never_crashes_the_run(tm
         card._last = 0.0  # make the next edit due
         await step("generate_tasks")  # logged, not raised (a raise would mark the run crashed)
         assert shown == ["⏳ *Picked up*"]
+
+
+class FakeRedis:
+    def __init__(self):
+        self.keys: dict[str, int | None] = {}
+
+    async def set(self, key, value, ex=None):
+        self.keys[key] = ex
+
+    async def delete(self, key):
+        self.keys.pop(key, None)
+
+    async def scan_iter(self, match):
+        for k in list(self.keys):
+            if k.startswith(match.rstrip("*")):
+                yield k.encode()
+
+
+async def test_heartbeat_marks_a_thread_running_only_while_its_job_runs():
+    """A worker killed outright records nothing, so a run is known to be alive only by a
+    heartbeat that expires on its own."""
+    redis = FakeRedis()
+    async with worker._heartbeat({"redis": redis}, "t-9"):
+        await asyncio.sleep(0)
+        assert await progress.running_threads(redis) == {"t-9"}
+        assert redis.keys[progress.RUNNING_PREFIX + "t-9"] == progress.HEARTBEAT_TTL_S
+    assert await progress.running_threads(redis) == set()
+    assert await progress.running_threads(object()) is None  # unknown, not "nothing is running"
+
+
+def test_render_shows_a_stalled_run_and_its_cause():
+    snap = RunSnapshot("r-3", "coding", None, {"status": "coding", "spec": _spec()}, stalled=True)
+    snap.node_errors = ["run_coder: CancelledError()"]
+    text = progress.render(snap)
+    assert text.startswith("🧟 *Stalled*") and "run_coder: CancelledError()" in text
