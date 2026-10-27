@@ -8,7 +8,7 @@ loops), retries with backoff on transient API errors, and provider fallback.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from agentflow.gate import ACCEPTANCE_TEST_DIR
 from agentflow.integrations.workspace import PathEscapeError, resolve_in_workspace
 from agentflow.models import chat_model
 from agentflow.schemas import CoderResult, Spec, Task
+from agentflow.skills import Skill, make_skill_tool, skill_index
 
 MAX_MODEL_CALLS = 25
 
@@ -51,6 +52,7 @@ class CoderContext:
     language: str
     test_content: str = ""
     human_hint: str | None = None
+    skills: list[Skill] = field(default_factory=list)
 
 
 def build_file_tools(workspace: Path, written: dict[str, str]) -> list[BaseTool]:
@@ -124,6 +126,10 @@ def system_prompt(ctx: CoderContext) -> str:
             "## Guidance from a human (takes priority)\n"
             f"This task ran out of attempts before and a human reviewed it. Their guidance:\n{ctx.human_hint}"
         )
+    if ctx.skills:
+        sections.append(
+            "## Skills\nLoad one with load_skill(name) when the task touches its subject:\n" + skill_index(ctx.skills)
+        )
     sections.append(
         "## Instructions\n"
         "1. Use glob_files / grep / read_file to find existing code and conventions before writing new code\n"
@@ -143,6 +149,8 @@ async def run_coder(ctx: CoderContext, feedback: str | None = None) -> CoderResu
     # back whole, where numbered lines would invite pasting the numbers into write_file.
     search = [t for t in make_repo_tools(ctx.workspace) if t.name != "read_file"]
     tools = [*build_file_tools(ctx.workspace, written), *search]
+    if ctx.skills:
+        tools.append(make_skill_tool(ctx.skills))
 
     middleware: list[Any] = [
         ModelCallLimitMiddleware(run_limit=MAX_MODEL_CALLS, exit_behavior="end"),

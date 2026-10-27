@@ -18,6 +18,7 @@ from agentflow.config import get_settings
 from agentflow.gate import ACCEPTANCE_TEST_DIR, Gate
 from agentflow.models import structured
 from agentflow.schemas import GeneratedTest, Spec, Task
+from agentflow.skills import inline, load_skills
 
 log = logging.getLogger(__name__)
 ATTEMPTS = 3
@@ -90,7 +91,8 @@ async def generate_test(
             else ""
         )
     )
-    messages = [SystemMessage(SYSTEM.format(rules=gate.test_prompt_rules())), HumanMessage(body)]
+    rules = inline(load_skills("test_generator", gate.language))
+    messages = [SystemMessage(SYSTEM.format(rules=rules)), HumanMessage(body)]
     runnable = structured(get_settings().test_generator_model, GeneratedTest)
 
     last_error: Exception | None = None

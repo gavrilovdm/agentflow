@@ -61,14 +61,6 @@ class PythonGate:
     def has_test_suite(self, workspace: Path) -> bool:
         return True  # the gate brings pytest into its own venv, so a target test always runs
 
-    def test_prompt_rules(self) -> str:
-        return f"""- Use pytest. Plain `assert` statements, fixtures over setup methods.
-- Mock ALL external I/O (HTTP, DB, filesystem outside tmp_path) with unittest.mock / monkeypatch.
-- Each test is deterministic and named for the scenario: test_returns_404_when_user_missing.
-- The file is saved to `{ACCEPTANCE_TEST_DIR}/`. Import the code under test by its package path
-  as installed from the repo root (e.g. `from mypkg.users import get_user`), never relative imports.
-- Cover: happy path, at least one error case, at least one edge case."""
-
     async def _ensure_env(self, ws: Path) -> str | None:
         """Install the project once per dependency-manifest revision. A fresh project has a
         manifest but no environment, and every check would fail on a missing module
