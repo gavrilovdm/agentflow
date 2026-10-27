@@ -27,7 +27,7 @@ from agentflow_chat.prompt import SYSTEM_PROMPT
 log = logging.getLogger(__name__)
 
 # Reads run without asking. Everything else that changes state goes through can_use_tool.
-READ_ONLY = [MCP_PREFIX + t for t in ("list_repos", "inspect_repo", "find_repos", "get_run")]
+READ_ONLY = [MCP_PREFIX + t for t in ("list_repos", "inspect_repo", "find_repos", "list_runs", "get_run")]
 # Driven by the user's own words about a run agentflow already showed them, so no extra tap.
 USER_DRIVEN = {MCP_PREFIX + "review_checkpoint", MCP_PREFIX + "resolve_failed_task"}
 

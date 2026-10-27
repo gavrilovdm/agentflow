@@ -231,3 +231,31 @@ async def test_telegram_press_takes_buttons_off_and_status_answers(client, monke
     assert "thread: `t-p`" in sent[-1]
     await client.post("/webhooks/telegram", json={"message": {"text": "/status"}})
     assert "No run yet" in sent[-1]  # FakeQueue keeps no last-thread key
+
+
+async def test_runs_lists_in_flight_runs_over_rest_and_telegram(client, monkeypatch):
+    from agentflow.integrations import telegram
+    from agentflow.runner import RunSnapshot
+
+    sent: list[str] = []
+
+    async def fake_send(text, buttons=None, **kw):
+        sent.append(text)
+
+    calls: list[bool] = []
+
+    async def fake_list(graph, limit=20, include_finished=False):
+        calls.append(include_finished)
+        values = {"user_prompt": "Add search", "run_config": {"target_repo": {"owner": "octo", "repo": "shop"}}}
+        return [RunSnapshot("t-1", "awaiting_approval", {"type": "tasks_approval"}, values, "cp")]
+
+    monkeypatch.setattr(telegram, "send_message", fake_send)
+    monkeypatch.setattr("agentflow.api.app.list_runs", fake_list)
+
+    rows = (await client.get("/runs")).json()
+    assert rows[0]["repo"] == "octo/shop" and rows[0]["waiting_for"] == "tasks_approval"
+
+    await client.post("/webhooks/telegram", json={"message": {"text": "/runs"}})
+    assert "your plan approval" in sent[-1] and "octo/shop" in sent[-1] and "`t-1`" in sent[-1]
+    await client.post("/webhooks/telegram", json={"message": {"text": "/runs all"}})
+    assert calls == [False, False, True]

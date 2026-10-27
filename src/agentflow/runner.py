@@ -68,6 +68,27 @@ class RunSnapshot:
             "error": v.get("error"),
         }
 
+    def summary(self) -> dict[str, Any]:
+        """One line's worth of a run, for listing many at once."""
+        v = self.values
+        target = (v.get("run_config") or {}).get("target_repo")
+        tasks = v.get("tasks", [])
+        spec, pr = v.get("spec"), v.get("pull_request")
+        return {
+            "thread_id": self.thread_id,
+            "status": self.status,
+            "waiting_for": self.interrupt.get("type") if self.interrupt else None,
+            "repo": f"{target['owner']}/{target['repo']}" if target else None,
+            "title": spec.title if spec else (v.get("user_prompt") or "")[:80],
+            "tasks_done": sum(t.status == "completed" for t in tasks),
+            "tasks_total": len(tasks),
+            "pull_request": pr.url if pr else None,
+            "error": (v.get("error") or "")[:200] or None,
+        }
+
+
+FINISHED = ("completed", "failed")
+
 
 def _config(thread_id: str) -> RunnableConfig:
     return {
@@ -89,6 +110,43 @@ async def snapshot(graph: CompiledStateGraph, thread_id: str) -> RunSnapshot:
     status = "awaiting_approval" if interrupts else values.get("status", "unknown")
     checkpoint_id = (st.config or {}).get("configurable", {}).get("checkpoint_id")
     return RunSnapshot(thread_id, status, interrupts[0] if interrupts else None, values, checkpoint_id)
+
+
+async def _recent_thread_ids(graph: CompiledStateGraph, limit: int) -> list[str]:
+    """Threads by their newest checkpoint, newest first. Checkpoint ids are uuid6, so they
+    sort by time as strings."""
+    saver = graph.checkpointer
+    if isinstance(saver, InMemorySaver):
+        newest = {t: max(c for ns in nss.values() for c in ns) for t, nss in saver.storage.items() if any(nss.values())}
+        return sorted(newest, key=newest.__getitem__, reverse=True)[:limit]
+
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    assert isinstance(saver, AsyncPostgresSaver)
+    # The saver has no "list threads" call; its alist() would load every checkpoint's
+    # blobs of every run just to read the thread ids.
+    async with saver._cursor() as cur:
+        await cur.execute(
+            "SELECT thread_id, max(checkpoint_id) AS newest FROM checkpoints WHERE checkpoint_ns = '' "
+            "GROUP BY thread_id ORDER BY newest DESC LIMIT %s",
+            (limit,),
+        )
+        return [row["thread_id"] for row in await cur.fetchall()]
+
+
+async def list_runs(graph: CompiledStateGraph, limit: int = 20, include_finished: bool = False) -> list[RunSnapshot]:
+    """Recent runs, the ones waiting on a person first, then by recency.
+
+    Runs are started from several places (Telegram, MCP, REST, issue labels) and each
+    knows only its own thread id, so without this nobody could see what is in flight.
+    A queued run that has not reached its first checkpoint is not listed yet.
+    """
+    # Over-fetch so finished runs filtered out below don't starve the list.
+    ids = await _recent_thread_ids(graph, limit if include_finished else limit * 3)
+    snaps = [await snapshot(graph, t) for t in ids]
+    if not include_finished:
+        snaps = [s for s in snaps if s.interrupt or s.status not in FINISHED]
+    return sorted(snaps[:limit], key=lambda s: s.interrupt is None)  # stable: recency kept within groups
 
 
 async def start_run(

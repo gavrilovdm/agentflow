@@ -48,7 +48,7 @@ flowchart TD
 | **Recovery from failure** | Separate budgets, windowed stall detection (catches A↔B oscillation), a referee that can rewrite an unsatisfiable test, then escalation: a human picks retry-with-hint, re-plan, skip or abort |
 | **API integrations, event-driven** | GitHub webhook (issue labelled → run → PR that closes it), Telegram inline buttons resume paused runs, Redis job queue |
 | **Human-in-the-loop** | `interrupt()` at spec, plan, and whenever a task exhausts its budget (with an evidence dossier); answered via Telegram, REST, MCP or CLI; resumes deduplicated by checkpoint id |
-| **MCP** | `mcp_server.py`: `start_run`, `get_run`, `review_checkpoint`, `resolve_failed_task`, plus repo selection over a whitelist (`list_repos`, `inspect_repo`, `find_repos`) |
+| **MCP** | `mcp_server.py`: `start_run`, `list_runs`, `get_run`, `review_checkpoint`, `resolve_failed_task`, plus repo selection over a whitelist (`list_repos`, `inspect_repo`, `find_repos`) |
 | **Conversational layer** | `chat/`: a separate package on the Claude Agent SDK with a Telegram bridge; picks the repo from your criteria, confirms in code, talks to agentflow only through MCP |
 | **Evaluation** | `evals/`: spec LLM-as-judge, e2e agent runs; all logged to LangSmith |
 | **Tracing** | LangSmith traces tagged by role and task; JSON logs |
@@ -70,6 +70,7 @@ uv run agentflow run "Add a change_email service that rejects duplicates" --path
 docker compose up -d            # postgres, redis, api, worker
 curl -X POST localhost:8010/runs -H 'content-type: application/json' \
      -d '{"prompt": "Add order history endpoint", "repo": "you/your-repo"}'
+curl localhost:8010/runs                                   # in-flight runs, the ones waiting on you first
 curl localhost:8010/runs/<thread_id>                       # status, spec, tasks, pending approval
 curl -X POST localhost:8010/runs/<thread_id>/approval \
      -H 'content-type: application/json' -d '{"approved": true}'
@@ -84,9 +85,9 @@ honoured only from `TELEGRAM_CHAT_ID`.
 You can also wire up these triggers:
 
 - **GitHub webhook** → `POST /webhooks/github` (event: issues). Labelling an issue `agentflow` starts a run; the PR body says `Closes #N`.
-- **Telegram** → `POST /webhooks/telegram` with `TELEGRAM_MODE=webhook` (needs a public HTTPS URL), or `TELEGRAM_MODE=polling`, where the api pulls updates itself; docker-compose defaults to polling, because on a laptop Telegram has nowhere to deliver a button press. The worker posts the spec or plan with ✅/❌ buttons, and `/reject <thread> <feedback>` rejects with feedback. When a task runs out of budget, it posts the dossier with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop buttons; `/hint <thread> <guidance>` retries with guidance. A pressed question loses its buttons and says who answered; each worker job keeps one silent status card up to date (phase, current step, tasks), edited at most every few seconds; `/status [thread]` reports a run on demand (no thread = the latest one); errors arrive verbatim in a code block.
+- **Telegram** → `POST /webhooks/telegram` with `TELEGRAM_MODE=webhook` (needs a public HTTPS URL), or `TELEGRAM_MODE=polling`, where the api pulls updates itself; docker-compose defaults to polling, because on a laptop Telegram has nowhere to deliver a button press. The worker posts the spec or plan with ✅/❌ buttons, and `/reject <thread> <feedback>` rejects with feedback. When a task runs out of budget, it posts the dossier with 🔁 Retry / 🗺 Re-plan / ⏭ Skip / 🛑 Stop buttons; `/hint <thread> <guidance>` retries with guidance. A pressed question loses its buttons and says who answered; each worker job keeps one silent status card up to date (phase, current step, tasks), edited at most every few seconds; `/status [thread]` reports a run on demand (no thread = the latest one); `/runs` lists every in-flight run, whoever started it, with the ones waiting on you first (`/runs all` adds finished ones); errors arrive verbatim in a code block.
 - **Failed task via REST** → `POST /runs/<thread_id>/decision` with `{"action": "retry" | "replan" | "skip" | "abort", "hint": "..."}`.
-- **MCP**: `uv run agentflow-mcp` (stdio) or `--http` (127.0.0.1:8001; every request needs `Authorization: Bearer $MCP_TOKEN`, and an empty token refuses to start unless `INSECURE_DEV=true`). `ecosystem.config.js` runs it and the chat layer under pm2. Add it to Claude Desktop or Claude Code to start and approve runs from chat.
+- **MCP**: `uv run agentflow-mcp` (stdio) or `--http` (127.0.0.1:8001; every request needs `Authorization: Bearer $MCP_TOKEN`, and an empty token refuses to start unless `INSECURE_DEV=true`). `ecosystem.config.js` runs it and the chat layer under pm2. Add it to Claude Desktop or Claude Code to start and approve runs from chat; `list_runs` there shows the same in-flight list as `/runs`, so a run started from Telegram can be approved from a Code session and the other way round.
 - **Chat in plain language**: [`chat/`](chat/README.md) is a second Telegram bot on the Claude Agent SDK over the same MCP server. «найди репозиторий на Python с fastapi, активным CI и лицензией MIT и добавь туда эндпоинт X» → `find_repos` → «Запустить в X?» → `start_run`.
 
 **Repo whitelist.** Runs started over MCP may only target repos listed in `repos.toml` (`REPOS_FILE`; copy
