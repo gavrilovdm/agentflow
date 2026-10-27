@@ -282,6 +282,7 @@ Events:       Issues`,
     steps: [
       'Register the MCP server once.',
       'Ask the assistant to start a run; it calls start_run.',
+      'Say “file a card: …” → create_task puts an issue in the board’s Бэклог; “what is on the board?” → list_board.',
       'Ask “what is it waiting for?” → get_run; “what is running?” → list_runs (every run, wherever it started); “approve it” → review_checkpoint.',
     ],
     code: `claude mcp add agentflow -- uv --directory ~/agentflow run agentflow-mcp`,

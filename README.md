@@ -48,7 +48,7 @@ flowchart TD
 | **Recovery from failure** | Separate budgets, windowed stall detection (catches A↔B oscillation), a referee that can rewrite an unsatisfiable test, then escalation: a human picks retry-with-hint, re-plan, skip or abort |
 | **API integrations, event-driven** | GitHub webhook (issue labelled → run → PR that closes it), Telegram inline buttons resume paused runs, Redis job queue |
 | **Human-in-the-loop** | `interrupt()` at spec, plan, and whenever a task exhausts its budget (with an evidence dossier); answered via Telegram, REST, MCP or CLI; resumes deduplicated by checkpoint id |
-| **MCP** | `mcp_server.py`: `start_run`, `list_runs`, `get_run`, `review_checkpoint`, `resolve_failed_task`, plus repo selection over a whitelist (`list_repos`, `inspect_repo`, `find_repos`) |
+| **MCP** | `mcp_server.py`: `create_task` and `list_board` (task board), `start_run`, `list_runs`, `get_run`, `review_checkpoint`, `resolve_failed_task`, plus repo selection over a whitelist (`list_repos`, `inspect_repo`, `find_repos`) |
 | **Conversational layer** | `chat/`: a separate package on the Claude Agent SDK with a Telegram bridge; picks the repo from your criteria, confirms in code, talks to agentflow only through MCP |
 | **Evaluation** | `evals/`: spec LLM-as-judge, e2e agent runs; all logged to LangSmith |
 | **Tracing** | LangSmith traces tagged by role and task; JSON logs |
@@ -98,6 +98,8 @@ layout, workflows and the latest CI result, last commit, open PRs, license, CONT
 cached 10 minutes). `find_repos` checks hard criteria against each one and reports passed / failed /
 unknown, where unknown means the fact couldn't be fetched. Topic fit is left to the caller's model,
 which reads the description and README.
+
+**Task board.** Tasks are moving to a GitHub Projects board where every task is an issue and each column is a stage with its own agent (Бэклог → Планируется → Делается → Тестируется → Готово к мержу → Смержено, plus Блокировка). `board.py` is the only way in: it reads columns, lets an agent claim a card through the Owner field, and moves a card only along the allowed transitions — one column forward, back to Делается from testing or review, into Блокировка from any working column. Each move first posts the stage's report as an issue comment (with a machine-readable `agentflow:report` line) and only then changes Status, so a card never lands in a new column without its explanation; the third return to Делается blocks the card instead of looping. MCP `create_task` opens an issue from the template (goal, Definition of Done checklist, context) in a whitelisted repo and puts it in Бэклог; `list_board` shows the cards. The board lives in an organization because user-owned projects get no `projects_v2_item` webhooks and fine-grained tokens can't reach them; it uses its own `GITHUB_BOARD_TOKEN`, `BOARD_ORG`, `BOARD_PROJECT`. `scripts/setup_board.py` creates the columns and fields (the field is `Task type`: GitHub reserves `Type`). Stage agents and the orchestrator come next; until then runs start as before.
 
 **GitHub token.** `GITHUB_TOKEN` needs Contents and Pull requests read/write on the whitelisted repos
 (Issues too for the label trigger); a fine-grained token limited to those repos is the safe choice. Git
