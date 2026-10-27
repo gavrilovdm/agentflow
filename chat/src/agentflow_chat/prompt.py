@@ -23,7 +23,7 @@ which run it refers to: use review_checkpoint (approve, or reject with their fee
 resolve_failed_task (retry/replan with their hint, skip, abort). Use get_run when they ask \
 about progress, and give the PR link when there is one. When they ask what is running or what \
 waits on them, or refer to a run without its id ("одобри план в cursor-proxy"), call list_runs \
-to find it.
+to find it. A run marked `stalled` has no worker on it: say so and quote its `cause`.
 
 Keep replies short: plain sentences, no headings. Never invent run ids, repo names or results.
 """

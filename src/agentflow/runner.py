@@ -3,11 +3,13 @@ REST API, queue worker and MCP server so they cannot drift apart."""
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -51,6 +53,20 @@ class RunSnapshot:
     interrupt: dict[str, Any] | None
     values: dict[str, Any]
     checkpoint_id: str | None = None
+    updated_at: str | None = None  # time of the newest checkpoint
+    next_nodes: tuple[str, ...] = ()
+    node_errors: list[str] = field(default_factory=list)  # exceptions LangGraph kept for the pending nodes
+    stalled: bool = False  # set by mark_stalled: unfinished, not paused, and no worker is on it
+
+    def cause(self) -> str | None:
+        """Why a run that is not running stopped, as far as the checkpoint can tell."""
+        if self.values.get("error"):
+            return str(self.values["error"])
+        if self.node_errors:
+            return "; ".join(self.node_errors)
+        if self.stalled:
+            return f"worker stopped without recording an error (killed?) before {', '.join(self.next_nodes) or '?'}"
+        return None
 
     def to_json(self) -> dict[str, Any]:
         v = self.values
@@ -66,6 +82,9 @@ class RunSnapshot:
             "failed_tasks": v.get("failed_tasks", {}),
             "pull_request": v["pull_request"].model_dump() if v.get("pull_request") else None,
             "error": v.get("error"),
+            "updated_at": self.updated_at,
+            "stalled": self.stalled,
+            "cause": self.cause(),
         }
 
     def summary(self) -> dict[str, Any]:
@@ -83,7 +102,9 @@ class RunSnapshot:
             "tasks_done": sum(t.status == "completed" for t in tasks),
             "tasks_total": len(tasks),
             "pull_request": pr.url if pr else None,
-            "error": (v.get("error") or "")[:200] or None,
+            "updated_at": self.updated_at,
+            "stalled": self.stalled,
+            "cause": (self.cause() or "")[:300] or None,
         }
 
 
@@ -103,13 +124,43 @@ def make_deps(p: Persistence, config: WorkflowConfig) -> Deps:
     return Deps(config=config)
 
 
+def _describe(error: object) -> str:
+    text = error if isinstance(error, str) else f"{type(error).__name__}: {error}"
+    return text[:300]
+
+
 async def snapshot(graph: CompiledStateGraph, thread_id: str) -> RunSnapshot:
     st = await graph.aget_state(_config(thread_id))
     interrupts = [i.value for task in st.tasks for i in task.interrupts]
     values = st.values or {}
     status = "awaiting_approval" if interrupts else values.get("status", "unknown")
     checkpoint_id = (st.config or {}).get("configurable", {}).get("checkpoint_id")
-    return RunSnapshot(thread_id, status, interrupts[0] if interrupts else None, values, checkpoint_id)
+    # A node that raised and was never recorded as a failure (the process died, or the
+    # exception bypassed _drive) still has its exception in the checkpoint's pending writes.
+    # Read back from a checkpoint it is the exception's repr string, not the exception.
+    errors = [f"{t.name}: {_describe(t.error)}" for t in st.tasks if t.error]
+    return RunSnapshot(
+        thread_id,
+        status,
+        interrupts[0] if interrupts else None,
+        values,
+        checkpoint_id,
+        st.created_at,
+        tuple(st.next),
+        errors,
+    )
+
+
+def mark_stalled(snaps: list[RunSnapshot], running: set[str] | None) -> list[RunSnapshot]:
+    """Flag runs that are neither finished nor paused, yet no worker holds them.
+
+    `running` is the set of threads with a live worker heartbeat; None means it is unknown
+    (no Redis), and then nothing is flagged rather than everything.
+    """
+    if running is not None:
+        for s in snaps:
+            s.stalled = not s.interrupt and s.status not in FINISHED and s.thread_id not in running
+    return snaps
 
 
 async def _recent_thread_ids(graph: CompiledStateGraph, limit: int) -> list[str]:
@@ -134,8 +185,10 @@ async def _recent_thread_ids(graph: CompiledStateGraph, limit: int) -> list[str]
         return [row["thread_id"] for row in await cur.fetchall()]
 
 
-async def list_runs(graph: CompiledStateGraph, limit: int = 20, include_finished: bool = False) -> list[RunSnapshot]:
-    """Recent runs, the ones waiting on a person first, then by recency.
+async def list_runs(
+    graph: CompiledStateGraph, limit: int = 20, include_finished: bool = False, running: set[str] | None = None
+) -> list[RunSnapshot]:
+    """Recent runs: waiting on a person first, then stalled, then by recency.
 
     Runs are started from several places (Telegram, MCP, REST, issue labels) and each
     knows only its own thread id, so without this nobody could see what is in flight.
@@ -146,7 +199,9 @@ async def list_runs(graph: CompiledStateGraph, limit: int = 20, include_finished
     snaps = [await snapshot(graph, t) for t in ids]
     if not include_finished:
         snaps = [s for s in snaps if s.interrupt or s.status not in FINISHED]
-    return sorted(snaps[:limit], key=lambda s: s.interrupt is None)  # stable: recency kept within groups
+    mark_stalled(snaps, running)
+    # stable sort: recency is kept within each group
+    return sorted(snaps[:limit], key=lambda s: (s.interrupt is None, not s.stalled))
 
 
 async def start_run(
@@ -207,6 +262,7 @@ async def resume_run(
 
 
 CRASH_PREFIX = "Run crashed: "
+CANCEL_PREFIX = "Run cancelled: "
 
 
 async def _drive(
@@ -234,3 +290,17 @@ async def _drive(
         log.exception("run %s crashed", thread_id)
         error = f"{CRASH_PREFIX}{type(exc).__name__}: {str(exc)[:1000]}"
         await p.graph.aupdate_state(_config(thread_id), {"status": "failed", "error": error}, as_node="handle_failure")
+    except asyncio.CancelledError:
+        # A worker restart or arq's job timeout cancels the job. CancelledError is not an
+        # Exception, so the handler above missed it and the run stayed "coding" forever,
+        # with nothing saying why. Record it (shielded: we are being cancelled) and let the
+        # cancellation proceed.
+        log.warning("run %s cancelled", thread_id)
+        error = f"{CANCEL_PREFIX}worker stopped or job timed out"
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await asyncio.shield(
+                p.graph.aupdate_state(
+                    _config(thread_id), {"status": "failed", "error": error}, as_node="handle_failure"
+                )
+            )
+        raise
