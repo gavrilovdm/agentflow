@@ -18,6 +18,7 @@
 | `src/agentflow/graph/` | README diagram + design notes; `guide/src/lib/content.ts` (NODES); `guide/src/lib/routing.ts` if routing changed (parity test); `guide/src/lib/graphLayout.ts` if nodes/edges changed (sync test fails otherwise) |
 | `src/agentflow/agents/`, `schemas.py` | README requirements table; guide NODES / INTERVIEW |
 | `src/agentflow/gate/` | README "Gate per language" |
+| `src/agentflow/skills/` | README "Role skills" design note + Layout |
 | `src/agentflow/api/`, `worker.py`, `mcp_server.py` | README "As a service"; guide USE_CASES |
 | `src/agentflow/board.py` | README "As a service" (Task board) |
 | `src/agentflow/repos.py` | README "As a service" (repo whitelist) + `chat/README.md` (tool table) |

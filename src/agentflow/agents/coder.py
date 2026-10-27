@@ -26,6 +26,7 @@ from agentflow.gate import ACCEPTANCE_TEST_DIR
 from agentflow.integrations.workspace import PathEscapeError, resolve_in_workspace
 from agentflow.models import chat_model
 from agentflow.schemas import CoderResult, Spec, Task
+from agentflow.skills import role_section
 
 MAX_MODEL_CALLS = 25
 
@@ -133,7 +134,7 @@ def system_prompt(ctx: CoderContext) -> str:
         "5. No scratch, debug or helper scripts — everything you write is committed\n"
         "6. When done, reply with the list of files you wrote"
     )
-    return "\n\n".join(sections)
+    return "\n\n".join(sections) + role_section("coder")
 
 
 async def run_coder(ctx: CoderContext, feedback: str | None = None) -> CoderResult:

@@ -25,6 +25,7 @@ from agentflow.agents.repo_tools import make_repo_tools
 from agentflow.config import get_settings
 from agentflow.models import chat_model, structured
 from agentflow.schemas import Spec, SpecDraft, Task, TaskPlan
+from agentflow.skills import role_section
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ Rules:
 - technical_notes reference existing modules, functions and patterns you found in the repository
 - out_of_scope lists anything a developer might reasonably assume is included but isn't
 - A developer must be able to start coding with no follow-up questions."""
+SPEC_SYSTEM += role_section("orchestrator")
 
 TASKS_SYSTEM = """You are a senior software architect breaking an approved spec into an ordered task list.
 
@@ -52,6 +54,7 @@ Rules:
 - Do not create separate "write tests" tasks: every task automatically gets its own acceptance test,
   written before its code. Tests belong to the task whose behaviour they check
 - ID format: task-<slug>, e.g. task-add-auth-middleware"""
+TASKS_SYSTEM += role_section("orchestrator")
 
 
 SPEC_ATTEMPTS = 2
@@ -192,6 +195,7 @@ Rules:
   interface, specific definition_of_done, no separate "write tests" tasks.
 - depends_on may reference completed task ids and ids in your new list only.
 - Use fresh ids (task-<slug>) — never reuse the id of the failed task."""
+REPLAN_SYSTEM += role_section("orchestrator")
 
 
 async def replan_tasks(

@@ -18,6 +18,7 @@ from agentflow.config import get_settings
 from agentflow.gate import ACCEPTANCE_TEST_DIR, Gate
 from agentflow.models import structured
 from agentflow.schemas import GeneratedTest, Spec, Task
+from agentflow.skills import role_section
 
 log = logging.getLogger(__name__)
 ATTEMPTS = 3
@@ -90,7 +91,8 @@ async def generate_test(
             else ""
         )
     )
-    messages = [SystemMessage(SYSTEM.format(rules=gate.test_prompt_rules())), HumanMessage(body)]
+    system = SYSTEM.format(rules=gate.test_prompt_rules()) + role_section("test_generator")
+    messages = [SystemMessage(system), HumanMessage(body)]
     runnable = structured(get_settings().test_generator_model, GeneratedTest)
 
     last_error: Exception | None = None

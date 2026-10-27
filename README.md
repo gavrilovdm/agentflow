@@ -42,7 +42,7 @@ flowchart TD
 | **LLM APIs, agentic systems** | Anthropic (Opus/Sonnet) and DeepSeek via LangChain; `create_agent` coder and reviewer (`agents/`) |
 | **LangGraph / LangChain** | 17-node `StateGraph` with typed reducers and runtime-context DI (`graph/`) |
 | **Tool calling, structured outputs** | Read-only code navigation (glob/grep/read, `agents/repo_tools.py`) for the orchestrator, coder and reviewer; coder write tools; Pydantic outputs for spec, plan, review and referee (`schemas.py`), the orchestrator's returned through a structured-output tool at the end of exploration |
-| **Context management** | No whole-repo dumps and no retrieval preload: agents pull in only what they grep and read; tool output is capped (100 grep matches, 400 lines per read) and every agent has a model-call ceiling |
+| **Context management** | No whole-repo dumps and no retrieval preload: agents pull in only what they grep and read; tool output is capped (100 grep matches, 400 lines per read) and every agent has a model-call ceiling. Language rules come from the gate, role craft from `skills/`, so no prompt carries another language's rules |
 | **State** | Postgres checkpointer: per-run state, resumable after a worker restart |
 | **Routing, retries, fallback** | Conditional edges (`graph/routing.py`); node `RetryPolicy` + timeouts; `.with_fallbacks()` on structured calls; `ModelFallbackMiddleware`, `ModelRetryMiddleware` and `ModelCallLimitMiddleware` on agents |
 | **Recovery from failure** | Separate budgets, windowed stall detection (catches A↔B oscillation), a referee that can rewrite an unsatisfiable test, then escalation: a human picks retry-with-hint, re-plan, skip or abort |
@@ -114,6 +114,8 @@ Vercel refused to deploy. `GIT_AUTHOR_*` / `GIT_COMMITTER_*` in the environment 
 ## Design notes
 
 **Agents explore; there is no RAG.** The project used to run hybrid RAG: code-aware chunks, Voyage embeddings, pgvector + Postgres full-text fused with RRF, and a 6000-token preload in every coder prompt. It was removed after measuring it on this repo: the preload put the target files in context in only 2–3 of 6 tasks (README and generated guide data took the rest), and in a live run the coder never called its search tool, going straight to `read_file`. A plan has to name exact target files and binding interfaces, which means following references: find the file, grep every call site, read the module it extends. So the orchestrator (`generate_spec`, `generate_tasks`, `replan`) runs as a `create_agent` with read-only `glob_files`, `grep` and `read_file` (`agents/repo_tools.py`, sandboxed to the workspace, output capped) and returns its `SpecDraft`/`TaskPlan` through a structured-output tool. The coder gets `glob_files` and `grep` next to its own read/write tools, the reviewer gets all three. Exploration is capped at 20 model calls; if it ends without an answer or errors, the orchestrator falls back to a one-shot structured call, so a tool loop can't fail the run at planning. Dropping RAG also dropped the embeddings provider, pgvector and the re-index after every task.
+
+**Role skills: the craft, not the language.** Each role's system prompt says what the call must produce and the contract around it (binding interface, Definition of Done, structured output). How a good engineer in that role works lives apart, in `src/agentflow/skills/<role>/<name>.md`: planning for the orchestrator (mirror the closest existing feature, cut by behaviour, riskiest part first), test design for the test generator (public interface, exact assertions, boundary inputs, mock only process boundaries), implementation for the coder (read before write, smallest diff, fail loudly), review for the reviewer (correctness before style, grep every caller, security is always blocking). Skills are language-agnostic on purpose, and a test enforces it: pytest and vitest rules depend on how the gate runs tests, so they stay in `gate/`. Skills are inlined into every call of the role rather than fetched by a tool, because they always apply, and a coder once given an optional search tool never called it. Edit a skill by editing its Markdown; a new file in a role's folder is picked up with no code change.
 
 **One Postgres, one role.** It holds LangGraph checkpoints, so a paused or interrupted run resumes where it stopped. Plain Postgres 17, no extensions.
 
@@ -242,6 +244,7 @@ src/agentflow/
   agents/        orchestrator · test_generator · coder · reviewer (+ referee) · repo_tools (glob/grep/read)
   graph/         state · context (DI) · nodes · routing · build
   gate/          python · typescript · detection
+  skills/        language-agnostic craft per role: orchestrator · test_generator · coder · reviewer
   integrations/  workspace (git) · github · telegram
   api/ worker.py mcp_server.py repos.py cli.py runner.py progress.py observability.py
 chat/   separate package: Claude Agent SDK session per chat + Telegram bridge, MCP-only
