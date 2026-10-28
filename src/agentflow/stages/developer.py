@@ -50,6 +50,7 @@ from agentflow.runner import (
     start_from_plan,
 )
 from agentflow.schemas import Task
+from agentflow.stages import research
 from agentflow.stages.planner import Plan, is_agent_comment, latest_plan, subtask_id, target_of
 
 log = logging.getLogger(__name__)
@@ -168,6 +169,16 @@ async def process(
     if found is None:
         await board.move(card, BLOCKED, Report(agent=AGENT, summary="на карточке нет плана: её не прошёл planner"))
         return BLOCKED
+
+    if card.type == "research":
+        returned_report = (sent_back(thread) or ("", None))[1]
+        to, report = await research.research(board, card, thread, found[0], returned_report)
+        if to != BLOCKED:
+            for s in await board.sub_issues(card):
+                if not s.closed:
+                    await board.close_issue(s.issue_id)
+        await board.move(card, to, report)
+        return to
 
     snap = await snapshot(p.graph, card.run) if card.run else None
     returned = sent_back(thread)

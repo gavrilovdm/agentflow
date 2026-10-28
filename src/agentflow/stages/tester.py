@@ -31,11 +31,12 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
 from agentflow.agents import orchestrator
-from agentflow.board import DOING, READY, TESTING, Board, Card, Report, Thread, branch_of
+from agentflow.board import DOING, MERGED, READY, TESTING, Board, Card, Report, Thread, branch_of
 from agentflow.config import TargetRepo
 from agentflow.gate import Gate, detect_gate
 from agentflow.integrations import workspace as ws
 from agentflow.skills import role_section
+from agentflow.stages import research
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +141,13 @@ class Outcome:
 
 async def process(board: Board, card: Card, checker: Checker = make_checks, checkout: Checkout = checkout) -> Outcome:
     thread: Thread = await board.thread(card)
+    if card.type == "research":
+        to, report = await research.check(card, thread, dod_items(thread.body))
+        moved = await board.move(card, to, report)
+        if to == MERGED:
+            # No PR will close it with "Closes #N": a live research card sat done with its issue open.
+            await board.close_issue(card.issue_id)
+        return Outcome(moved.status or to, [])
     branch = branch_of(thread)
     items = dod_items(thread.body)
     if not branch or not items:

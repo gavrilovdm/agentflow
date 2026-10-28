@@ -181,3 +181,23 @@ async def test_card_sent_back_by_the_tester_gets_one_fix_task_on_its_branch(repo
     assert "-fix1-" in fix_run
     assert [t for t, _ in fakes["coder"][coder_calls:]] == ["task-fix-1"]  # only the fix, not the whole plan
     assert b.branch_of(fb.thread_) == branch
+
+
+async def test_edits_left_by_a_killed_attempt_count_as_the_retried_attempts_work(repo: Path, fakes, monkeypatch):
+    # Live: after a kill the resumed coder found nothing to change, "Coder wrote no files" cost an attempt.
+    original = coder.run_coder
+    calls = []
+
+    async def nothing_left(ctx, feedback=None):
+        calls.append(ctx.task.id)
+        if ctx.task.id == "task-add" and calls.count("task-add") == 1:
+            body = "def add(a: int, b: int) -> int:\n    return a + b\n"
+            (ctx.workspace / "calc/ops.py").write_text(body)  # written, then the worker "died"
+            return CoderResult(task_id=ctx.task.id, success=False, error="Coder wrote no files")
+        return await original(ctx, feedback)
+
+    monkeypatch.setattr(coder, "run_coder", nothing_left)
+    fb = FakeBoard(_plan())
+    async with open_persistence(in_memory=True, builder=build_developer_graph) as p:
+        assert await developer.process(fb, _card(), p, lambda c: WorkflowConfig(local_path=str(repo))) == b.TESTING
+    assert calls.count("task-add") == 1  # no second coder call: the edits on disk were the attempt

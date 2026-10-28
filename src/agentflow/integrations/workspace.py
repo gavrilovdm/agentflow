@@ -133,6 +133,15 @@ def commit(workspace: Path, paths: list[str], message: str) -> bool:
     return True
 
 
+def uncommitted(workspace: Path, paths: list[str]) -> dict[str, str]:
+    """Of `paths`, the files that differ from HEAD (or are new), with their contents."""
+    repo = Repo(workspace)
+    changed = {d.a_path for d in repo.index.diff(None)} | set(repo.untracked_files)
+    if repo.head.is_valid():
+        changed |= {d.a_path for d in repo.index.diff("HEAD")}
+    return {p: (workspace / p).read_text() for p in paths if p in changed and (workspace / p).is_file()}
+
+
 def restore(workspace: Path, paths: list[str]) -> None:
     """Put files back as they are in HEAD; a file HEAD does not have is removed."""
     repo = Repo(workspace)

@@ -73,6 +73,8 @@ def allowed(src: str, dst: str) -> bool:
     from any working column, and out of it only to a working column."""
     if src == BLOCKED:
         return dst in WORKING
+    if src == TESTING and dst == MERGED:
+        return True  # research and text have no PR: tested is done
     return dst == FORWARD.get(src) or dst == BACK.get(src) or (dst == BLOCKED and src in WORKING)
 
 
