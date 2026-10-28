@@ -5,7 +5,7 @@ with binding interfaces, exploring a fresh clone of the repo the way the orchest
 always has. The plan goes onto the card as a comment: readable for a person, with the
 spec and tasks encoded in a marker so the developer stage works from the card alone.
 
-- Approval ≠ none → the plan waits for a person: a comment "ок" approves it, anything
+- Approval ≠ none → the plan waits for a person: a comment "ok" (or the legacy "ок") approves it, anything
   else is feedback and the plan is rewritten with it (at most three versions, then
   Блокировка);
 - approved → each task becomes a sub-issue of the card and the card moves to Делается.
@@ -71,7 +71,7 @@ def render_plan(plan: Plan, version: int, needs_approval: bool) -> str:
         after = f" (после {', '.join(t.depends_on)})" if t.depends_on else ""
         lines.append(f"{i}. `{t.id}` {t.title}{after} — {', '.join(t.target_files)}")
     if needs_approval:
-        lines += ["", "Ответьте «ок», чтобы взять план в работу, или напишите, что изменить."]
+        lines += ["", "Ответьте «ok», чтобы взять план в работу, или напишите, что изменить."]
     # base64: JSON in an HTML comment would end it at the first "--" inside a string.
     data = base64.b64encode(plan.model_dump_json().encode()).decode()
     lines.append(f"<!-- {PLAN_MARK} version={version} data={data} -->")

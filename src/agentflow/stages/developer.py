@@ -7,7 +7,7 @@ is pushed; the PR is a later column's job.
 
 - every task done and the full suite green → Тестируется, with the branch and sub-issues closed;
 - a task out of budget → Блокировка with its dossier. A person answers in a comment (a hint
-  for a retry, «пропусти», «перепланируй» or «стоп») and moves the card back to Делается;
+  for a retry, «skip», «replan» or «stop» (legacy Russian words work too)) and moves the card back to Делается;
   the paused run then resumes with that answer instead of starting over;
 - a failed task or a red full suite → Блокировка with the reason.
 
@@ -96,7 +96,7 @@ def outcome(card: Card, snap: RunSnapshot) -> tuple[str, Report]:
         return BLOCKED, Report(
             agent=AGENT,
             summary=f"задача `{d['task']['id']}` исчерпала попытки\n\n```\n{dossier_text(d)}\n```",
-            next_step="ответьте комментарием — подсказка для повтора, «пропусти», «перепланируй» или «стоп» — "
+            next_step="ответьте комментарием — подсказка для повтора, «skip», «replan» или «stop» — "
             "и верните карточку в Делается",
         )
     if v.get("status") == "failed":
@@ -148,7 +148,7 @@ async def _fix_run(
     files = sorted({f for t in plan.tasks for f in t.target_files})
     fix = Task(
         id=f"task-fix-{card.attempts}",
-        title="Исправить то, что нашла проверка",
+        title="Fix what the check found",
         description=f"A later stage checked the branch and sent it back. Its report:\n\n{findings}",
         target_files=files,
         definition_of_done="Every item the report marks as failed holds; nothing that passed breaks.",

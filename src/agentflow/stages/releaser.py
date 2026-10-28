@@ -5,7 +5,7 @@ watches it on each pass:
 
 - CI red → back to Делается with the failing checks (the developer fixes on the same branch);
 - CI running → the card waits;
-- CI green (or the repo runs none) → merged once a person writes «мержи» on the card, or
+- CI green (or the repo runs none) → merged once a person writes «merge» (legacy «мержи» works too) on the card, or
   at once for a repo with `auto_merge` in the whitelist; the card moves to Смержено;
 - a conflict with the base branch, or a PR closed without merging → Блокировка.
 
@@ -51,7 +51,7 @@ class Outcome:
 
 
 def merge_approved(thread: Thread) -> bool:
-    """A person wrote «мержи» after the card last arrived in Готово к мержу."""
+    """A person wrote «merge» (or legacy «мержи») after the card last arrived in Готово к мержу."""
     arrived = max((r.index for r in reports(thread) if r.dst == READY), default=-1)
     return any(MERGE_WORD.match(c.body.strip()) for c in thread.comments[arrived + 1 :] if not is_agent_comment(c))
 
@@ -124,10 +124,10 @@ async def process(board: Board, card: Card, may_merge: bool | None = None) -> Ou
     allowed = auto_merge(card) if may_merge is None else may_merge
     if allowed or merge_approved(thread):
         await board.merge_pull_request(pr)
-        return await _merged(board, card, pr, "автомержем" if allowed else "по «мержи»")
+        return await _merged(board, card, pr, "автомержем" if allowed else "по «merge»")
     if not any(ASK_MARK in c.body for c in thread.comments[max((r.index for r in reports(thread)), default=0) :]):
         await board.comment(
-            card, f"{pr.url}: CI зелёный, DoD проверен. Напишите «мержи», чтобы смержить. <!-- {ASK_MARK} -->"
+            card, f"{pr.url}: CI зелёный, DoD проверен. Напишите «merge», чтобы смержить. <!-- {ASK_MARK} -->"
         )
     await board.set_field(card, "Owner", None)
     return Outcome("waiting", "merge approval")

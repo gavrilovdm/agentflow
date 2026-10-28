@@ -35,7 +35,7 @@ class RepoEntry(BaseModel):
     owner: str = ""  # the team or person responsible, not the GitHub owner
     tags: list[str] = Field(default_factory=list)
     base_branch: str | None = None  # None = the repo's default branch
-    # The releaser merges a green, tested PR without waiting for a person's «мержи».
+    # The releaser merges a green, tested PR without waiting for a person's «merge».
     auto_merge: bool = False
 
 

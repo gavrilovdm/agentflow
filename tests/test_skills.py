@@ -45,7 +45,8 @@ def test_each_role_prompt_carries_its_own_skills_only():
 
 
 def test_role_without_skills_adds_nothing(tmp_path: Path):
-    assert role_section("coder", tmp_path, hub="") == ""
+    assert "How you work" not in role_section("coder", tmp_path, hub="")
+    assert role_section("intake", tmp_path, hub="") == ""
 
 
 def test_malformed_skill_fails_loudly(tmp_path: Path):
@@ -80,6 +81,22 @@ def test_hub_dir_without_skills_fails_loudly(tmp_path: Path):
 def test_no_hub_configured_keeps_the_role_skills(monkeypatch):
     monkeypatch.delenv("HUB_ENGINEERING_DIR", raising=False)
     assert role_section("coder") == role_section("coder", hub="")
+
+
+def test_english_rule_is_in_every_agent_role_prompt():
+    from agentflow.agents import orchestrator, reviewer, test_generator
+    from agentflow.skills import ENGLISH_RULE
+
+    for role in ("orchestrator", "coder", "test_generator", "reviewer", "tester"):
+        assert ENGLISH_RULE in role_section(role), role
+    for prompt in (
+        orchestrator.SPEC_SYSTEM,
+        orchestrator.TASKS_SYSTEM,
+        orchestrator.REPLAN_SYSTEM,
+        reviewer.REVIEW_SYSTEM,
+    ):
+        assert ENGLISH_RULE in prompt
+    assert ENGLISH_RULE in test_generator.SYSTEM + role_section("test_generator")
 
 
 async def test_coder_out_of_steps_is_a_clear_failure(monkeypatch, tmp_path):
