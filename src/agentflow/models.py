@@ -16,6 +16,7 @@ from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI
 
 from agentflow.config import get_settings
+from agentflow.telemetry import TOKENS
 
 # Opus runs adaptive thinking; a non-streaming request whose max_tokens implies it
 # could exceed 10 minutes is refused by the SDK. 16k is verified for both plain and
@@ -32,7 +33,7 @@ def chat_model(
 ) -> BaseChatModel:
     s = get_settings()
     if name.startswith("claude-"):
-        kwargs: dict[str, Any] = {"model": name, "max_tokens": max_tokens, "max_retries": 3}
+        kwargs: dict[str, Any] = {"model": name, "max_tokens": max_tokens, "max_retries": 3, "callbacks": [TOKENS]}
         if s.anthropic_api_key:  # from .env via pydantic-settings; the SDK itself only reads os.environ
             kwargs["api_key"] = s.anthropic_api_key
         if temperature is not None and "opus" not in name:  # opus thinking rejects temperature
@@ -49,6 +50,7 @@ def chat_model(
             api_key=s.claude_proxy_key or "unset",  # type: ignore[arg-type]
             base_url=s.claude_proxy_url,
             max_retries=3,
+            callbacks=[TOKENS],
         )
     if name.startswith("deepseek-"):
         return ChatOpenAI(
@@ -58,6 +60,7 @@ def chat_model(
             api_key=s.deepseek_api_key or "unset",  # type: ignore[arg-type]
             base_url=s.deepseek_base_url,
             max_retries=3,
+            callbacks=[TOKENS],
             # DeepSeek's thinking mode rejects a forced tool_choice, which is what
             # with_structured_output(method="function_calling") sends. Non-OpenAI params
             # must travel in extra_body: model_kwargs reach create() as kwargs and the SDK

@@ -27,6 +27,7 @@ from agentflow.integrations import telegram
 from agentflow.observability import setup_logging
 from agentflow.progress import HEARTBEAT_TTL_S, LAST_THREAD_KEY, RUNNING_PREFIX, StatusCard, render
 from agentflow.runner import CRASH_PREFIX, RunSnapshot, open_persistence, resume_run, snapshot, start_run
+from agentflow.telemetry import setup_telemetry
 
 log = logging.getLogger("agentflow.worker")
 
@@ -134,7 +135,9 @@ async def resume_run_job(ctx: dict, thread_id: str, decision: dict | bool, feedb
 
 async def stage_job(ctx: dict, agent: str, item_id: str) -> str:
     """One stage agent on the card the orchestrator handed it (see orchestrator_pm)."""
-    return await orchestrator_pm.work(ctx["board"], ctx["redis"], agent, item_id, ctx["developer_persistence"])
+    return await orchestrator_pm.work(
+        ctx["board"], ctx["redis"], agent, item_id, ctx["developer_persistence"], get_settings().database_url
+    )
 
 
 async def add_to_board_job(ctx: dict, issue_id: str) -> str:
@@ -174,6 +177,7 @@ async def daily_summary(ctx: dict) -> None:
 
 async def startup(ctx: dict) -> None:
     setup_logging()
+    setup_telemetry("agentflow-worker")
     ctx["_persistence_cm"] = open_persistence()
     ctx["persistence"] = await ctx["_persistence_cm"].__aenter__()
     ctx["_developer_cm"] = open_persistence(builder=build_developer_graph)
