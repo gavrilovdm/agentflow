@@ -79,6 +79,26 @@ async def test_python_gate_lints_only_task_files(tmp_path: Path):
     assert "Lint errors" in dirty.errors
 
 
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
+async def test_python_gate_syncs_a_uv_app_with_its_dependency_groups(tmp_path: Path):
+    """A Django skeleton (no build system, apps/ config/ tests/ side by side, django-stubs in
+    a dev group) failed every attempt: `pip install -e .` refused the flat layout and never
+    installed the group, so mypy could not import its plugin."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="app"\nversion="0.1.0"\nrequires-python=">=3.10"\ndependencies=[]\n'
+        '[dependency-groups]\ndev=["iniconfig"]\n'
+    )
+    for pkg in ("apps", "config"):
+        (tmp_path / pkg).mkdir()
+        (tmp_path / pkg / "__init__.py").write_text("")
+    (tmp_path / "tests" / "acceptance").mkdir(parents=True)
+    (tmp_path / "tests" / "acceptance" / "test_dev_group.py").write_text(
+        "import iniconfig\n\n\ndef test_group_installed():\n    assert iniconfig.IniConfig\n"
+    )
+    result = await PythonGate().run(tmp_path, ["tests/acceptance/test_dev_group.py"], enable_lint=True)
+    assert result.passed, result.summary
+
+
 async def test_ts_gate_brings_its_own_vitest_and_leaves_the_repo_alone(tmp_path: Path, monkeypatch):
     """A Vite site without tests failed every run with "Cannot find package 'vitest'" until
     the coder added vitest to the repo's package.json, which then shipped in the PR."""

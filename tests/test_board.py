@@ -224,3 +224,13 @@ def test_closed_issue_on_the_board_is_not_a_card_to_work_on():
                         "repository": {"nameWithOwner": "o/r"}}}  # fmt: skip
     card = b._card(item)
     assert card is not None and card.closed
+
+
+async def test_a_long_block_reason_is_cut_to_its_first_line():
+    # GitHub refused a developer's dossier as "not a valid value for text column" after the
+    # card had moved, and the stage job crashed
+    gh = FakeGitHub()
+    dossier = "задача `t1` исчерпала попытки\n\n```\n" + "Recent failures: x\n" * 200 + "```"
+    card = await _board(gh).move(_card(b.DOING), b.BLOCKED, Report(agent="developer", summary=dossier))
+    assert gh.values[("IT1", "Blocked reason")] == "задача `t1` исчерпала попытки" == card.blocked_reason
+    assert len(b.short_reason("x" * 1000) or "") == 300

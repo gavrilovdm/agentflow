@@ -263,6 +263,22 @@ BUGS.push(
     lesson: 'A dedupe key outlives the thing it dedupes. Know how long your queue remembers.',
     commit: 'stage-job-ids PR',
   },
+  {
+    id: 'uv-app-install', title: 'A Django skeleton the gate could never install',
+    symptom: 'The first card of mentor-platform spent all five attempts of its first task on "No module named mypy_django_plugin" and setuptools refusing "multiple packages", and went to Блокировка with correct code.',
+    cause: 'The Python gate installed every repo with `pip install -e .`. A uv app keeps django-stubs in a dependency group, which that never installs, and an app with apps/ and config/ side by side and no build system is not a package setuptools can build.',
+    fix: 'A repo with uv.lock or [dependency-groups] is installed with `uv sync --all-groups` into the gate venv; pip stays for the rest.',
+    lesson: 'Install a project the way its own README does. A generic install is a guess about the build.',
+    commit: 'gate-uv-project PR',
+  },
+  {
+    id: 'blocked-reason-length', title: 'A stage job that crashed after the card had moved',
+    symptom: 'The developer moved card #2 to Блокировка with its dossier, then the job died with "Column value must be a valid value for text column".',
+    cause: 'The whole multi-line dossier went into the Blocked reason text field, which GitHub refused. The comment and the status change had already happened, so only the label and the job were lost.',
+    fix: 'The field keeps the first line of the report, cut to 300 characters; the comment carries the rest.',
+    lesson: 'A label is not a log. Put the short form in the field and the long form where it is read.',
+    commit: 'gate-uv-project PR',
+  },
 )
 
 export interface UseCase {

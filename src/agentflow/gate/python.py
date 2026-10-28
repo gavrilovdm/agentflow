@@ -10,6 +10,7 @@ from pathlib import Path
 
 from agentflow.gate.base import (
     ACCEPTANCE_TEST_DIR,
+    CommandResult,
     lintable,
     run_command,
     summarize,
@@ -81,18 +82,31 @@ class PythonGate:
         if not (ws / VENV).exists():
             await run_command(["uv", "venv", VENV, "-q"], ws)
         py = str(ws / VENV / "bin" / "python")
-        install = ["uv", "pip", "install", "-q", "--python", py, "pytest", "ruff", "mypy"]
-        if (ws / "pyproject.toml").exists():
-            install += ["-e", "."]
-        for req in ("requirements.txt", "requirements-dev.txt"):
-            if (ws / req).exists():
-                install += ["-r", req]
-        result = await run_command(install, ws)
+        result = await self._install_project(ws, py)
         if not result.ok:
             # Don't raise: a bad dependency list is something the coder can fix, so report it.
             return "Dependency install failed:\n" + "\n".join(tail(result.output, 8))
         stamp.write_text(digest)
         return None
+
+    async def _install_project(self, ws: Path, py: str) -> CommandResult:
+        tools = ["uv", "pip", "install", "-q", "--python", py, "pytest", "ruff", "mypy"]
+        pyproject = ws / "pyproject.toml"
+        text = pyproject.read_text(errors="ignore") if pyproject.exists() else ""
+        if (ws / "uv.lock").exists() or "[dependency-groups]" in text:
+            # A uv project: `pip install -e .` installs neither its dependency groups (a Django
+            # app's django-stubs, so mypy could not load its plugin) nor works for an app that
+            # is not a package (setuptools refused a flat layout of apps/ config/ tests/).
+            # `uv sync` installs every group into the gate's venv and builds only packages.
+            synced = await run_command(
+                ["uv", "sync", "-q", "--all-groups", "--all-extras"], ws, env={"UV_PROJECT_ENVIRONMENT": str(ws / VENV)}
+            )
+            return synced if not synced.ok else await run_command(tools, ws)
+        install = tools + (["-e", "."] if pyproject.exists() else [])
+        for req in ("requirements.txt", "requirements-dev.txt"):
+            if (ws / req).exists():
+                install += ["-r", req]
+        return await run_command(install, ws)
 
     async def run(
         self, workspace: Path, test_paths: list[str] | None, enable_lint: bool, lint_paths: list[str] | None = None

@@ -78,6 +78,17 @@ def allowed(src: str, dst: str) -> bool:
     return dst == FORWARD.get(src) or dst == BACK.get(src) or (dst == BLOCKED and src in WORKING)
 
 
+def short_reason(reason: str | None, limit: int = 300) -> str | None:
+    """The first line of a block reason, cut to fit. The field is a label on the card: a
+    developer's dossier (code blocks, stack lines) was refused by GitHub as "not a valid value
+    for text column" and the job crashed after the card had already moved. The full report
+    is the comment above it."""
+    if not reason:
+        return reason
+    first = next((line.strip() for line in reason.splitlines() if line.strip()), "")
+    return first if len(first) <= limit else first[: limit - 1] + "…"
+
+
 class BoardError(RuntimeError):
     pass
 
@@ -635,6 +646,7 @@ class Board:
         if attempts != card.attempts:
             await self._set(card.item_id, "Attempts", attempts)
         await self._set(card.item_id, "Owner", None)
+        reason = short_reason(reason)
         if reason or card.blocked_reason:
             await self._set(card.item_id, "Blocked reason", reason)
         return card.model_copy(update={"status": to, "attempts": attempts, "owner": None, "blocked_reason": reason})
