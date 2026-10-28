@@ -32,6 +32,11 @@ services:
       # A laptop has no public URL for Telegram's webhook, so the api pulls updates itself.
       TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
     ports: ["127.0.0.1:8010:8000"]  # 8000 is often taken locally
+    # repos.toml is gitignored, so the image has none: without this mount intake in the
+    # container refused every card as "not in the whitelist". create_host_path: false makes a
+    # missing file stop `up` instead of Docker creating an empty directory in its place.
+    volumes:
+      - { type: bind, source: ./repos.toml, target: /app/repos.toml, read_only: true, bind: { create_host_path: false } }
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
@@ -45,7 +50,10 @@ services:
       REDIS_URL: redis://redis:6379
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}  # shell env wins over .env (e.g. GITHUB_TOKEN=$(gh auth token))
       CLAUDE_PROXY_URL: http://host.docker.internal:8787/v1
-    volumes: [workspaces:/tmp/agentflow]
+    volumes:
+      - workspaces:/tmp/agentflow
+      # The same whitelist as the api (see there): intake and the developer check it here.
+      - { type: bind, source: ./repos.toml, target: /app/repos.toml, read_only: true, bind: { create_host_path: false } }
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
