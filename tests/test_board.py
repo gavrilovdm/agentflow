@@ -180,3 +180,39 @@ async def test_thread_reads_body_and_comments_and_update_issue_rewrites_it():
     assert t.body == "" and t.author == "" and t.comments[0].author == "u" and t.comments[0].body == "answer"
     await _board(gh).update_issue(_card(b.BACKLOG), "New title", "body")
     assert ("updateIssue", {"i": "I1", "t": "New title", "b": "body"}) in gh.calls
+
+
+async def test_sub_issue_is_opened_in_the_cards_repo_and_attached_to_it():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["GraphQL-Features"] == "sub_issues"
+        body = json.loads(request.content)
+        q, v = body["query"], body["variables"]
+        calls.append((q.split("(")[0].split()[-1] if "mutation" in q else "query", v))
+        if "repository { id }" in q:
+            data = {"node": {"repository": {"id": "R9"}}}
+        elif "createIssue" in q:
+            data = {"createIssue": {"issue": {"id": "S1", "number": 8, "url": "https://x/8"}}}
+        elif "subIssues" in q:
+            data = {"node": {"subIssues": {"nodes": [
+                {"id": "S1", "number": 8, "url": "https://x/8", "title": "A", "body": None, "closed": True}]}}}  # fmt: skip
+        else:
+            data = {}
+        return httpx.Response(200, json={"data": data})
+
+    board = Board("t", "org", 1, transport=httpx.MockTransport(handler))
+    card = Card(item_id="IT1", issue_id="I1", number=7, repo="o/r", url="u", title="t")
+    sub = await board.add_sub_issue(card, "A", "body")
+    assert sub.number == 8
+    assert calls[1][1]["r"] == "R9"  # the card's own repo, read from its issue
+    assert calls[2][1] == {"p": "I1", "c": "S1"}
+    assert (await board.sub_issues(card))[0].closed
+
+
+def test_approval_field_is_read_into_the_card():
+    item = {"id": "IT1", "fieldValues": {"nodes": [
+        {"name": "plan_only", "field": {"name": "Approval"}}]},
+        "content": {"id": "I1", "number": 1, "title": "t", "url": "u", "repository": {"nameWithOwner": "o/r"}}}  # fmt: skip
+    card = b._card(item)
+    assert card is not None and card.approval == "plan_only"
