@@ -165,9 +165,7 @@ async def process(board: Board, card: Card, checker: Checker = make_checks, chec
 
     ok = all(c.passed for c in checked)
     lines = render(checked)
-    suite_line = (
-        "full suite green" if suite.passed else f"full suite red:\n```\n{suite.summary[:1200]}\n```"
-    )
+    suite_line = "full suite green" if suite.passed else f"full suite red:\n```\n{suite.summary[:1200]}\n```"
     if ok and suite.passed:
         report = Report(
             agent=AGENT,

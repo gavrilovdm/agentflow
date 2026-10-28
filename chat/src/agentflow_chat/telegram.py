@@ -22,8 +22,8 @@ log = logging.getLogger(__name__)
 API = "https://api.telegram.org/bot{token}/{method}"
 RETRY_S = 5
 HELP = (
-    "Describe the task in plain words: \"add an endpoint X to the mobile backend\" or \"find a Python "
-    "repo with fastapi and green CI\". I confirm the repo before filing anything. Reply to an "
+    'Describe the task in plain words: "add an endpoint X to the mobile backend" or "find a Python '
+    'repo with fastapi and green CI". I confirm the repo before filing anything. Reply to an '
     "agentflow notification to change the spec or the plan. /new starts the conversation over."
 )
 

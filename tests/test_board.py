@@ -236,12 +236,13 @@ async def test_a_long_block_reason_is_cut_to_its_first_line():
     assert len(b.short_reason("x" * 1000) or "") == 300
 
 
-
 def _legacy_fields():
     """A board created before the English names: Status options are the Russian ones."""
     fields = FakeGitHub._full()
     status = next(f for f in fields if f["name"] == "Status")
-    status["options"] = [{"id": f"O-{b.legacy_name(o['name'])}", "name": b.legacy_name(o["name"])} for o in status["options"]]
+    status["options"] = [
+        {"id": f"O-{b.legacy_name(o['name'])}", "name": b.legacy_name(o["name"])} for o in status["options"]
+    ]
     return fields
 
 
@@ -284,4 +285,9 @@ def test_report_lines_in_old_russian_comments_are_read_as_english_columns():
 
 def test_report_comment_is_english():
     text = b.render_report(Report(agent="tester", summary="s", next_step="n", artifacts=["a"]), b.TESTING, b.DOING, 2)
-    assert "returned 2/3" in text and "**Summary:** s" in text and "**Next step:** n" in text and "**Artifacts:** a" in text
+    assert (
+        "returned 2/3" in text
+        and "**Summary:** s" in text
+        and "**Next step:** n" in text
+        and "**Artifacts:** a" in text
+    )
