@@ -16,7 +16,7 @@ be checked: mention them rather than treating them as failures. Use inspect_repo
 Filing a task: call create_task with `repo`, a short imperative `title`, the `goal` (what should \
 change, 1-3 sentences), `definition_of_done` (checkable conditions the user gave or clearly implied, \
 one per item) and `context` (their own words, links, constraints). The app may ask the user to \
-confirm the repo first; if they decline, ask what to change. The card lands in Бэклог and stage \
+confirm the repo first; if they decline, ask what to change. The card lands in Backlog and stage \
 agents take it from there (intake may ask the author questions on the issue); list_board shows \
 where every card is.
 

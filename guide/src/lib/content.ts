@@ -241,7 +241,7 @@ BUGS.push(
   },
   {
     id: 'whitelist-mount', title: 'The containerised board refused every card',
-    symptom: 'The first research card after deploying the orchestrator to docker went from Бэклог straight to Блокировка: “repo is not in the whitelist”. The same repo had passed intake from a local checkout an hour earlier.',
+    symptom: 'The first research card after deploying the orchestrator to docker went from Backlog straight to Blocked: “repo is not in the whitelist”. The same repo had passed intake from a local checkout an hour earlier.',
     cause: 'repos.toml is gitignored (it lists private repos), so the image never had it, and docker-compose did not mount it. A missing file is an empty whitelist on purpose; the api did not notice because it runs with INSECURE_DEV, the worker does not.',
     fix: 'Compose bind-mounts ./repos.toml into api and worker read-only, with create_host_path: false so a missing file stops `up` instead of Docker creating an empty directory in its place.',
     lesson: 'Every live test so far had run from a checkout. The deployment is a different runtime: test it as one.',
@@ -249,15 +249,15 @@ BUGS.push(
   },
   {
     id: 'open-subtasks', title: 'A merged card with an open sub-task',
-    symptom: 'Card #10 sat in Смержено with its PR merged, while its plan’s sub-issue was still open.',
+    symptom: 'Card #10 sat in Merged with its PR merged, while its plan’s sub-issue was still open.',
     cause: 'The developer closes a sub-issue when its task completes in the current run. The card went back once, and the fix run has its own single task, so the plan’s task id never completed in any run the developer looked at.',
-    fix: 'When the releaser moves a card to Смержено, it closes every sub-issue still open.',
+    fix: 'When the releaser moves a card to Merged, it closes every sub-issue still open.',
     lesson: 'Tie cleanup to the end state, not to the path that usually leads there.',
     commit: 'close-subtasks PR',
   },
   {
     id: 'job-id-reuse', title: 'A card the orchestrator kept handing out and nobody ran',
-    symptom: 'Back in Бэклог after a fix, card #18 got Owner = intake, nothing ran, and ten minutes later the orchestrator freed it as stuck. Then it handed it out again.',
+    symptom: 'Back in Backlog after a fix, card #18 got Owner = intake, nothing ran, and ten minutes later the orchestrator freed it as stuck. Then it handed it out again.',
     cause: 'Stage jobs had one arq job id per card and agent. arq keeps a finished job’s result for keep_result (a day here) and returns None for an id it still holds, without an error. The first intake run had used the id that morning.',
     fix: 'A fresh job id per launch (Owner and the queued heartbeat already prevent double launches), and a refused enqueue raises.',
     lesson: 'A dedupe key outlives the thing it dedupes. Know how long your queue remembers.',
@@ -265,7 +265,7 @@ BUGS.push(
   },
   {
     id: 'uv-app-install', title: 'A Django skeleton the gate could never install',
-    symptom: 'The first card of mentor-platform spent all five attempts of its first task on "No module named mypy_django_plugin" and setuptools refusing "multiple packages", and went to Блокировка with correct code.',
+    symptom: 'The first card of mentor-platform spent all five attempts of its first task on "No module named mypy_django_plugin" and setuptools refusing "multiple packages", and went to Blocked with correct code.',
     cause: 'The Python gate installed every repo with `pip install -e .`. A uv app keeps django-stubs in a dependency group, which that never installs, and an app with apps/ and config/ side by side and no build system is not a package setuptools can build.',
     fix: 'A repo with uv.lock or [dependency-groups] is installed with `uv sync --all-groups` into the gate venv; pip stays for the rest.',
     lesson: 'Install a project the way its own README does. A generic install is a guess about the build.',
@@ -281,7 +281,7 @@ BUGS.push(
   },
   {
     id: 'test-pins-absence', title: 'A test that forbade the next task',
-    symptom: 'Card #2 of mentor-platform: the /healthz task used all five attempts. The coder disabled the database guard globally in conftest.py and wrote a list subclass with __eq__ overrides in urls.py; the reviewer rejected it and the card went to Блокировка.',
+    symptom: 'Card #2 of mentor-platform: the /healthz task used all five attempts. The coder disabled the database guard globally in conftest.py and wrote a list subclass with __eq__ overrides in urls.py; the reviewer rejected it and the card went to Blocked.',
     cause: 'The skeleton task\'s generated acceptance test asserted that urlpatterns is an empty list. It pinned the absence of what the next task adds, so adding /healthz broke it, and the coder bent the code to satisfy the old assertion instead of the requirement.',
     fix: 'Test-design (and tester) skills now say: assert what the task adds, never the absence or exact emptiness of things a later task may add. The card was resent with a hint to fix the assertion.',
     lesson: 'A test is a promise about this task only. Pinning what is not there yet makes the plan\'s next step a regression.',
@@ -289,7 +289,7 @@ BUGS.push(
   },
   {
     id: 'blocked-reason-length', title: 'A stage job that crashed after the card had moved',
-    symptom: 'The developer moved card #2 to Блокировка with its dossier, then the job died with "Column value must be a valid value for text column".',
+    symptom: 'The developer moved card #2 to Blocked with its dossier, then the job died with "Column value must be a valid value for text column".',
     cause: 'The whole multi-line dossier went into the Blocked reason text field, which GitHub refused. The comment and the status change had already happened, so only the label and the job were lost.',
     fix: 'The field keeps the first line of the report, cut to 300 characters; the comment carries the rest.',
     lesson: 'A label is not a log. Put the short form in the field and the long form where it is read.',
@@ -311,7 +311,7 @@ export const USE_CASES: UseCase[] = [
     steps: [
       'Someone writes an issue and adds the label agentflow.',
       'GitHub sends a webhook; the API verifies its HMAC signature and only enqueues a job.',
-      'With a task board configured, the label files the issue as a card in Бэклог and the stage agents take it column by column; the steps below are the standalone run without a board.',
+      'With a task board configured, the label files the issue as a card in Backlog and the stage agents take it column by column; the steps below are the standalone run without a board.',
       'The worker runs the graph; at the spec and plan it pauses and posts Approve / Reject buttons to Telegram.',
       'After approval it codes, tests, reviews and opens a PR that says “Closes #N”, then comments on the issue.',
     ],
@@ -339,7 +339,7 @@ Events:       Issues`,
     steps: [
       'Register the MCP server once.',
       'Ask the assistant to start a run; it calls start_run.',
-      'Say “file a card: …” → create_task puts an issue in the board’s Бэклог; “what is on the board?” → list_board.',
+      'Say “file a card: …” → create_task puts an issue in the board’s Backlog; “what is on the board?” → list_board.',
       'Ask “what is it waiting for?” → get_run; “what is running?” → list_runs (every run, wherever it started); “approve it” → review_checkpoint.',
     ],
     code: `claude mcp add agentflow -- uv --directory ~/agentflow run agentflow-mcp`,

@@ -84,7 +84,7 @@ async def test_questions_go_to_the_author_and_the_card_waits_for_an_answer():
     v = await intake.process(fb, _card(), [], WL, _extractor(_draft(goal="")))
     assert v.kind == "ask"
     comment = next(c for c in fb.calls if c[0] == "comment")[1]
-    assert "Что должно измениться" in comment and "agentflow:questions" in comment and "round=1" in comment
+    assert "What should change" in comment and "agentflow:questions" in comment and "round=1" in comment
     assert ("set_field", "Owner", None) in fb.calls and not any(c[0] == "move" for c in fb.calls)
 
     # nothing new from the author: no second call to the model, no second comment

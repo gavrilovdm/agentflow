@@ -3,11 +3,11 @@
 Once a minute (an arq cron in the worker) it reads the board and decides, in code:
 
 - which free cards get a stage agent now: by priority, within each column's WIP limit, one
-  card per repo in Делается (two PRs into one repo conflict), and nothing new out of Бэклог
+  card per repo in In progress (two PRs into one repo conflict), and nothing new out of Backlog
   while more than three cards wait on a person;
 - which cards are stuck: an agent's name in Owner but no heartbeat from its job. The card is
-  freed with a comment; the second time it goes to Блокировка;
-- the Approval mode of a card that just left Бэклог;
+  freed with a comment; the second time it goes to Blocked;
+- the Approval mode of a card that just left Backlog;
 - whether to start anything at all: an LLM provider error that a retry will not fix (no
   credit, a bad key) opens a breaker, and nothing starts until it closes.
 
@@ -58,8 +58,8 @@ STAGES = {
     READY: releaser.AGENT,
 }
 AGENTS = set(STAGES.values())
-# Agents per column at once. Бэклог and Готово к мержу are cheap passes, the rest hold a model
-# (and Делается a worker) for minutes to hours.
+# Agents per column at once. Backlog and Ready to merge are cheap passes, the rest hold a model
+# (and In progress a worker) for minutes to hours.
 WIP = {BACKLOG: 4, PLANNING: 2, DOING: 4, TESTING: 2, READY: 4}
 MAX_WAITING_ON_HUMAN = 3
 # Columns whose agent may only wait for a person's words: re-running it before the issue
@@ -180,11 +180,13 @@ async def release_stuck(board: Board, card: Card) -> None:
     before = sum(STUCK_MARK in c.body for c in thread.comments[since + 1 :])
     if before >= 1:
         await board.move(
-            card, BLOCKED, Report(agent="orchestrator", summary=f"агент {card.owner} пропал на карточке второй раз")
+            card,
+            BLOCKED,
+            Report(agent="orchestrator", summary=f"agent {card.owner} went missing on this card for the second time"),
         )
         return
     await board.comment(
-        card, f"Агент {card.owner} перестал отвечать (нет heartbeat); карточка освобождена. <!-- {STUCK_MARK} -->"
+        card, f"Agent {card.owner} stopped responding (no heartbeat); the card was released. <!-- {STUCK_MARK} -->"
     )
     await board.set_field(card, "Owner", None)
 
@@ -239,8 +241,8 @@ async def open_breaker(redis: Redis, reason: str) -> None:
     if await redis.set(BREAKER_KEY, reason[:300], ex=BREAKER_TTL_S, nx=True):
         with contextlib.suppress(Exception):
             await telegram.send_message(
-                f"⛔ Агенты остановлены на {BREAKER_TTL_S // 60} мин: ошибка провайдера LLM, которую повтор не "
-                f"исправит.\n{reason[:500]}"
+                f"⛔ Agents paused for {BREAKER_TTL_S // 60} min: an LLM provider error that a retry will not "
+                f"fix.\n{reason[:500]}"
             )
 
 
@@ -287,10 +289,10 @@ def summary(cards: list[Card], now: datetime | None = None) -> str:
     """The daily note to a person: what is where, what waits on them."""
     now = now or datetime.now(UTC)
     by = {c: [x for x in cards if x.status == c] for c in (*STAGES, BLOCKED, MERGED)}
-    lines = [f"📋 Доска на {now:%d.%m}"]
+    lines = [f"📋 Board on {now:%d.%m}"]
     lines += [f"{col}: {len(items)}" for col, items in by.items() if items]
     if by[BLOCKED]:
-        lines += ["", "Заблокировано:"] + [f"• {c.title} — {c.blocked_reason or '?'} {c.url}" for c in by[BLOCKED]]
+        lines += ["", "Blocked:"] + [f"• {c.title} — {c.blocked_reason or '?'} {c.url}" for c in by[BLOCKED]]
     return "\n".join(lines)
 
 

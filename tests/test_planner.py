@@ -83,7 +83,7 @@ async def test_plan_is_posted_and_waits_for_a_person():
     assert out.kind == "awaiting"
     assert ext.seen[0].startswith("# Add counter") and "agentflow:card" not in ext.seen[0]
     body = next(c[1] for c in fb.calls if c[0] == "comment")
-    assert "План v1" in body and "`task-b` B (после task-a)" in body and "«ok»" in body
+    assert "Plan v1" in body and "`task-b` B (after task-a)" in body and "«ok»" in body
     assert ("set_field", "Owner", None) in fb.calls and not any(c[0] == "move" for c in fb.calls)
 
 
@@ -117,7 +117,7 @@ async def test_feedback_rewrites_the_plan_from_the_previous_one():
     assert out.kind == "awaiting" and out.detail == "v2"
     _, previous, feedback = ext.seen
     assert previous == _plan() and feedback == "split task-a in two"
-    assert "План v2: Counter v2" in next(c[1] for c in fb.calls if c[0] == "comment")
+    assert "Plan v2: Counter v2" in next(c[1] for c in fb.calls if c[0] == "comment")
 
 
 async def test_no_approval_needed_goes_straight_to_doing():

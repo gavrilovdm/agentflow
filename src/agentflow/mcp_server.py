@@ -148,7 +148,7 @@ async def create_task(
     type: TaskType = "coding",
     priority: Priority = "normal",
 ) -> dict[str, Any]:
-    """Put a task on the board's Бэклог as an issue in `repo` (owner/name, from list_repos).
+    """Put a task on the board's Backlog as an issue in `repo` (owner/name, from list_repos).
     `goal`: what should change, 1-3 sentences. `definition_of_done`: checkable conditions,
     at least one ("returns 404 for an unknown id", not "works well"). `context`: the user's
     own words, links, constraints. Stage agents pick the card up from the board."""
@@ -170,7 +170,7 @@ async def create_task(
 async def list_board(status: str | None = None) -> list[dict[str, Any]]:
     """Cards on the task board with their column (Status), type, priority, owner (the agent
     working on it), attempts (times sent back) and blocked reason. `status` limits it to
-    one column: Бэклог, Планируется, Делается, Тестируется, Готово к мержу, Смержено, Блокировка."""
+    one column: Backlog, Planning, In progress, Testing, Ready to merge, Merged, Blocked."""
     b = Board.from_settings()
     try:
         return [c.model_dump() for c in await b.cards(status)]

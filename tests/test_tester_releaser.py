@@ -1,4 +1,4 @@
-"""Тестируется and Готово к мержу: the tester over a real repo and gate, the releaser over a fake board."""
+"""Testing and Ready to merge: the tester over a real repo and gate, the releaser over a fake board."""
 
 import contextlib
 import shutil
@@ -111,7 +111,7 @@ async def test_releaser_opens_the_pr_and_waits_for_checks():
     assert out.kind == "waiting"
     _, branch, body = next(c for c in fb.calls if c[0] == "open_pr")
     assert branch == "feat/x" and body.endswith("Closes #4") and "agentflow:report" not in body
-    assert "### tester" not in body and "следующей стадии" not in body
+    assert "### tester" not in body and "Next step" not in body
     assert not any(c[0] in ("merge", "move") for c in fb.calls)  # no checks yet ≠ green
 
 

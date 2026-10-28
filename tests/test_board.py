@@ -113,7 +113,7 @@ async def test_move_writes_the_report_before_the_status():
     ops = gh.mutations()
     assert ops[0] == "addComment" and ops[1] == "updateProjectV2ItemFieldValue"
     comment = gh.calls[[op for op, _ in gh.calls].index("addComment")][1]["b"]
-    assert "developer · Делается → Тестируется" in comment and "agentflow:report" in comment
+    assert "developer · In progress → Testing" in comment and "agentflow:report" in comment
     assert gh.values[("IT1", "Status")] == b.TESTING and card.status == b.TESTING and card.owner is None
 
 
@@ -125,7 +125,7 @@ async def test_third_return_blocks_the_card_instead_of_looping():
     third = await board.move(_card(b.TESTING, attempts=2), b.DOING, Report(agent="tester", summary="DoD 2 fails"))
     assert third.status == b.BLOCKED and third.attempts == 3
     assert "DoD 2 fails" in gh.values[("IT1", "Blocked reason")]
-    # back out of Блокировка: the reason is cleared
+    # back out of Blocked: the reason is cleared
     out = await board.move(third, b.DOING, Report(agent="human", summary="retry with hint"))
     assert out.blocked_reason is None and ("IT1", "Blocked reason") not in gh.values
 
@@ -234,3 +234,60 @@ async def test_a_long_block_reason_is_cut_to_its_first_line():
     card = await _board(gh).move(_card(b.DOING), b.BLOCKED, Report(agent="developer", summary=dossier))
     assert gh.values[("IT1", "Blocked reason")] == "задача `t1` исчерпала попытки" == card.blocked_reason
     assert len(b.short_reason("x" * 1000) or "") == 300
+
+
+def _legacy_fields():
+    """A board created before the English names: Status options are the Russian ones."""
+    fields = FakeGitHub._full()
+    status = next(f for f in fields if f["name"] == "Status")
+    status["options"] = [
+        {"id": f"O-{b.legacy_name(o['name'])}", "name": b.legacy_name(o["name"])} for o in status["options"]
+    ]
+    return fields
+
+
+def test_legacy_and_english_column_names_are_one_table():
+    assert [b.canonical(n) for n in b.LEGACY_COLUMNS] == list(b.COLUMNS)
+    assert all(b.canonical(c) == c and b.legacy_name(b.canonical(c)) in b.LEGACY_COLUMNS for c in b.COLUMNS)
+    assert b.canonical(None) is None and b.canonical("Todo") == "Todo"
+
+
+async def test_a_board_not_renamed_yet_still_works_and_is_written_with_the_russian_option():
+    gh = FakeGitHub(fields=_legacy_fields())
+    board = _board(gh)
+    assert await board.setup() == []  # legacy options count as the columns: setup must not wipe them
+    gh.calls.clear()
+    card = await board.move(_card(b.DOING), b.TESTING, Report(agent="developer", summary="ok"))
+    assert gh.values[("IT1", "Status")] == "Тестируется" and card.status == b.TESTING
+    gh.items = [
+        {"id": "IT1", "content": {"id": "I1", "number": 7, "title": "t", "url": "u", "repository": {"nameWithOwner": "o/r"}},
+         "fieldValues": {"nodes": [{"name": "Делается", "field": {"name": "Status"}}]}},
+    ]  # fmt: skip
+    cards = await board.cards(b.DOING)  # asked in English, read from Russian
+    assert [c.status for c in cards] == [b.DOING]
+    assert [c.status for c in await board.cards("Делается")] == [b.DOING]
+
+
+async def test_an_english_board_is_written_with_the_english_option():
+    gh = FakeGitHub()
+    await _board(gh).move(_card(b.DOING), b.TESTING, Report(agent="developer", summary="ok"))
+    assert gh.values[("IT1", "Status")] == "Testing"
+
+
+def test_report_lines_in_old_russian_comments_are_read_as_english_columns():
+    old = "<!-- agentflow:report agent=tester from=Тестируется to=Готово к мержу attempts=0 -->"
+    new = "<!-- agentflow:report agent=tester from=Testing to=Ready to merge attempts=1 branch=feat/x -->"
+    th = b.Thread(title="t", body="", author="u", comments=[
+        b.Comment(author="a", body=old, created_at="1"), b.Comment(author="a", body=new, created_at="2")])  # fmt: skip
+    first, second = b.reports(th)
+    assert (first.src, first.dst) == (b.TESTING, b.READY) == (second.src, second.dst) and second.branch == "feat/x"
+
+
+def test_report_comment_is_english():
+    text = b.render_report(Report(agent="tester", summary="s", next_step="n", artifacts=["a"]), b.TESTING, b.DOING, 2)
+    assert (
+        "returned 2/3" in text
+        and "**Summary:** s" in text
+        and "**Next step:** n" in text
+        and "**Artifacts:** a" in text
+    )

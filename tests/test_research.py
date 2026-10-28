@@ -116,11 +116,11 @@ async def test_tester_closes_a_good_batch_and_sends_back_a_dead_link_or_a_duplic
         return False
 
     to, report = await research.check(_card(), th, [], judge, _checkout(root), dead)
-    assert to == b.DOING and "не открывается" in report.summary
+    assert to == b.DOING and "does not open" in report.summary
 
     (root / "inbox" / "2026-10-28-copy.md").write_text((root / written[0]).read_text())
     to, report = await research.check(_card(), th, [], judge, _checkout(root), opens)
-    assert to == b.DOING and "дубль" in report.summary
+    assert to == b.DOING and "duplicate" in report.summary
 
 
 def test_research_card_is_planned_without_a_repo_to_explore(monkeypatch):

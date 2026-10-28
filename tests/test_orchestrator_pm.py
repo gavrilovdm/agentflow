@@ -174,6 +174,6 @@ async def test_a_card_back_in_its_column_is_queued_again():
     arq = ArqLike()
     enqueue = stage_enqueuer(arq)
     await enqueue("intake", "IT1")
-    # live: a card returned to Бэклог the same day sat "queued" until it was freed as stuck
+    # live: a card returned to Backlog the same day sat "queued" until it was freed as stuck
     await enqueue("intake", "IT1")
     assert len(arq.ids) == 2
