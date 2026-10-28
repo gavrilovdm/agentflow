@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     orchestrator_model: str = "cpxopus"
     reviewer_model: str = "cpxopus"
     test_generator_model: str = "cpxopus"
-    coder_model: str = "deepseek-v4-flash"
+    coder_model: str = "deepseek-flash"
     fallback_model: str = "claude-sonnet-5"
 
     database_url: str = "postgresql://agentflow:agentflow@localhost:5432/agentflow"
