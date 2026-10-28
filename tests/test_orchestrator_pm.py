@@ -153,3 +153,27 @@ async def test_waiting_outcome_remembers_the_issue_version(monkeypatch):
     assert await pm.work(fb, redis, "planner", "IT1") == "wait"
     assert redis.kv[pm.SEEN_PREFIX + "IT1"] == "t7"
     assert await pm.work(fb, redis, "tester", "IT1") == "gone"  # not the agent it was handed to
+
+
+class ArqLike:
+    """arq's enqueue_job: None for a job id it still holds a result for (keep_result)."""
+
+    def __init__(self):
+        self.ids = set()
+
+    async def enqueue_job(self, fn, *args, _job_id=None):
+        if _job_id in self.ids:
+            return None
+        self.ids.add(_job_id)
+        return object()
+
+
+async def test_a_card_back_in_its_column_is_queued_again():
+    from agentflow.worker import stage_enqueuer
+
+    arq = ArqLike()
+    enqueue = stage_enqueuer(arq)
+    await enqueue("intake", "IT1")
+    # live: a card returned to Бэклог the same day sat "queued" until it was freed as stuck
+    await enqueue("intake", "IT1")
+    assert len(arq.ids) == 2

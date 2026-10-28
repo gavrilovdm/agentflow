@@ -255,6 +255,14 @@ BUGS.push(
     lesson: 'Tie cleanup to the end state, not to the path that usually leads there.',
     commit: 'close-subtasks PR',
   },
+  {
+    id: 'job-id-reuse', title: 'A card the orchestrator kept handing out and nobody ran',
+    symptom: 'Back in Бэклог after a fix, card #18 got Owner = intake, nothing ran, and ten minutes later the orchestrator freed it as stuck. Then it handed it out again.',
+    cause: 'Stage jobs had one arq job id per card and agent. arq keeps a finished job’s result for keep_result (a day here) and returns None for an id it still holds, without an error. The first intake run had used the id that morning.',
+    fix: 'A fresh job id per launch (Owner and the queued heartbeat already prevent double launches), and a refused enqueue raises.',
+    lesson: 'A dedupe key outlives the thing it dedupes. Know how long your queue remembers.',
+    commit: 'stage-job-ids PR',
+  },
 )
 
 export interface UseCase {
