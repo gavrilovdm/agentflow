@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -146,12 +147,21 @@ async def orchestrate(ctx: dict) -> int:
     if ctx.get("board") is None:
         return 0
 
-    async def enqueue(agent: str, item_id: str) -> None:
-        # job id per card: a tick that runs while the last one's job is still queued adds nothing
-        await ctx["redis"].enqueue_job("stage_job", agent, item_id, _job_id=f"stage-{item_id}-{agent}")
-
-    d = await orchestrator_pm.tick(ctx["board"], ctx["redis"], enqueue)
+    d = await orchestrator_pm.tick(ctx["board"], ctx["redis"], stage_enqueuer(ctx["redis"]))
     return len(d.launch)
+
+
+def stage_enqueuer(redis: Any) -> Callable[[str, str], Awaitable[None]]:
+    async def enqueue(agent: str, item_id: str) -> None:
+        # One job id per launch, not per card: arq keeps a finished job's result for
+        # keep_result and silently refuses an id it still holds, so a card back in the same
+        # column within a day (answers to intake, a tester's return) was never run again.
+        # Owner and the queued heartbeat already keep a tick from launching a card twice.
+        job_id = f"stage-{item_id}-{agent}-{uuid.uuid4().hex[:8]}"
+        if await redis.enqueue_job("stage_job", agent, item_id, _job_id=job_id) is None:
+            raise RuntimeError(f"arq refused job {job_id}")
+
+    return enqueue
 
 
 async def daily_summary(ctx: dict) -> None:
