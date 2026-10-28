@@ -11,6 +11,7 @@ an agent of the next stage reads the card, not the previous agent's context.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 
 import httpx
@@ -107,6 +108,22 @@ class Card(BaseModel):
     attempts: int = 0
     blocked_reason: str | None = None
     run: str | None = None
+
+
+class Comment(BaseModel):
+    author: str
+    body: str
+    created_at: str
+
+
+class Thread(BaseModel):
+    title: str
+    body: str
+    author: str
+    comments: list[Comment] = Field(default_factory=list)
+
+
+CARD_MARKER = re.compile(r"<!-- agentflow:card source=(\S*) reply_to=(\S*) -->")
 
 
 def render_body(
@@ -349,6 +366,43 @@ class Board:
             if not items["pageInfo"]["hasNextPage"]:
                 return out
             cursor = items["pageInfo"]["endCursor"]
+
+    async def thread(self, card: Card) -> Thread:
+        """The issue as the author wrote it, with its comments: what a stage agent reads."""
+        data = await self._gql(
+            """query($id: ID!) { node(id: $id) { ... on Issue { title body author { login }
+              comments(last: 100) { nodes { author { login } body createdAt } } } } }""",
+            id=card.issue_id,
+        )
+        n = data["node"]
+        return Thread(
+            title=n["title"],
+            body=n["body"] or "",
+            author=(n.get("author") or {}).get("login", ""),
+            comments=[
+                Comment(author=(c.get("author") or {}).get("login", ""), body=c["body"], created_at=c["createdAt"])
+                for c in n["comments"]["nodes"]
+            ],
+        )
+
+    async def comment(self, card: Card, body: str) -> None:
+        await self._gql(
+            "mutation($s: ID!, $b: String!) { addComment(input: {subjectId: $s, body: $b}) { clientMutationId } }",
+            s=card.issue_id,
+            b=body,
+        )
+
+    async def update_issue(self, card: Card, title: str, body: str) -> None:
+        await self._gql(
+            "mutation($i: ID!, $t: String!, $b: String!) { updateIssue(input: {id: $i, title: $t, body: $b}) {"
+            " clientMutationId } }",
+            i=card.issue_id,
+            t=title,
+            b=body,
+        )
+
+    async def set_field(self, card: Card, field: str, value: str | float | None) -> None:
+        await self._set(card.item_id, field, value)
 
     async def claim(self, card: Card, agent: str) -> bool:
         """Write `agent` into Owner if the card is free, then read it back. Not atomic: two

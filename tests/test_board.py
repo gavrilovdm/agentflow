@@ -34,7 +34,7 @@ class FakeGitHub:
         q, v = body["query"], body["variables"]
         op = next(k for k in (
             "createProjectV2Field", "updateProjectV2Field", "clearProjectV2ItemFieldValue",
-            "updateProjectV2ItemFieldValue", "createIssue", "addProjectV2ItemById", "addComment",
+            "updateProjectV2ItemFieldValue", "createIssue", "updateIssue", "node(id", "addProjectV2ItemById", "addComment",
             "repository(owner", "items(first", "fields(first",
         ) if k in q)  # fmt: skip
         self.calls.append((op, v))
@@ -62,6 +62,9 @@ class FakeGitHub:
         elif op == "clearProjectV2ItemFieldValue":
             self.values.pop((v["i"], self._field(v["f"])["name"]), None)
             data = {}
+        elif op == "node(id":
+            data = {"node": {"title": "t", "body": None, "author": None, "comments": {"nodes": [
+                {"author": {"login": "u"}, "body": "answer", "createdAt": "2026-10-28T00:00:00Z"}]}}}  # fmt: skip
         elif op == "items(first":
             data = {"organization": {"projectV2": {"items": {
                 "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": self.items}}}}  # fmt: skip
@@ -169,3 +172,11 @@ async def test_mcp_create_task_refuses_a_repo_outside_the_whitelist(monkeypatch,
     get_settings.cache_clear()
     r = await mcp_server.create_task("evil/repo", "t", "g", ["d"])
     assert r["status"] == "rejected"
+
+
+async def test_thread_reads_body_and_comments_and_update_issue_rewrites_it():
+    gh = FakeGitHub()
+    t = await _board(gh).thread(_card(b.BACKLOG))
+    assert t.body == "" and t.author == "" and t.comments[0].author == "u" and t.comments[0].body == "answer"
+    await _board(gh).update_issue(_card(b.BACKLOG), "New title", "body")
+    assert ("updateIssue", {"i": "I1", "t": "New title", "b": "body"}) in gh.calls
