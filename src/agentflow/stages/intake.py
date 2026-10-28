@@ -1,16 +1,16 @@
-"""Intake: the agent of the Бэклог column.
+"""Intake: the agent of the Backlog column.
 
 It turns whatever the author wrote into a standard card (goal, checkable Definition of
-Done, type, priority) and lets it into Планируется only when that card is complete. The
+Done, type, priority) and lets it into Planning only when that card is complete. The
 model only reads the text and extracts fields; whether the card passes is decided here,
 in code, so every refusal has a rule and a reason:
 
-- the type has no workflow, or the card repeats an open one → Блокировка with the reason;
+- the type has no workflow, or the card repeats an open one → Blocked with the reason;
 - something is missing or a DoD item can't be checked → questions to the author in a
-  comment, and the card waits in Бэклог for the answer;
-- three rounds of questions without a complete card → Блокировка, a person decides.
+  comment, and the card waits in Backlog for the answer;
+- three rounds of questions without a complete card → Blocked, a person decides.
 
-    uv run python -m agentflow.stages.intake        # process the free cards in Бэклог once
+    uv run python -m agentflow.stages.intake        # process the free cards in Backlog once
 """
 
 from __future__ import annotations
@@ -98,26 +98,26 @@ def _norm(title: str) -> str:
 def judge(draft: IntakeDraft, card: Card, others: list[Card], whitelist: set[str]) -> Verdict:
     """The intake filter. Each check gives its own reason; asking beats guessing."""
     if draft.type == "out_of_scope":
-        return Verdict("reject", ["нет воркфлоу для такой задачи: это не код, не ресёрч и не текст"], draft=draft)
+        return Verdict("reject", ["no workflow for this kind of task: it is not code, research or text"], draft=draft)
     if card.repo not in whitelist:
-        return Verdict("reject", [f"репо {card.repo} нет в whitelist (repos.toml)"], draft=draft)
+        return Verdict("reject", [f"repo {card.repo} is not in the whitelist (repos.toml)"], draft=draft)
     dup = next(
         (o for o in others if o.item_id != card.item_id and o.repo == card.repo
          and o.status != MERGED and _norm(o.title) == _norm(draft.title)),
         None,
     )  # fmt: skip
     if dup:
-        return Verdict("reject", [f"повторяет открытую карточку {dup.url}"], draft=draft)
+        return Verdict("reject", [f"duplicates an open card {dup.url}"], draft=draft)
 
     questions = list(draft.questions)
     if draft.type_confidence < MIN_CONFIDENCE:
-        questions.append("Это задача на код, на поиск материалов или на текст?")
+        questions.append("Is this a coding task, a research task or a text task?")
     if not draft.goal.strip():
-        questions.append("Что должно измениться в результате?")
+        questions.append("What should change as a result?")
     if not draft.definition_of_done:
-        questions.append("По каким признакам понять, что задача сделана?")
+        questions.append("How will we know the task is done?")
     for item in draft.untestable:
-        questions.append(f"Как проверить «{item.strip(QUOTES)}»? Нужен измеримый признак.")
+        questions.append(f"How can «{item.strip(QUOTES)}» be verified? It needs a measurable criterion.")
     if questions:
         return Verdict("ask", questions=list(dict.fromkeys(questions)), draft=draft)
     return Verdict("ready", draft=draft)
@@ -177,8 +177,8 @@ async def process(
             PLANNING,
             Report(
                 agent=AGENT,
-                summary=f"карточка полная: {draft.type}, пунктов DoD: {len(draft.definition_of_done)}",
-                next_step="исследовать репо, написать спеку и план",
+                summary=f"card is complete: {draft.type}, DoD items: {len(draft.definition_of_done)}",
+                next_step="explore the repo, write the spec and the plan",
             ),
         )
     elif verdict.kind == "reject":
@@ -189,13 +189,13 @@ async def process(
             await board.move(
                 card,
                 BLOCKED,
-                Report(agent=AGENT, summary=f"не удалось уточнить за {rounds} круга вопросов"),
+                Report(agent=AGENT, summary=f"could not clarify after {rounds} rounds of questions"),
             )
         else:
             lines = "\n".join(f"{i}. {q}" for i, q in enumerate(verdict.questions, 1))
             await board.comment(
                 card,
-                f"Чтобы взять задачу в работу, ответьте, пожалуйста, комментарием ниже:\n\n{lines}\n\n"
+                f"To start work on this task, please answer in a comment below:\n\n{lines}\n\n"
                 f"<!-- {QUESTIONS_MARK} agent={AGENT} round={rounds + 1} -->",
             )
             await board.set_field(card, "Owner", None)
@@ -203,7 +203,7 @@ async def process(
 
 
 async def run(board: Board, extractor: Extractor = extract) -> list[tuple[Card, Verdict]]:
-    """Process every free card in Бэклог once."""
+    """Process every free card in Backlog once."""
     whitelist = {e.full_name for e in repos.load_whitelist()}
     cards = await board.cards()
     done = []

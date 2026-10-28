@@ -1,4 +1,4 @@
-"""Planner: the agent of the Планируется column.
+"""Planner: the agent of the Planning column.
 
 It reads the card (goal, Definition of Done, context) and writes a spec and a task plan
 with binding interfaces, exploring a fresh clone of the repo the way the orchestrator
@@ -7,10 +7,10 @@ spec and tasks encoded in a marker so the developer stage works from the card al
 
 - Approval ≠ none → the plan waits for a person: a comment "ok" (or the legacy "ок") approves it, anything
   else is feedback and the plan is rewritten with it (at most three versions, then
-  Блокировка);
-- approved → each task becomes a sub-issue of the card and the card moves to Делается.
+  Blocked);
+- approved → each task becomes a sub-issue of the card and the card moves to In progress.
 
-    uv run python -m agentflow.stages.planner       # process the free cards in Планируется once
+    uv run python -m agentflow.stages.planner       # process the free cards in Planning once
 """
 
 from __future__ import annotations
@@ -62,16 +62,16 @@ class Outcome:
 
 def render_plan(plan: Plan, version: int, needs_approval: bool) -> str:
     s = plan.spec
-    lines = [f"### План v{version}: {s.title}", s.goal, "", "**Критерии приёмки:**"]
+    lines = [f"### Plan v{version}: {s.title}", s.goal, "", "**Acceptance criteria:**"]
     lines += [f"- {c}" for c in s.acceptance_criteria]
     if s.out_of_scope:
-        lines += ["", "**Не входит:** " + "; ".join(s.out_of_scope)]
-    lines += ["", "**Задачи:**"]
+        lines += ["", "**Out of scope:** " + "; ".join(s.out_of_scope)]
+    lines += ["", "**Tasks:**"]
     for i, t in enumerate(plan.tasks, 1):
-        after = f" (после {', '.join(t.depends_on)})" if t.depends_on else ""
+        after = f" (after {', '.join(t.depends_on)})" if t.depends_on else ""
         lines.append(f"{i}. `{t.id}` {t.title}{after} — {', '.join(t.target_files)}")
     if needs_approval:
-        lines += ["", "Ответьте «ok», чтобы взять план в работу, или напишите, что изменить."]
+        lines += ["", "Reply «ok» to start work on this plan, or write what to change."]
     # base64: JSON in an HTML comment would end it at the first "--" inside a string.
     data = base64.b64encode(plan.model_dump_json().encode()).decode()
     lines.append(f"<!-- {PLAN_MARK} version={version} data={data} -->")
@@ -104,9 +104,9 @@ def needs_approval(card: Card) -> bool:
 def render_subtask(t: Task) -> str:
     deps = ", ".join(t.depends_on) or "—"
     return (
-        f"{t.description}\n\n**Файлы:** {', '.join(t.target_files) or '—'}\n\n"
-        f"**Интерфейс:**\n```\n{t.interface or '—'}\n```\n\n**Готово, когда:** {t.definition_of_done}\n\n"
-        f"**После:** {deps}\n\n<!-- agentflow:subtask id={t.id} -->"
+        f"{t.description}\n\n**Files:** {', '.join(t.target_files) or '—'}\n\n"
+        f"**Interface:**\n```\n{t.interface or '—'}\n```\n\n**Done when:** {t.definition_of_done}\n\n"
+        f"**After:** {deps}\n\n<!-- agentflow:subtask id={t.id} -->"
     )
 
 
@@ -163,8 +163,8 @@ async def _approve(board: Board, card: Card, plan: Plan, version: int) -> Outcom
         DOING,
         Report(
             agent=AGENT,
-            summary=f"план v{version} одобрен: {len(plan.tasks)} задач(и)",
-            next_step="по каждой подзадаче: тест → код → gate → ревью; ветка карточки, без PR",
+            summary=f"plan v{version} approved: {len(plan.tasks)} task(s)",
+            next_step="for each sub-task: test → code → gate → review; on the card's branch, no PR",
             artifacts=[s.url for s in subs],
         ),
     )
@@ -191,7 +191,7 @@ async def process(board: Board, card: Card, planner: Planner = make_plan, checko
             await board.move(
                 card,
                 BLOCKED,
-                Report(agent=AGENT, summary=f"план не согласован за {version} версии: {human[-1].body[:300]}"),
+                Report(agent=AGENT, summary=f"plan not agreed after {version} versions: {human[-1].body[:300]}"),
             )
             return Outcome("blocked", "too many versions")
         feedback = "\n\n".join(c.body.strip() for c in human)
@@ -199,7 +199,7 @@ async def process(board: Board, card: Card, planner: Planner = make_plan, checko
     async with checkout(card) as root:
         plan = await planner(card_prompt(thread), previous, feedback, root)
     if not plan.tasks:
-        await board.move(card, BLOCKED, Report(agent=AGENT, summary="планировщик не нашёл, что делать: план пуст"))
+        await board.move(card, BLOCKED, Report(agent=AGENT, summary="the plan is empty: nothing to do"))
         return Outcome("blocked", "empty plan")
     version += 1
     ask = needs_approval(card)
@@ -208,12 +208,12 @@ async def process(board: Board, card: Card, planner: Planner = make_plan, checko
         return await _approve(board, card, plan, version)
     await board.set_field(card, "Owner", None)
     with contextlib.suppress(Exception):  # a notification must never lose the plan
-        await telegram.send_message(f"📝 План v{version} ждёт одобрения: {card.title}\n{card.url}")
+        await telegram.send_message(f"📝 Plan v{version} awaits approval: {card.title}\n{card.url}")
     return Outcome("awaiting", f"v{version}")
 
 
 async def run(board: Board, planner: Planner = make_plan, checkout: Checkout = checkout) -> list[tuple[Card, Outcome]]:
-    """Process every free card in Планируется once."""
+    """Process every free card in Planning once."""
     done = []
     for card in await board.cards(PLANNING):
         if card.owner or not await board.claim(card, AGENT):

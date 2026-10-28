@@ -55,14 +55,14 @@ async def main() -> None:
         agents = await (await conn.execute(BY_AGENT, q)).fetchall()
         cards = await (await conn.execute(BY_CARD, q)).fetchall()
         errors = await (await conn.execute(ERRORS, q)).fetchall()
-    print(f"## Стадии ({a.repo or 'все репо'}, {a.days} дн.)\n")
-    print(table(["агент", "запусков", "p50 с", "p90 с", "ошибок", "LLM-вызовов", "токенов in", "токенов out"], agents))
-    print("\n## Карточки\n")
-    print(table(["репо", "#", "тип", "стадий", "возвратов", "от первой до последней, мин", "работа агентов, мин",
-                 "токенов", "последний исход"], cards))  # fmt: skip
+    print(f"## Stages ({a.repo or 'all repos'}, {a.days} days)\n")
+    print(table(["agent", "runs", "p50 s", "p90 s", "errors", "LLM calls", "tokens in", "tokens out"], agents))
+    print("\n## Cards\n")
+    print(table(["repo", "#", "type", "stages", "returns", "first to last, min", "agent work, min",
+                 "tokens", "last outcome"], cards))  # fmt: skip
     if errors:
-        print("\n## Последние ошибки\n")
-        print(table(["когда", "агент", "репо", "#", "ошибка"], errors))
+        print("\n## Latest errors\n")
+        print(table(["when", "agent", "repo", "#", "error"], errors))
 
 
 if __name__ == "__main__":

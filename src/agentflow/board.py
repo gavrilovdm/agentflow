@@ -24,14 +24,39 @@ log = logging.getLogger(__name__)
 API = "https://api.github.com/graphql"
 
 BACKLOG, PLANNING, DOING, TESTING, READY, MERGED, BLOCKED = (
-    "Бэклог",
-    "Планируется",
-    "Делается",
-    "Тестируется",
-    "Готово к мержу",
-    "Смержено",
-    "Блокировка",
+    "Backlog",
+    "Planning",
+    "In progress",
+    "Testing",
+    "Ready to merge",
+    "Merged",
+    "Blocked",
 )
+# The board was first created with Russian column names and is renamed by
+# scripts/rename_board_columns.py. Until then (and in old report comments) the legacy
+# names are what GitHub and the history say, so every read goes through `canonical`
+# and every write through `Board._option`.
+LEGACY_COLUMNS = {
+    "Бэклог": BACKLOG,
+    "Планируется": PLANNING,
+    "Делается": DOING,
+    "Тестируется": TESTING,
+    "Готово к мержу": READY,
+    "Смержено": MERGED,
+    "Блокировка": BLOCKED,
+}
+_LEGACY_OF = {v: k for k, v in LEGACY_COLUMNS.items()}
+
+
+def canonical(name: str | None) -> str | None:
+    """A column's English name, whichever of the two names it came in as."""
+    return LEGACY_COLUMNS.get(name, name) if name else name
+
+
+def legacy_name(name: str) -> str:
+    return _LEGACY_OF.get(name, name)
+
+
 COLUMNS = (BACKLOG, PLANNING, DOING, TESTING, READY, MERGED, BLOCKED)
 WORKING = (BACKLOG, PLANNING, DOING, TESTING, READY)
 FORWARD = dict(zip(WORKING, COLUMNS[1:6], strict=True))
@@ -69,7 +94,7 @@ FIELDS: dict[str, tuple[str, list[tuple[str, str]]]] = {
 
 
 def allowed(src: str, dst: str) -> bool:
-    """One column forward, back to the developer from testing or review, into Блокировка
+    """One column forward, back to the developer from testing or review, into Blocked
     from any working column, and out of it only to a working column."""
     if src == BLOCKED:
         return dst in WORKING
@@ -180,12 +205,12 @@ def render_body(
 
 def render_report(report: Report, src: str, dst: str, attempts: int) -> str:
     back = BACK.get(src) == dst
-    head = f"### {report.agent} · {src} → {dst}" + (f" (возврат {attempts}/{MAX_ATTEMPTS})" if back else "")
-    lines = [head, f"**Итог:** {report.summary}"]
+    head = f"### {report.agent} · {src} → {dst}" + (f" (returned {attempts}/{MAX_ATTEMPTS})" if back else "")
+    lines = [head, f"**Summary:** {report.summary}"]
     if report.next_step:
-        lines.append(f"**Что сделать следующей стадии:** {report.next_step}")
+        lines.append(f"**Next step:** {report.next_step}")
     if report.artifacts:
-        lines.append("**Артефакты:** " + ", ".join(report.artifacts))
+        lines.append("**Artifacts:** " + ", ".join(report.artifacts))
     # Machine-readable line: the orchestrator counts time in columns and returns from it.
     branch = f" branch={report.branch}" if report.branch else ""
     lines.append(f"<!-- agentflow:report agent={report.agent} from={src} to={dst} attempts={attempts}{branch} -->")
@@ -209,7 +234,8 @@ def reports(thread: Thread) -> list[ReportLine]:
     out = []
     for i, c in enumerate(thread.comments):
         if m := REPORT_LINE.search(c.body):
-            out.append(ReportLine(agent=m[1], src=m[2], dst=m[3], attempts=int(m[4]), branch=m[5] or "", index=i))
+            src, dst = canonical(m[2]) or "", canonical(m[3]) or ""
+            out.append(ReportLine(agent=m[1], src=src, dst=dst, attempts=int(m[4]), branch=m[5] or "", index=i))
     return out
 
 
@@ -254,7 +280,7 @@ def _card(item: dict[str, Any]) -> Card | None:
         repo=content["repository"]["nameWithOwner"],
         url=content["url"],
         title=content["title"],
-        status=values.get("Status"),
+        status=canonical(values.get("Status")),
         type=values.get("Task type"),
         priority=values.get("Priority"),
         approval=values.get("Approval"),
@@ -338,7 +364,7 @@ class Board:
                     o=opts or None,
                 )
                 changed.append(f"created {name}")
-            elif options and list(have["options"]) != [o for o, _ in options]:
+            elif options and [canonical(o) for o in have["options"]] != [o for o, _ in options]:
                 # Status comes with Todo / In Progress / Done; the board's columns replace them.
                 await self._gql(
                     """mutation($f: ID!, $o: [ProjectV2SingleSelectFieldOptionInput!]) {
@@ -351,6 +377,39 @@ class Board:
         if changed:
             await self.project(refresh=True)
         return changed
+
+    async def status_options(self) -> list[dict[str, str]]:
+        """The Status field's options as GitHub holds them: id, name, color, description."""
+        p = await self.project(refresh=True)
+        data = await self._gql(
+            """query($f: ID!) { node(id: $f) { ... on ProjectV2SingleSelectField {
+              options { id name color description } } } }""",
+            f=p["fields"]["Status"]["id"],
+        )
+        return list(data["node"]["options"])
+
+    async def replace_status_options(self, options: list[dict[str, str]]) -> None:
+        """Overwrite Status's options. An option that carries its `id` is renamed in place and
+        keeps the cards that hold it; one without an id is new, and any existing option
+        left out of the list is deleted together with its values."""
+        p = await self.project()
+        await self._gql(
+            """mutation($f: ID!, $o: [ProjectV2SingleSelectFieldOptionInput!]) {
+              updateProjectV2Field(input: {fieldId: $f, singleSelectOptions: $o}) {
+                projectV2Field { ... on ProjectV2FieldCommon { id } } } }""",
+            f=p["fields"]["Status"]["id"],
+            o=options,
+        )
+        await self.project(refresh=True)
+
+    @staticmethod
+    def _option(field: dict[str, Any], value: str) -> str:
+        """The option id for `value`: the English name, or, on a board not renamed yet, its
+        legacy Russian twin."""
+        options = field["options"]
+        if value in options:
+            return str(options[value])
+        return str(options[legacy_name(value)])
 
     async def _set(self, item_id: str, field: str, value: str | float | None) -> None:
         p = await self.project()
@@ -366,7 +425,7 @@ class Board:
             )
             return
         if f["type"] == "SINGLE_SELECT":
-            v: dict[str, Any] = {"singleSelectOptionId": f["options"][value]}
+            v: dict[str, Any] = {"singleSelectOptionId": self._option(f, str(value))}
         elif f["type"] == "NUMBER":
             v = {"number": float(value)}
         else:
@@ -393,7 +452,7 @@ class Board:
         source: str = "",
         reply_to: str = "",
     ) -> Card:
-        """Open an issue in `repo` and put it in Бэклог."""
+        """Open an issue in `repo` and put it in Backlog."""
         if not definition_of_done:
             raise BoardError("a card needs at least one Definition of Done item")
         owner, _, name = repo.partition("/")
@@ -433,7 +492,7 @@ class Board:
         )
 
     async def add_issue(self, issue_id: str) -> str:
-        """Put an existing issue on the board in Бэклог (the `agentflow` label's way in).
+        """Put an existing issue on the board in Backlog (the `agentflow` label's way in).
         Adding an issue that is already a card returns that card and leaves its column alone."""
         p = await self.project()
         item_id: str = (
@@ -454,6 +513,7 @@ class Board:
     async def cards(self, status: str | None = None, include_closed: bool = False) -> list[Card]:
         """Cards on the board (issues only), optionally one column. Closed issues are left
         out unless asked for: a stage must not pick up work someone already closed."""
+        status = canonical(status)
         out: list[Card] = []
         cursor = None
         while True:
@@ -633,7 +693,7 @@ class Board:
         attempts = card.attempts + (1 if BACK.get(src) == to else 0)
         reason = None
         if BACK.get(src) == to and attempts >= MAX_ATTEMPTS:
-            reason = f"вернулась на доработку {attempts} раза: {report.summary}"
+            reason = f"sent back for rework {attempts} times: {report.summary}"
             to = BLOCKED
         elif to == BLOCKED:
             reason = report.summary

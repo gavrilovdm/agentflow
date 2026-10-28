@@ -1,15 +1,15 @@
-"""Releaser: the agent of the Готово к мержу column.
+"""Releaser: the agent of the Ready to merge column.
 
 It opens the PR from the card's branch (Closes #N, with the tester's checklist), then
 watches it on each pass:
 
-- CI red → back to Делается with the failing checks (the developer fixes on the same branch);
+- CI red → back to In progress with the failing checks (the developer fixes on the same branch);
 - CI running → the card waits;
 - CI green (or the repo runs none) → merged once a person writes «merge» (legacy «мержи» works too) on the card, or
-  at once for a repo with `auto_merge` in the whitelist; the card moves to Смержено;
-- a conflict with the base branch, or a PR closed without merging → Блокировка.
+  at once for a repo with `auto_merge` in the whitelist; the card moves to Merged;
+- a conflict with the base branch, or a PR closed without merging → Blocked.
 
-    uv run python -m agentflow.stages.releaser      # process the free cards in Готово к мержу once
+    uv run python -m agentflow.stages.releaser      # process the free cards in Ready to merge once
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ class Outcome:
 
 
 def merge_approved(thread: Thread) -> bool:
-    """A person wrote «merge» (or legacy «мержи») after the card last arrived in Готово к мержу."""
+    """A person wrote «merge» (or legacy «мержи») after the card last arrived in Ready to merge."""
     arrived = max((r.index for r in reports(thread) if r.dst == READY), default=-1)
     return any(MERGE_WORD.match(c.body.strip()) for c in thread.comments[arrived + 1 :] if not is_agent_comment(c))
 
@@ -62,7 +62,7 @@ def pr_body(thread: Thread, card: Card) -> str:
     tested = next((r for r in reversed(reports(thread)) if r.dst == READY), None)
     text = REPORT_LINE.sub("", thread.comments[tested.index].body) if tested else ""
     checklist = "\n".join(line for line in text.splitlines() if line.startswith("- ["))
-    return f"## Definition of Done (проверено tester)\n{checklist or '—'}\n\nCloses #{card.number}"
+    return f"## Definition of Done (verified by the tester)\n{checklist or '—'}\n\nCloses #{card.number}"
 
 
 def auto_merge(card: Card) -> bool:
@@ -72,11 +72,11 @@ def auto_merge(card: Card) -> bool:
 
 async def _merged(board: Board, card: Card, pr: PullRequest, how: str) -> Outcome:
     # The developer closes a sub-task when its run completes it, but a fix run has tasks of its
-    # own: a live card reached Смержено with its sub-task still open. Merged means all done.
+    # own: a live card reached Merged with its sub-task still open. Merged means all done.
     for s in await board.sub_issues(card):
         if not s.closed:
             await board.close_issue(s.issue_id)
-    await board.move(card, MERGED, Report(agent=AGENT, summary=f"{pr.url} смержен ({how})", artifacts=[pr.url]))
+    await board.move(card, MERGED, Report(agent=AGENT, summary=f"{pr.url} merged ({how})", artifacts=[pr.url]))
     return Outcome("merged", pr.url)
 
 
@@ -84,34 +84,34 @@ async def process(board: Board, card: Card, may_merge: bool | None = None) -> Ou
     thread = await board.thread(card)
     branch = branch_of(thread)
     if not branch:
-        await board.move(card, BLOCKED, Report(agent=AGENT, summary="в отчётах карточки нет ветки"))
+        await board.move(card, BLOCKED, Report(agent=AGENT, summary="no branch in the card's reports"))
         return Outcome("blocked", "no branch")
 
     pr = await board.pull_request(card, branch)
     if pr is None:
         base = target_of(card).base_branch
         pr = await board.open_pull_request(card, branch, base, card.title, pr_body(thread, card))
-        await board.comment(card, f"Открыт {pr.url}. <!-- agentflow:pr url={pr.url} -->")
+        await board.comment(card, f"Opened {pr.url}. <!-- agentflow:pr url={pr.url} -->")
         # Checks start a moment after the PR opens; reading them now would see "none" and merge.
         await board.set_field(card, "Owner", None)
         return Outcome("waiting", f"opened {pr.url}")
     if pr.state == "MERGED":
-        return await _merged(board, card, pr, "человеком")
+        return await _merged(board, card, pr, "by a person")
     if pr.state == "CLOSED":
-        await board.move(card, BLOCKED, Report(agent=AGENT, summary=f"{pr.url} закрыт без мержа"))
+        await board.move(card, BLOCKED, Report(agent=AGENT, summary=f"{pr.url} closed without merging"))
         return Outcome("blocked", "closed")
     if pr.mergeable == "CONFLICTING":
-        await board.move(card, BLOCKED, Report(agent=AGENT, summary=f"{pr.url} конфликтует с базовой веткой"))
+        await board.move(card, BLOCKED, Report(agent=AGENT, summary=f"{pr.url} conflicts with the base branch"))
         return Outcome("blocked", "conflict")
     if pr.checks in ("FAILURE", "ERROR"):
-        failing = "\n".join(f"- {f}" for f in pr.failing) or "- (подробностей нет)"
+        failing = "\n".join(f"- {f}" for f in pr.failing) or "- (no details)"
         moved = await board.move(
             card,
             DOING,
             Report(
                 agent=AGENT,
-                summary=f"CI на {pr.url} красный:\n{failing}",
-                next_step="починить упавшие проверки на той же ветке",
+                summary=f"CI on {pr.url} is red:\n{failing}",
+                next_step="fix the failing checks on the same branch",
                 artifacts=[pr.url],
                 branch=branch,
             ),
@@ -124,10 +124,10 @@ async def process(board: Board, card: Card, may_merge: bool | None = None) -> Ou
     allowed = auto_merge(card) if may_merge is None else may_merge
     if allowed or merge_approved(thread):
         await board.merge_pull_request(pr)
-        return await _merged(board, card, pr, "автомержем" if allowed else "по «merge»")
+        return await _merged(board, card, pr, "auto-merge" if allowed else "on «merge»")
     if not any(ASK_MARK in c.body for c in thread.comments[max((r.index for r in reports(thread)), default=0) :]):
         await board.comment(
-            card, f"{pr.url}: CI зелёный, DoD проверен. Напишите «merge», чтобы смержить. <!-- {ASK_MARK} -->"
+            card, f"{pr.url}: CI is green, DoD verified. Write «merge» to merge it. <!-- {ASK_MARK} -->"
         )
     await board.set_field(card, "Owner", None)
     return Outcome("waiting", "merge approval")

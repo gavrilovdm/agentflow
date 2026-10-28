@@ -91,7 +91,7 @@ async def test_with_a_board_the_label_files_a_card_instead_of_starting_a_run(cli
     }
     body, headers = _signed("hook", payload)
     r = await client.post("/webhooks/github", content=body, headers=headers)
-    assert r.json() == {"status": "queued", "board": "Бэклог"}
+    assert r.json() == {"status": "queued", "board": "Backlog"}
     assert app.state.queue.jobs[-1][:2] == ("add_to_board_job", ("I_7",))
 
 

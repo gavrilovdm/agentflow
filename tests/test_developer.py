@@ -1,4 +1,4 @@
-"""The Делается stage over the real developer graph (git + Python gate), LLM agents faked."""
+"""The In progress stage over the real developer graph (git + Python gate), LLM agents faked."""
 
 import shutil
 from pathlib import Path
@@ -76,7 +76,7 @@ async def test_card_with_an_approved_plan_reaches_testing_with_sub_issues_closed
     assert run.startswith("card-7-")
     assert {c[1] for c in fb.calls if c[0] == "close"} == {"S-task-add", "S-task-mul"}
     report = fb.calls[-1][2]
-    assert "полный прогон зелёный" in report.summary and "agentflow/issue-7-" in report.artifacts[0]
+    assert "full suite green" in report.summary and "agentflow/issue-7-" in report.artifacts[0]
     assert fakes["spec"] == 0  # the plan came from the card, nobody re-planned
 
 
@@ -126,7 +126,7 @@ async def test_card_without_a_plan_is_blocked(repo: Path):
     fb.thread_.comments.clear()
     async with open_persistence(in_memory=True, builder=build_developer_graph) as p:
         assert await developer.process(fb, _card(), p) == b.BLOCKED
-    assert "нет плана" in fb.calls[-1][2].summary
+    assert "no plan" in fb.calls[-1][2].summary
 
 
 async def test_files_planned_for_a_later_task_are_put_back(repo: Path, fakes, monkeypatch):

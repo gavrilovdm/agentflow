@@ -208,6 +208,6 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     job_timeout = 4 * 3600  # a full run can legitimately take hours
-    # Stage agents come on top of standalone runs: 4 in Делается, plus planner, tester, releaser.
+    # Stage agents come on top of standalone runs: 4 in In progress, plus planner, tester, releaser.
     max_jobs = 12
     keep_result = 24 * 3600

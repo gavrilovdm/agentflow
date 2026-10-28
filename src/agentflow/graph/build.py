@@ -67,7 +67,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStat
 
 
 def build_developer_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph[Any, Any, Any, Any]:
-    """The Делается stage: the task loop of an approved plan, ending in a pushed branch.
+    """The In progress stage: the task loop of an approved plan, ending in a pushed branch.
 
     Spec and plan come from the card (the planner stage wrote them); testing and the PR are
     later columns. The code ↔ gate ↔ review loop stays one graph: it runs 5-10 iterations

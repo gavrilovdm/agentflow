@@ -1,4 +1,4 @@
-"""Tester: the agent of the Тестируется column.
+"""Tester: the agent of the Testing column.
 
 It checks out the branch the developer pushed and checks the card's Definition of Done
 item by item, without the developer's history: the run's reviews and retries are not on
@@ -6,13 +6,13 @@ the card, only the code is. Behaviour gets a test the tester writes itself and r
 item about the repository itself (a doc, a file) gets an inspection with a quote as
 evidence. Then the whole suite runs.
 
-- every item proven and the suite green → Готово к мержу, with the checklist and evidence;
-- anything else → back to Делается with what failed (the board counts the return; the
+- every item proven and the suite green → Ready to merge, with the checklist and evidence;
+- anything else → back to In progress with what failed (the board counts the return; the
   third one blocks the card).
 
 The tester's own tests are evidence, not product: they are never committed or pushed.
 
-    uv run python -m agentflow.stages.tester        # process the free cards in Тестируется once
+    uv run python -m agentflow.stages.tester        # process the free cards in Testing once
 """
 
 from __future__ import annotations
@@ -103,11 +103,11 @@ async def verify(items: list[str], checks: DodChecks, gate: Gate, root: Path) ->
     for i, item in enumerate(items, 1):
         check = by_item.get(item.strip()) or (checks.checks[i - 1] if i <= len(checks.checks) else None)
         if check is None:
-            out.append(Checked(item, False, "нет проверки для пункта"))
+            out.append(Checked(item, False, "no check for this item"))
         elif check.method == "inspection":
             out.append(Checked(item, check.passed, check.evidence))
         elif not check.test_code.strip():
-            out.append(Checked(item, False, "тест не написан"))
+            out.append(Checked(item, False, "no test written"))
         else:
             rel = f"{DOD_DIR}/test_dod_{i}{gate.test_suffix_for(check.test_code)}"
             (root / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -151,8 +151,8 @@ async def process(board: Board, card: Card, checker: Checker = make_checks, chec
     branch = branch_of(thread)
     items = dod_items(thread.body)
     if not branch or not items:
-        why = "в отчёте developer нет ветки" if not branch else "у карточки нет пунктов Definition of Done"
-        await board.move(card, DOING, Report(agent=AGENT, summary=f"нечего проверять: {why}"))
+        why = "the developer report has no branch" if not branch else "the card has no Definition of Done items"
+        await board.move(card, DOING, Report(agent=AGENT, summary=f"nothing to check: {why}"))
         return Outcome(DOING, [])
 
     async with checkout(card, branch) as root:
@@ -166,13 +166,13 @@ async def process(board: Board, card: Card, checker: Checker = make_checks, chec
     ok = all(c.passed for c in checked)
     lines = render(checked)
     suite_line = (
-        "полный прогон зелёный" if suite.passed else f"полный прогон красный:\n```\n{suite.summary[:1200]}\n```"
+        "full suite green" if suite.passed else f"full suite red:\n```\n{suite.summary[:1200]}\n```"
     )
     if ok and suite.passed:
         report = Report(
             agent=AGENT,
-            summary=f"все {len(checked)} пунктов DoD подтверждены, {suite_line}\n\n{lines}",
-            next_step=f"открыть PR из {branch}",
+            summary=f"all {len(checked)} DoD items confirmed, {suite_line}\n\n{lines}",
+            next_step=f"open a PR from {branch}",
             artifacts=[f"https://github.com/{card.repo}/tree/{branch}"],
             branch=branch,
         )
@@ -181,8 +181,8 @@ async def process(board: Board, card: Card, checker: Checker = make_checks, chec
     failed = sum(not c.passed for c in checked)
     report = Report(
         agent=AGENT,
-        summary=f"не подтверждено пунктов DoD: {failed} из {len(checked)}; {suite_line}\n\n{lines}",
-        next_step="исправить неотмеченные пункты на той же ветке",
+        summary=f"DoD items not confirmed: {failed} of {len(checked)}; {suite_line}\n\n{lines}",
+        next_step="fix the unchecked items on the same branch",
         artifacts=[f"https://github.com/{card.repo}/tree/{branch}"],
         branch=branch,
     )

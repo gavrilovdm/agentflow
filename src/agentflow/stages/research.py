@@ -1,4 +1,4 @@
-"""Research cards: «найди материалы про X» → files in the library's inbox.
+"""Research cards: "find materials about X" → files in the library's inbox.
 
 A research card goes through the same columns as code, with each stage's craft swapped
 for the hub's research playbook:
@@ -11,7 +11,7 @@ for the hub's research playbook:
   commits `research: <topic> (+N)` to its main branch;
 - tester: checks the files without the researcher's history — the contract's fields, that
   each link opens, that no URL is in the library twice — and each Definition of Done item
-  against the files. Proven → Смержено: research has no PR, so it skips Готово к мержу.
+  against the files. Proven → Merged: research has no PR, so it skips Ready to merge.
 
     library_repo (LIBRARY_REPO) names the library; its own AGENTS.md is the contract.
 """
@@ -183,7 +183,7 @@ def render_finding(f: Finding, card: Card, today: str) -> str:
     return (
         f'---\ntitle: "{title}"\nurl: {f.url}\nkind: finding\ntype: {f.type}\nproject: \ntags: [{tags}]\n'
         f"added: {today}\nfound_by: research\ntopic: \nrelated: []\n---\n\n{f.summary.strip()}\n\n"
-        f"Карточка: {card.url}\n"
+        f"Card: {card.url}\n"
     )
 
 
@@ -249,17 +249,17 @@ async def research(
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         written = write_findings(root, findings, card, today)
         if not written:
-            return "Блокировка", Report(
-                agent=RESEARCHER, summary=f"новых находок нет: {len(findings.items)} найдено, все уже в библиотеке"
+            return "Blocked", Report(
+                agent=RESEARCHER, summary=f"no new findings: {len(findings.items)} found, all already in the library"
             )
         await asyncio.to_thread(ws.commit, root, written, f"research: {plan.spec.title} (+{len(written)})")
         if push:
             await asyncio.to_thread(ws.push, root, "main")
     repo = get_settings().library_repo
-    return "Тестируется", Report(
+    return "Testing", Report(
         agent=RESEARCHER,
-        summary=f"находок: {len(written)} в {repo}/inbox",
-        next_step="проверить контракт, ссылки, дубли и пункты DoD",
+        summary=f"findings: {len(written)} in {repo}/inbox",
+        next_step="check the contract, links, duplicates and DoD items",
         artifacts=[f"https://github.com/{repo}/blob/main/{p}" for p in written],
     )
 
@@ -276,16 +276,16 @@ def frontmatter(text: str) -> dict[str, str]:
 
 def contract_problems(rel: str, text: str, urls: dict[str, list[str]]) -> list[str]:
     fm = frontmatter(text)
-    problems = [f"нет поля {k}" for k in REQUIRED if not fm.get(k) or fm.get(k) == "[]"]
+    problems = [f"missing field {k}" for k in REQUIRED if not fm.get(k) or fm.get(k) == "[]"]
     if not re.fullmatch(r"inbox/\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.md", rel):
-        problems.append("имя не по контракту inbox/<YYYY-MM-DD>-<slug>.md")
+        problems.append("name does not match the contract inbox/<YYYY-MM-DD>-<slug>.md")
     body = text.split("\n---", 1)[-1].split("\n---\n", 1)[-1].strip()
-    if len(re.findall(r"[.!?…](\s|$)", body.split("Карточка:")[0])) < 2:
-        problems.append("выжимка короче двух предложений")
+    if len(re.findall(r"[.!?…](\s|$)", re.split(r"^(?:Card|Карточка):", body, maxsplit=1, flags=re.M)[0])) < 2:
+        problems.append("summary is shorter than two sentences")
     if url := fm.get("url"):
         others = [p for p in urls.get(norm_url(url), []) if p != rel]
         if others:
-            problems.append(f"дубль: {url} уже в {', '.join(others)}")
+            problems.append(f"duplicate: {url} is already in {', '.join(others)}")
     return problems
 
 
@@ -345,27 +345,27 @@ async def check(
     judge, checkout, opens = judge or judge_dod, checkout or library_checkout, opens or link_opens
     paths = sorted({m.group(1) for c in thread.comments for m in FILE_LINK.finditer(c.body)})
     if not paths:
-        return DOING, Report(agent="tester", summary="в отчёте researcher нет файлов")
+        return DOING, Report(agent="tester", summary="the researcher report has no files")
     async with checkout() as root:
         urls = library_urls(root)
         files = {p: (root / p).read_text() if (root / p).is_file() else "" for p in paths}
     checked = []
     for p, text in files.items():
-        problems = ["файла нет в библиотеке"] if not text else contract_problems(p, text, urls)
+        problems = ["the file is not in the library"] if not text else contract_problems(p, text, urls)
         url = frontmatter(text).get("url", "")
         if url and not await opens(url):
-            problems.append(f"ссылка не открывается: {url}")
+            problems.append(f"link does not open: {url}")
         checked.append(
-            Checked(f"`{p}` по контракту", not problems, "; ".join(problems) or "поля, имя, ссылка, дублей нет")
+            Checked(f"`{p}` matches the contract", not problems, "; ".join(problems) or "fields, name, link ok")
         )
     verdicts = (await judge(items, files)).items if items else []
     checked += [Checked(v.item, v.passed, v.evidence) for v in verdicts]
     lines = "\n".join(f"- [{'x' if c.passed else ' '}] {c.item} — {c.evidence}" for c in checked)
     if all(c.passed for c in checked):
-        return MERGED, Report(agent="tester", summary=f"все проверки прошли ({len(checked)})\n\n{lines}")
+        return MERGED, Report(agent="tester", summary=f"all checks passed ({len(checked)})\n\n{lines}")
     failed = sum(not c.passed for c in checked)
     return DOING, Report(
         agent="tester",
-        summary=f"не прошло проверок: {failed} из {len(checked)}\n\n{lines}",
-        next_step="исправить или заменить находки с неотмеченными пунктами",
+        summary=f"checks failed: {failed} of {len(checked)}\n\n{lines}",
+        next_step="fix or replace the findings with unchecked items",
     )

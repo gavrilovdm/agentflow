@@ -17,7 +17,7 @@ def _result(i, o, model="claude-x"):
 
 
 def _run(**kw):
-    return telemetry.StageRun(agent="planner", repo="o/r", card=7, card_type="coding", column_from="Планируется",
+    return telemetry.StageRun(agent="planner", repo="o/r", card=7, card_type="coding", column_from="Planning",
                               attempts=0, **kw)  # fmt: skip
 
 

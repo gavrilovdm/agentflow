@@ -1,17 +1,17 @@
-"""Developer: the agent of the Делается column.
+"""Developer: the agent of the In progress column.
 
 It takes the approved plan from the card (the planner's comment) and runs agentflow's task
 loop on it — per task: acceptance test → code → gate → review, with the referee and
 escalation — as the developer graph, checkpointed under the card's Run field. The branch
 is pushed; the PR is a later column's job.
 
-- every task done and the full suite green → Тестируется, with the branch and sub-issues closed;
-- a task out of budget → Блокировка with its dossier. A person answers in a comment (a hint
-  for a retry, «skip», «replan» or «stop» (legacy Russian words work too)) and moves the card back to Делается;
+- every task done and the full suite green → Testing, with the branch and sub-issues closed;
+- a task out of budget → Blocked with its dossier. A person answers in a comment (a hint
+  for a retry, «skip», «replan» or «stop» (legacy Russian words work too)) and moves the card back to In progress;
   the paused run then resumes with that answer instead of starting over;
-- a failed task or a red full suite → Блокировка with the reason.
+- a failed task or a red full suite → Blocked with the reason.
 
-    uv run python -m agentflow.stages.developer     # process the free cards in Делается once
+    uv run python -m agentflow.stages.developer     # process the free cards in In progress once
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ ACTIONS = {
 
 
 def config_for(card: Card) -> WorkflowConfig:
-    # "ask": a task out of budget pauses the run, and the stage turns the pause into Блокировка.
+    # "ask": a task out of budget pauses the run, and the stage turns the pause into Blocked.
     return WorkflowConfig(target_repo=target_of(card), on_task_failure="ask")
 
 
@@ -95,29 +95,29 @@ def outcome(card: Card, snap: RunSnapshot) -> tuple[str, Report]:
         d = snap.interrupt["dossier"]
         return BLOCKED, Report(
             agent=AGENT,
-            summary=f"задача `{d['task']['id']}` исчерпала попытки\n\n```\n{dossier_text(d)}\n```",
-            next_step="ответьте комментарием — подсказка для повтора, «skip», «replan» или «stop» — "
-            "и верните карточку в Делается",
+            summary=f"task `{d['task']['id']}` ran out of attempts\n\n```\n{dossier_text(d)}\n```",
+            next_step="reply with a comment — a hint for a retry, «skip», «replan» or «stop» — "
+            "and move the card back to In progress",
         )
     if v.get("status") == "failed":
-        return BLOCKED, Report(agent=AGENT, summary=f"прогон остановлен: {(v.get('error') or '?')[:1500]}")
+        return BLOCKED, Report(agent=AGENT, summary=f"run stopped: {(v.get('error') or '?')[:1500]}")
     tasks = v.get("tasks", [])
     failed = [t for t in tasks if t.status == "failed"]
     if failed:
         reasons = v.get("failed_tasks", {})
         lines = "; ".join(f"`{t.id}` — {reasons.get(t.id, '?').splitlines()[0][:200]}" for t in failed)
-        return BLOCKED, Report(agent=AGENT, summary=f"не сделаны: {lines}")
+        return BLOCKED, Report(agent=AGENT, summary=f"not done: {lines}")
     branch = v.get("branch", "")
     gate = v.get("final_gate")
     if gate is not None and not gate.passed:
         return BLOCKED, Report(
             agent=AGENT,
-            summary=f"полный прогон на ветке {branch} не прошёл:\n\n```\n{gate.summary[:1500]}\n```",
+            summary=f"the full suite on branch {branch} failed:\n\n```\n{gate.summary[:1500]}\n```",
         )
     return TESTING, Report(
         agent=AGENT,
-        summary=f"сделано задач: {len(tasks)}, полный прогон зелёный",
-        next_step=f"проверить каждый пункт Definition of Done на ветке {branch}",
+        summary=f"tasks done: {len(tasks)}, full suite green",
+        next_step=f"check every Definition of Done item on branch {branch}",
         artifacts=[f"https://github.com/{card.repo}/tree/{branch}"],
         branch=branch,
     )
@@ -167,7 +167,7 @@ async def process(
     thread = await board.thread(card)
     found = latest_plan(thread)
     if found is None:
-        await board.move(card, BLOCKED, Report(agent=AGENT, summary="на карточке нет плана: её не прошёл planner"))
+        await board.move(card, BLOCKED, Report(agent=AGENT, summary="the card has no plan: the planner never saw it"))
         return BLOCKED
 
     if card.type == "research":
@@ -215,7 +215,7 @@ async def process(
 async def run(
     board: Board, p: Persistence, config: Callable[[Card], WorkflowConfig] = config_for
 ) -> list[tuple[Card, str]]:
-    """Process every free card in Делается once, one after another."""
+    """Process every free card in In progress once, one after another."""
     done = []
     for card in await board.cards(DOING):
         if card.owner or not await board.claim(card, AGENT):
