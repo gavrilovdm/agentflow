@@ -12,7 +12,7 @@ def test_fallback_reviewer_disables_deepseek_thinking():
 
 
 def test_primary_deepseek_reviewer_disables_thinking():
-    assert reviewer.reviewer_chat_model("deepseek-v4-flash").extra_body == {"thinking": {"type": "disabled"}}
+    assert reviewer.reviewer_chat_model("deepseek-flash").extra_body == {"thinking": {"type": "disabled"}}
 
 
 async def test_reviewer_out_of_calls_is_forced_to_a_verdict(monkeypatch):

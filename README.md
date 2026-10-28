@@ -188,7 +188,7 @@ Getting there surfaced seven bugs the offline suite could not see, each now cove
 - the workspace volume was root-owned
 - linting the whole repo failed tasks on files the coder may not edit
 - uncapped reviewer malfunctions looped forever when the API balance ran out
-- DeepSeek's `thinking` flag must travel in `extra_body`
+- DeepSeek's `thinking` flag must travel in `extra_body`; the coder default is `deepseek-flash` (V4.1 Flash; the old `deepseek-v4-flash` name is retired and aliased to it)
 - a tool `name` kwarg broke the whole OpenAI-compatible fallback branch
 - `ChatAnthropic` ignored keys from `.env`
 - crashed runs had no terminal status
