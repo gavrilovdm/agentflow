@@ -165,6 +165,10 @@ def test_board_command_words_are_english_with_russian_aliases():
         assert APPROVE.match(w), w
     for w in ("merge", "Merge", "мержи", "Мержи"):
         assert MERGE_WORD.match(w), w
-    for action, words in {"skip": ("skip", "пропусти"), "replan": ("replan", "перепланируй"), "abort": ("stop", "стоп")}.items():
+    for action, words in {
+        "skip": ("skip", "пропусти"),
+        "replan": ("replan", "перепланируй"),
+        "abort": ("stop", "стоп"),
+    }.items():
         for w in words:
             assert ACTIONS[action].match(w), w
