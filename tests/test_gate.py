@@ -310,3 +310,25 @@ def test_mypy_ordinary_errors_unchanged():
     from agentflow.gate.python import extract_mypy_errors
 
     assert extract_mypy_errors("a.py:1: error: bad\nFound 1 error\n") == ["a.py:1: error: bad"]
+
+
+async def test_gate_command_does_not_inherit_worker_secrets(monkeypatch, tmp_path: Path):
+    from agentflow.gate.base import run_command
+
+    monkeypatch.setenv("DATABASE_URL", "postgres://agentflow")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_x")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
+    monkeypatch.setenv("LANGSMITH_API_KEY", "ls-x")
+    monkeypatch.setenv("UV_CACHE_DIR", "/cache")
+    res = await run_command(["env"], tmp_path, env={"PYTHONPYCACHEPREFIX": "/p"})
+    names = {line.split("=", 1)[0] for line in res.output.splitlines()}
+    assert {"DATABASE_URL", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "LANGSMITH_API_KEY"}.isdisjoint(names)
+    assert {"PATH", "UV_CACHE_DIR", "PYTHONPYCACHEPREFIX"} <= names
+
+
+async def test_gate_explicit_env_wins_over_parent(monkeypatch, tmp_path: Path):
+    from agentflow.gate.base import run_command
+
+    monkeypatch.setenv("VIRTUAL_ENV", "/parent")
+    res = await run_command(["env"], tmp_path, env={"VIRTUAL_ENV": "/gate"})
+    assert "VIRTUAL_ENV=/gate" in res.output.splitlines()
