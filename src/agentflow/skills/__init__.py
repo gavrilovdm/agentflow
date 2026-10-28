@@ -8,10 +8,16 @@ of the language-specific rules, which belong to the gate that runs the checks.
 
 Skills are inlined, not fetched on demand: they apply to every call of the role, and a
 coder given an optional search tool once never called it.
+
+Cross-project engineering rules (SOLID, OOP, clean code) live in the hub, not here, so people
+and every project's agents read one copy: `HUB_ENGINEERING_DIR` points at `hub/engineering`,
+whose skills name their roles in front matter (`roles: coder, reviewer`). Prompts are built at
+import, so an edit there takes effect on the next worker start.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +31,7 @@ class Skill:
     name: str
     description: str
     body: str
+    roles: tuple[str, ...] = ()
 
 
 def parse_skill(path: Path, role: str) -> Skill:
@@ -41,7 +48,8 @@ def parse_skill(path: Path, role: str) -> Skill:
     for required in ("name", "description"):
         if not meta.get(required):
             raise ValueError(f"{path}: front matter needs {required!r}")
-    return Skill(role, meta["name"], meta["description"], body.strip())
+    roles = tuple(r.strip() for r in meta.get("roles", "").split(",") if r.strip())
+    return Skill(role, meta["name"], meta["description"], body.strip(), roles)
 
 
 def load_skills(role: str, root: Path = SKILLS_DIR) -> list[Skill]:
@@ -53,9 +61,23 @@ def load_skills(role: str, root: Path = SKILLS_DIR) -> list[Skill]:
     return [parse_skill(p, role) for p in sorted(role_dir.glob("*.md"))]
 
 
-def role_section(role: str, root: Path = SKILLS_DIR) -> str:
-    """The role's skills as a prompt section; empty when the role has none."""
-    skills = load_skills(role, root)
+def hub_skills(role: str, hub: str | None = None) -> list[Skill]:
+    """The hub's engineering skills that name this role. A configured directory without
+    skills fails loudly: a missing mount would otherwise drop the rules from every prompt
+    without a trace, as a missing whitelist mount once refused every card."""
+    hub = os.environ.get("HUB_ENGINEERING_DIR") if hub is None else hub
+    if not hub:
+        return []
+    files = [p for p in sorted(Path(hub).glob("*.md")) if p.name not in ("AGENTS.md", "README.md", "CLAUDE.md")]
+    if not files:
+        raise RuntimeError(f"HUB_ENGINEERING_DIR={hub} has no skills (is hub/engineering mounted?)")
+    return [s for s in (parse_skill(p, role) for p in files) if role in s.roles]
+
+
+def role_section(role: str, root: Path = SKILLS_DIR, hub: str | None = None) -> str:
+    """The role's skills as a prompt section, the hub's after the role's own; empty when
+    the role has none."""
+    skills = load_skills(role, root) + hub_skills(role, hub)
     if not skills:
         return ""
     return "\n\n## How you work\n\n" + "\n\n".join(f"### {s.name}\n{s.body}" for s in skills)

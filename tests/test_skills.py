@@ -45,7 +45,7 @@ def test_each_role_prompt_carries_its_own_skills_only():
 
 
 def test_role_without_skills_adds_nothing(tmp_path: Path):
-    assert role_section("coder", tmp_path) == ""
+    assert role_section("coder", tmp_path, hub="") == ""
 
 
 def test_malformed_skill_fails_loudly(tmp_path: Path):
@@ -57,3 +57,26 @@ def test_malformed_skill_fails_loudly(tmp_path: Path):
 def test_unknown_role_is_rejected():
     with pytest.raises(ValueError, match="unknown role"):
         load_skills("janitor")
+
+
+def test_hub_skills_reach_only_the_roles_they_name(tmp_path: Path):
+    (tmp_path / "AGENTS.md").write_text("# router, not a skill\n")
+    (tmp_path / "design.md").write_text("---\nname: Design\ndescription: d\nroles: coder, reviewer\n---\nSRP.\n")
+    (tmp_path / "design-review.md").write_text("---\nname: Design review\ndescription: d\nroles: reviewer\n---\nB.\n")
+    reviewer_section = role_section("reviewer", hub=str(tmp_path))
+    assert reviewer_section.index("### Review") < reviewer_section.index("### Design\nSRP.")
+    assert "### Design review" in reviewer_section
+    coder_section = role_section("coder", hub=str(tmp_path))
+    assert "### Design\nSRP." in coder_section and "Design review" not in coder_section
+    assert "Design" not in role_section("tester", hub=str(tmp_path))
+
+
+def test_hub_dir_without_skills_fails_loudly(tmp_path: Path):
+    # a configured but unmounted hub must not silently drop the rules from every prompt
+    with pytest.raises(RuntimeError, match="no skills"):
+        role_section("coder", hub=str(tmp_path / "missing"))
+
+
+def test_no_hub_configured_keeps_the_role_skills(monkeypatch):
+    monkeypatch.delenv("HUB_ENGINEERING_DIR", raising=False)
+    assert role_section("coder") == role_section("coder", hub="")

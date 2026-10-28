@@ -18,7 +18,7 @@ from typing import Any
 from arq import cron
 from arq.connections import RedisSettings
 
-from agentflow import orchestrator_pm
+from agentflow import orchestrator_pm, skills
 from agentflow.board import Board, BoardError
 from agentflow.config import WorkflowConfig, get_settings
 from agentflow.graph.build import build_developer_graph
@@ -178,6 +178,8 @@ async def daily_summary(ctx: dict) -> None:
 async def startup(ctx: dict) -> None:
     setup_logging()
     setup_telemetry("agentflow-worker")
+    hub = {r: [s.name for s in skills.hub_skills(r)] for r in skills.ROLES}
+    log.info("hub engineering skills: %s", {r: n for r, n in hub.items() if n} or "none configured")
     ctx["_persistence_cm"] = open_persistence()
     ctx["persistence"] = await ctx["_persistence_cm"].__aenter__()
     ctx["_developer_cm"] = open_persistence(builder=build_developer_graph)
