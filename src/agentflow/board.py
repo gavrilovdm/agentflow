@@ -104,10 +104,22 @@ class Card(BaseModel):
     status: str | None = None
     type: str | None = None
     priority: str | None = None
+    approval: str | None = None
     owner: str | None = None
     attempts: int = 0
     blocked_reason: str | None = None
     run: str | None = None
+
+
+class SubIssue(BaseModel):
+    """One task of the card's plan, as a sub-issue: the board shows the parent's progress."""
+
+    issue_id: str
+    number: int
+    url: str
+    title: str
+    body: str = ""
+    closed: bool = False
 
 
 class Comment(BaseModel):
@@ -176,6 +188,7 @@ def _card(item: dict[str, Any]) -> Card | None:
         status=values.get("Status"),
         type=values.get("Task type"),
         priority=values.get("Priority"),
+        approval=values.get("Approval"),
         owner=values.get("Owner") or None,
         attempts=int(values.get("Attempts") or 0),
         blocked_reason=values.get("Blocked reason") or None,
@@ -188,7 +201,9 @@ class Board:
         if not (token and org and number):
             raise BoardError("board is not configured: set GITHUB_BOARD_TOKEN, BOARD_ORG and BOARD_PROJECT")
         self.org, self.number = org, number
-        self._http = httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}, transport=transport, timeout=30)
+        # sub_issues: the addSubIssue mutation and Issue.subIssues were behind this feature flag.
+        headers = {"Authorization": f"Bearer {token}", "GraphQL-Features": "sub_issues"}
+        self._http = httpx.AsyncClient(headers=headers, transport=transport, timeout=30)
         self._project: dict[str, Any] | None = None
 
     @classmethod
@@ -399,6 +414,47 @@ class Board:
             i=card.issue_id,
             t=title,
             b=body,
+        )
+
+    async def sub_issues(self, card: Card) -> list[SubIssue]:
+        data = await self._gql(
+            """query($id: ID!) { node(id: $id) { ... on Issue {
+              subIssues(first: 50) { nodes { id number url title body closed } } } } }""",
+            id=card.issue_id,
+        )
+        return [
+            SubIssue(issue_id=n["id"], number=n["number"], url=n["url"], title=n["title"], body=n["body"] or "",
+                     closed=n["closed"])
+            for n in data["node"]["subIssues"]["nodes"]
+        ]  # fmt: skip
+
+    async def add_sub_issue(self, card: Card, title: str, body: str) -> SubIssue:
+        """Open an issue in the card's repo and attach it to the card as a sub-issue."""
+        repo = (
+            await self._gql(
+                "query($id: ID!) { node(id: $id) { ... on Issue { repository { id } } } }", id=card.issue_id
+            )
+        )["node"]["repository"]["id"]
+        issue = (
+            await self._gql(
+                """mutation($r: ID!, $t: String!, $b: String!) {
+                  createIssue(input: {repositoryId: $r, title: $t, body: $b}) { issue { id number url } } }""",
+                r=repo,
+                t=title,
+                b=body,
+            )
+        )["createIssue"]["issue"]
+        await self._gql(
+            "mutation($p: ID!, $c: ID!) { addSubIssue(input: {issueId: $p, subIssueId: $c}) { clientMutationId } }",
+            p=card.issue_id,
+            c=issue["id"],
+        )
+        return SubIssue(issue_id=issue["id"], number=issue["number"], url=issue["url"], title=title, body=body)
+
+    async def close_issue(self, issue_id: str) -> None:
+        await self._gql(
+            "mutation($i: ID!) { closeIssue(input: {issueId: $i}) { clientMutationId } }",
+            i=issue_id,
         )
 
     async def set_field(self, card: Card, field: str, value: str | float | None) -> None:

@@ -7,7 +7,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,7 +20,7 @@ from langgraph.types import Command
 from agentflow.config import WorkflowConfig, get_settings
 from agentflow.graph.build import SERDE, build_graph
 from agentflow.graph.context import Deps
-from agentflow.schemas import ApprovalDecision, FailureDecision
+from agentflow.schemas import ApprovalDecision, FailureDecision, Spec, Task
 
 log = logging.getLogger("agentflow.runner")
 
@@ -31,19 +31,22 @@ class Persistence:
 
 
 @asynccontextmanager
-async def open_persistence(in_memory: bool = False) -> AsyncIterator[Persistence]:
+async def open_persistence(
+    in_memory: bool = False, builder: Callable[..., CompiledStateGraph] = build_graph
+) -> AsyncIterator[Persistence]:
     """Postgres checkpoints make runs resumable across worker restarts.
-    `in_memory` swaps them for a process-local saver (tests, demos)."""
+    `in_memory` swaps them for a process-local saver (tests, demos). `builder` picks the
+    graph: the whole run, or the developer stage's task loop (build_developer_graph)."""
     s = get_settings()
     if in_memory:
-        yield Persistence(build_graph(InMemorySaver(serde=SERDE)))
+        yield Persistence(builder(InMemorySaver(serde=SERDE)))
         return
 
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     async with AsyncPostgresSaver.from_conn_string(s.database_url, serde=SERDE) as saver:
         await saver.setup()
-        yield Persistence(build_graph(saver))
+        yield Persistence(builder(saver))
 
 
 @dataclass
@@ -216,6 +219,41 @@ async def start_run(
     thread_id = thread_id or f"run-{uuid.uuid4().hex[:12]}"
     inp = {"user_prompt": prompt, "issue_number": issue_number, "run_config": config.model_dump()}
     await _drive(p, inp, config, thread_id, on_event, on_step)
+    return await snapshot(p.graph, thread_id)
+
+
+async def start_from_plan(
+    p: Persistence,
+    spec: Spec,
+    tasks: list[Task],
+    config: WorkflowConfig,
+    thread_id: str,
+    branch: str,
+    issue_number: int | None = None,
+    on_event: Any = None,
+    on_step: Any = None,
+) -> RunSnapshot:
+    """Run an already approved plan (the developer graph): the spec and tasks come from the card."""
+    inp = {
+        "user_prompt": spec.goal,
+        "issue_number": issue_number,
+        "run_config": config.model_dump(),
+        "spec": spec,
+        "spec_approved": True,
+        "tasks": tasks,
+        "tasks_approved": True,
+        "branch": branch,
+        "status": "coding",
+    }
+    await _drive(p, inp, config, thread_id, on_event, on_step)
+    return await snapshot(p.graph, thread_id)
+
+
+async def continue_run(p: Persistence, thread_id: str, on_event: Any = None, on_step: Any = None) -> RunSnapshot:
+    """Pick a run up from its last checkpoint after the worker driving it died."""
+    current = await snapshot(p.graph, thread_id)
+    config = WorkflowConfig.model_validate(current.values["run_config"])
+    await _drive(p, None, config, thread_id, on_event, on_step)
     return await snapshot(p.graph, thread_id)
 
 

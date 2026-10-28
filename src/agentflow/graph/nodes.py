@@ -58,7 +58,8 @@ def _read(path: Path) -> str:
 
 async def prepare_workspace(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     cfg = runtime.context.config
-    branch = f"agentflow/{int(time.time())}"
+    # A card's developer run names its branch after the card; a standalone run gets a fresh one.
+    branch = state.get("branch") or f"agentflow/{int(time.time())}"
     identity = await github.commit_identity() if cfg.target_repo else None
     path = await asyncio.to_thread(ws.prepare_workspace, cfg.target_repo, branch, cfg.local_path, identity)
     repo_id = ws.repo_id(cfg.target_repo, path)
@@ -67,7 +68,8 @@ async def prepare_workspace(state: WorkflowState, runtime: Runtime[Deps]) -> dic
         "workspace": str(path),
         "branch": branch,
         "repo_id": repo_id,
-        "status": "speccing",
+        # A developer run starts with an approved plan and goes straight to the tasks.
+        "status": "coding" if state.get("tasks") else "speccing",
     }
 
 
@@ -533,6 +535,18 @@ async def notify(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
     except Exception as exc:  # noqa: BLE001 — a notification must never fail the run
         log.warning("notification failed: %s", exc)
     return {}
+
+
+async def push_branch(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
+    """The developer stage's exit: the whole suite on the finished branch, then push it for the
+    tester. No PR here: opening one is the releaser's stage, after independent testing."""
+    cfg = runtime.context.config
+    root = _ws(state)
+    final = await _gate(state).run(root, None, cfg.enable_lint)
+    if cfg.target_repo is not None and any(t.status == "completed" for t in state["tasks"]):
+        await asyncio.to_thread(ws.push, root, state["branch"])
+    progress(runtime, f"branch {state['branch']} done, full checks {'pass' if final.passed else 'fail'}")
+    return {"final_gate": final, "status": "notifying"}
 
 
 def finalize(state: WorkflowState, runtime: Runtime[Deps]) -> dict:

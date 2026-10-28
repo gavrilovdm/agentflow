@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, TypedDict
 
-from agentflow.schemas import CoderResult, FailureDecision, PullRequest, ReviewCycle, ReviewResult, Spec, Stall, Task
+from agentflow.schemas import (
+    CoderResult,
+    FailureDecision,
+    GateResult,
+    PullRequest,
+    ReviewCycle,
+    ReviewResult,
+    Spec,
+    Stall,
+    Task,
+)
 
 Status = Literal[
     "speccing", "spec_review", "planning", "task_review", "coding", "pr", "notifying", "completed", "failed"
@@ -60,6 +70,7 @@ class WorkflowState(TypedDict, total=False):
 
     # output
     pull_request: PullRequest | None
+    final_gate: GateResult | None  # the developer stage's full-suite check before it hands the branch on
     status: Status
     error: str | None
 
