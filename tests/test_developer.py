@@ -97,7 +97,7 @@ async def test_exhausted_task_blocks_then_resumes_with_the_persons_hint(repo: Pa
     async with open_persistence(in_memory=True, builder=build_developer_graph) as p:
         assert await developer.process(fb, _card(), p, lambda c: tight) == b.BLOCKED
         report = fb.calls[-1][2]
-        assert "task-add" in report.summary and "перепланируй" in report.next_step
+        assert "task-add" in report.summary and "replan" in report.next_step
         assert not any(c[0] == "close" for c in fb.calls)
 
         # a person answers under the report and moves the card back

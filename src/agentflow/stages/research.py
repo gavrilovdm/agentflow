@@ -95,7 +95,7 @@ async def make_research_plan(prompt: str, previous: Any, feedback: str | None, w
     )
     task = Task(
         id="task-research",
-        title=f"Найти материалы: {rp.title}",
+        title=f"Find materials: {rp.title}",
         description="Queries:\n" + "\n".join(f"- {q}" for q in rp.queries) + f"\n\nKeep: {rp.criteria}",
         target_files=["inbox/"],
         definition_of_done=f"{rp.count} findings, each a file in inbox/ by the library contract",

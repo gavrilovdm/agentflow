@@ -74,10 +74,21 @@ def hub_skills(role: str, hub: str | None = None) -> list[Skill]:
     return [s for s in (parse_skill(p, role) for p in files) if role in s.roles]
 
 
+# Cards are sometimes written in Russian, and a planner then wrote Russian acceptance criteria
+# (one with a stray Chinese glyph). Everything agents read from each other stays English.
+ENGLISH_RULE = (
+    "Write all plans, task titles, acceptance criteria, tests, code comments, commit messages and "
+    "reports in English, even when the card is written in another language. User-facing product "
+    "strings keep the language the spec requires."
+)
+ENGLISH_ROLES = ("orchestrator", "coder", "test_generator", "reviewer", "tester")
+
+
 def role_section(role: str, root: Path = SKILLS_DIR, hub: str | None = None) -> str:
-    """The role's skills as a prompt section, the hub's after the role's own; empty when
-    the role has none."""
+    """The role's skills as a prompt section, the hub's after the role's own, preceded by the
+    language rule for roles whose output other agents read; empty when there is nothing."""
     skills = load_skills(role, root) + hub_skills(role, hub)
+    rule = f"\n\n## Language\n\n{ENGLISH_RULE}" if role in ENGLISH_ROLES else ""
     if not skills:
-        return ""
-    return "\n\n## How you work\n\n" + "\n\n".join(f"### {s.name}\n{s.body}" for s in skills)
+        return rule
+    return rule + "\n\n## How you work\n\n" + "\n\n".join(f"### {s.name}\n{s.body}" for s in skills)

@@ -175,7 +175,7 @@ def render_body(
 ) -> str:
     dod = "\n".join(f"- [ ] {item}" for item in definition_of_done)
     marker = f"<!-- agentflow:card source={source or 'unknown'} reply_to={reply_to or '-'} -->"
-    return f"## Цель\n{goal}\n\n## Definition of Done\n{dod}\n\n## Контекст\n{context or '—'}\n\n{marker}\n"
+    return f"## Goal\n{goal}\n\n## Definition of Done\n{dod}\n\n## Context\n{context or '—'}\n\n{marker}\n"
 
 
 def render_report(report: Report, src: str, dst: str, attempts: int) -> str:

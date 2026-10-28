@@ -119,7 +119,7 @@ async def test_releaser_merges_green_pr_only_after_a_person_says_so():
     green = PullRequest(id="P", number=9, url="https://x/pull/9", state="OPEN", mergeable="MERGEABLE", checks="SUCCESS")
     fb = FakeBoard([_report(b.TESTING, b.READY, agent="tester")], pr=green)
     assert (await releaser.process(fb, _card(b.READY), may_merge=False)).kind == "waiting"
-    assert any("«мержи»" in c[1] for c in fb.calls if c[0] == "comment")
+    assert any("«merge»" in c[1] for c in fb.calls if c[0] == "comment")
 
     fb.thread_.comments.append(Comment(author="u", body="Мержи", created_at="2"))
     fb.calls.clear()
@@ -143,3 +143,28 @@ async def test_conflict_blocks():
     pr = PullRequest(id="P", number=9, url="u9", state="OPEN", mergeable="CONFLICTING", checks="SUCCESS")
     fb = FakeBoard([_report(b.TESTING, b.READY, agent="tester")], pr=pr)
     assert (await releaser.process(fb, _card(b.READY), may_merge=True)).kind == "blocked"
+
+
+def test_card_bodies_parse_with_english_and_legacy_russian_headings():
+    from agentflow.board import render_body
+    from agentflow.stages.research import _dod
+    from agentflow.stages.tester import dod_items
+
+    new = render_body("add()", ["a returns 5", "b documented"], "ctx")
+    assert new.startswith("## Goal\n") and "## Context\n" in new and "Цель" not in new
+    legacy = "## Цель\nadd()\n\n## Definition of Done\n- [ ] a returns 5\n- [ ] b documented\n\n## Контекст\n—\n"
+    assert dod_items(new) == dod_items(legacy) == _dod(new) == _dod(legacy) == ["a returns 5", "b documented"]
+
+
+def test_board_command_words_are_english_with_russian_aliases():
+    from agentflow.stages.developer import ACTIONS
+    from agentflow.stages.planner import APPROVE
+    from agentflow.stages.releaser import MERGE_WORD
+
+    for w in ("ok", "OK", "ок", "Ок"):
+        assert APPROVE.match(w), w
+    for w in ("merge", "Merge", "мержи", "Мержи"):
+        assert MERGE_WORD.match(w), w
+    for action, words in {"skip": ("skip", "пропусти"), "replan": ("replan", "перепланируй"), "abort": ("stop", "стоп")}.items():
+        for w in words:
+            assert ACTIONS[action].match(w), w
