@@ -12,3 +12,6 @@ description: What makes a test worth having, whatever the framework
   Mocking the unit under test, or its own helpers, makes the test check the mock.
 - No sleeps, no real time, no dependence on test order: a flaky test is worse than none, because
   every failure gets ignored.
+- Assert what the task adds, never the absence or exact emptiness of things a later task in the plan
+  may add (an empty route table, an exact list of installed apps, a file count): a test that pins
+  absence breaks the next task and forces its author to bend the code around an old assertion.

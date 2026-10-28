@@ -12,3 +12,5 @@ description: Checking each Definition of Done item against the finished branch, 
 - An item that holds only partly is not done. Say what is missing in one sentence.
 - Never fix the code, never weaken an item to make it pass: a failed check goes back to the developer
   with what you saw.
+- Check what the item says is present. Do not write a check that pins the absence or exact emptiness
+  of things a later task may add (an empty route table, an exact file count).

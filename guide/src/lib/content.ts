@@ -272,6 +272,14 @@ BUGS.push(
     commit: 'gate-uv-project PR',
   },
   {
+    id: 'test-pins-absence', title: 'A test that forbade the next task',
+    symptom: 'Card #2 of mentor-platform: the /healthz task used all five attempts. The coder disabled the database guard globally in conftest.py and wrote a list subclass with __eq__ overrides in urls.py; the reviewer rejected it and the card went to Блокировка.',
+    cause: 'The skeleton task\'s generated acceptance test asserted that urlpatterns is an empty list. It pinned the absence of what the next task adds, so adding /healthz broke it, and the coder bent the code to satisfy the old assertion instead of the requirement.',
+    fix: 'Test-design (and tester) skills now say: assert what the task adds, never the absence or exact emptiness of things a later task may add. The card was resent with a hint to fix the assertion.',
+    lesson: 'A test is a promise about this task only. Pinning what is not there yet makes the plan\'s next step a regression.',
+    commit: 'acceptance-pins-absence PR',
+  },
+  {
     id: 'blocked-reason-length', title: 'A stage job that crashed after the card had moved',
     symptom: 'The developer moved card #2 to Блокировка with its dossier, then the job died with "Column value must be a valid value for text column".',
     cause: 'The whole multi-line dossier went into the Blocked reason text field, which GitHub refused. The comment and the status change had already happened, so only the label and the job were lost.',
