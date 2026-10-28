@@ -53,8 +53,12 @@ services:
       # Stage spans and token metrics (agentflow.telemetry); unset turns the exporters off.
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel:4318
       OTEL_SERVICE_NAME: agentflow-worker
+      HUB_ENGINEERING_DIR: /hub/engineering
     volumes:
       - workspaces:/tmp/agentflow
+      # SOLID / OOP / clean-code skills shared by every project (agentflow.skills.hub_skills).
+      # HUB_DIR defaults to the hub clone next to this repo's parent (~/code/hub).
+      - { type: bind, source: "${HUB_DIR:-${HOME}/code/hub}/engineering", target: /hub/engineering, read_only: true, bind: { create_host_path: false } }
       # The same whitelist as the api (see there): intake and the developer check it here.
       - { type: bind, source: ./repos.toml, target: /app/repos.toml, read_only: true, bind: { create_host_path: false } }
     depends_on:
