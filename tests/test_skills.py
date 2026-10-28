@@ -56,4 +56,4 @@ def test_malformed_skill_fails_loudly(tmp_path: Path):
 
 def test_unknown_role_is_rejected():
     with pytest.raises(ValueError, match="unknown role"):
-        load_skills("tester")
+        load_skills("janitor")
