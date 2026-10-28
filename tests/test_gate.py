@@ -288,3 +288,25 @@ async def test_no_suite_means_project_checks_and_a_baseline_aware_build(tmp_path
 
 async def _none():
     return None
+
+
+def test_mypy_plugin_crash_reports_the_underlying_exception():
+    from agentflow.gate.python import extract_mypy_errors
+
+    raw = (
+        "config/settings.py: error: Error constructing plugin instance of NewSemanalDjangoPlugin\n"
+        "mypy.errors.CompileError: INTERNAL ERROR\n"
+        "Traceback (most recent call last):\n"
+        '  File "config/settings.py", line 3, in <module>\n'
+        '    SECRET = os.environ["SECRET_KEY"]\n'
+        "KeyError: 'SECRET_KEY'\n"
+    ) + "".join(f'  File "x{i}.py"\n' for i in range(100))
+    out = extract_mypy_errors(raw)
+    assert "KeyError: 'SECRET_KEY'" in out
+    assert len(out) <= 20
+
+
+def test_mypy_ordinary_errors_unchanged():
+    from agentflow.gate.python import extract_mypy_errors
+
+    assert extract_mypy_errors("a.py:1: error: bad\nFound 1 error\n") == ["a.py:1: error: bad"]

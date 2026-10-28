@@ -45,6 +45,26 @@ def extract_pytest_failures(raw: str, per_failure: int = 6) -> list[str]:
     return [lines[i] for i in sorted(keep) if lines[i].strip()]
 
 
+PLUGIN_FAILURE = re.compile(r"INTERNAL ERROR|Error constructing plugin")
+
+
+def extract_mypy_errors(output: str, max_lines: int = 15) -> list[str]:
+    """mypy prints `: error:` lines, except when a plugin (django-stubs) dies while loading:
+    then the only line is "Error constructing plugin ... INTERNAL ERROR" and the real cause
+    (settings raising on a missing env var) sits in the traceback below it. The coder saw only
+    the first line and flailed, so keep the traceback's tail — the exception lines — bounded."""
+    lines = [line for line in output.splitlines() if line.strip()]
+    errors = [line for line in lines if ": error:" in line]
+    if PLUGIN_FAILURE.search(output):
+        # Unindented lines of a traceback are the exception chain ("KeyError: ...", "RuntimeError: ...");
+        # indented ones are source frames. The summary shows only the first lines of a section, so the
+        # exception lines come right after the header.
+        header = next(line for line in lines if PLUGIN_FAILURE.search(line))
+        cause = [line for line in lines if not line.startswith((" ", "\t")) and line != header]
+        errors = [header, *cause[-max_lines:], *errors]
+    return errors or tail(output)
+
+
 def _has_mypy_config(ws: Path) -> bool:
     if (ws / "mypy.ini").exists() or (ws / ".mypy.ini").exists():
         return True
@@ -132,11 +152,7 @@ class PythonGate:
 
         if _has_mypy_config(workspace):
             types = await run_command([str(bin_ / "mypy"), ".", "--exclude", ACCEPTANCE_TEST_DIR], workspace, env=env)
-            type_errors = (
-                []
-                if types.ok
-                else with_fallback([line for line in types.output.splitlines() if ": error:" in line], types.output)
-            )
+            type_errors = [] if types.ok else extract_mypy_errors(types.output)
         else:
             # No type-checker configured: still catch syntax errors, the analogue of tsc.
             types = await run_command(
