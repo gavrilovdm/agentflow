@@ -53,6 +53,15 @@ class FakeBoard:
     async def merge_pull_request(self, pr):
         self.calls.append(("merge", pr.url))
 
+    async def sub_issues(self, card):
+        return [
+            b.SubIssue(issue_id="S1", number=5, url="u5", title="t", body="", closed=True),
+            b.SubIssue(issue_id="S2", number=6, url="u6", title="t", body="", closed=False),
+        ]
+
+    async def close_issue(self, issue_id):
+        self.calls.append(("close", issue_id))
+
 
 def _card(status):
     return Card(item_id="IT", issue_id="I", number=4, repo="o/r", url="u", title="Add", status=status)
@@ -116,6 +125,8 @@ async def test_releaser_merges_green_pr_only_after_a_person_says_so():
     fb.calls.clear()
     assert (await releaser.process(fb, _card(b.READY), may_merge=False)).kind == "merged"
     assert fb.calls[0] == ("merge", green.url) and fb.calls[-1][1] == b.MERGED
+    # a fix run's own task left the plan's sub-task open on a live card; merged closes it
+    assert [c for c in fb.calls if c[0] == "close"] == [("close", "S2")]
 
 
 async def test_red_ci_goes_back_to_the_developer_with_the_failing_checks():

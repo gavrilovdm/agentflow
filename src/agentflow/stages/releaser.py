@@ -71,6 +71,11 @@ def auto_merge(card: Card) -> bool:
 
 
 async def _merged(board: Board, card: Card, pr: PullRequest, how: str) -> Outcome:
+    # The developer closes a sub-task when its run completes it, but a fix run has tasks of its
+    # own: a live card reached Смержено with its sub-task still open. Merged means all done.
+    for s in await board.sub_issues(card):
+        if not s.closed:
+            await board.close_issue(s.issue_id)
     await board.move(card, MERGED, Report(agent=AGENT, summary=f"{pr.url} смержен ({how})", artifacts=[pr.url]))
     return Outcome("merged", pr.url)
 

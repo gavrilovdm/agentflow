@@ -239,6 +239,22 @@ BUGS.push(
     lesson: 'Status written by the process doing the work cannot report that process dying. Liveness needs a signal that expires on its own.',
     commit: 'stalled-runs PR',
   },
+  {
+    id: 'whitelist-mount', title: 'The containerised board refused every card',
+    symptom: 'The first research card after deploying the orchestrator to docker went from Бэклог straight to Блокировка: “repo is not in the whitelist”. The same repo had passed intake from a local checkout an hour earlier.',
+    cause: 'repos.toml is gitignored (it lists private repos), so the image never had it, and docker-compose did not mount it. A missing file is an empty whitelist on purpose; the api did not notice because it runs with INSECURE_DEV, the worker does not.',
+    fix: 'Compose bind-mounts ./repos.toml into api and worker read-only, with create_host_path: false so a missing file stops `up` instead of Docker creating an empty directory in its place.',
+    lesson: 'Every live test so far had run from a checkout. The deployment is a different runtime: test it as one.',
+    commit: 'close-subtasks PR',
+  },
+  {
+    id: 'open-subtasks', title: 'A merged card with an open sub-task',
+    symptom: 'Card #10 sat in Смержено with its PR merged, while its plan’s sub-issue was still open.',
+    cause: 'The developer closes a sub-issue when its task completes in the current run. The card went back once, and the fix run has its own single task, so the plan’s task id never completed in any run the developer looked at.',
+    fix: 'When the releaser moves a card to Смержено, it closes every sub-issue still open.',
+    lesson: 'Tie cleanup to the end state, not to the path that usually leads there.',
+    commit: 'close-subtasks PR',
+  },
 )
 
 export interface UseCase {
