@@ -76,8 +76,9 @@ async def test_tester_runs_its_own_test_per_item_and_sends_failures_back(repo: P
 
     async def checker(goal, items, gate, root):
         return DodChecks(checks=[
+            # an unused import is a lint error: the tester's own file must not redden the suite
             DodCheck(item=items[0], method="test", evidence="calls add(2, 3)",
-                     test_code="from calc.ops import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"),
+                     test_code="import os\n\nfrom calc.ops import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"),
             DodCheck(item=items[1], method="inspection", passed=True, evidence="AGENTS.md:3 `pytest`"),
         ])  # fmt: skip
 

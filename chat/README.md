@@ -12,7 +12,7 @@ Notifications still come from agentflow's own bot, not from this layer. They arr
 
 ## Picking a repository
 
-Runs may only target repos in agentflow's whitelist (`repos.toml`, see `../repos.example.toml`); `start_run` rejects anything else. Three MCP tools are used to pick one:
+Cards may only go to repos in agentflow's whitelist (`repos.toml`, see `../repos.example.toml`); `create_task` rejects anything else. Three MCP tools are used to pick one:
 
 | Tool | What it gives |
 |---|---|
@@ -24,7 +24,7 @@ What a project is *about* is not scored by rules. The model reads the descriptio
 
 Example: «найди репозиторий на Python с fastapi, активным CI и лицензией MIT» becomes `find_repos(language="python", framework="fastapi", ci_passing=true, license="MIT")`.
 
-**Confirmation is enforced in code** (`can_use_tool`), not only in the prompt. `start_run` shows «Запустить в X?» with buttons. You can also answer in words: «да» confirms, and anything else cancels and is passed to the model as feedback. The run starts without asking only when the whitelist has a single repo or you named the repo yourself. A `start_run` without a repo (in-place mode) is always refused here.
+**The bot files cards, it does not start runs.** A request becomes `create_task`: an issue in Бэклог of the task board, which intake, planner, developer, tester and releaser then take column by column, with the orchestrator handing cards out. `list_board` shows where every card is. `start_run` is refused here. **Confirmation is enforced in code** (`can_use_tool`), not only in the prompt: `create_task` shows «Завести карточку в X?» with buttons. You can also answer in words: «да» confirms, and anything else cancels and is passed to the model as feedback. The card is filed without asking only when the whitelist has a single repo or you named the repo yourself. A `create_task` without a repo is always refused.
 
 ## Run
 
