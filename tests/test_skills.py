@@ -80,3 +80,19 @@ def test_hub_dir_without_skills_fails_loudly(tmp_path: Path):
 def test_no_hub_configured_keeps_the_role_skills(monkeypatch):
     monkeypatch.delenv("HUB_ENGINEERING_DIR", raising=False)
     assert role_section("coder") == role_section("coder", hub="")
+
+
+async def test_coder_out_of_steps_is_a_clear_failure(monkeypatch, tmp_path):
+    from langgraph.errors import GraphRecursionError
+
+    from agentflow.agents import coder
+
+    class Boom:
+        async def ainvoke(self, *a, **k):
+            assert k["config"]["recursion_limit"] >= 150
+            raise GraphRecursionError("Recursion limit of 75 reached")
+
+    monkeypatch.setattr(coder, "create_agent", lambda *a, **k: Boom())
+    monkeypatch.setattr(coder, "chat_model", lambda *a, **k: None)
+    res = await coder.run_coder(coder.CoderContext(task=TASK, spec=SPEC, workspace=tmp_path, language="python"))
+    assert not res.success and "Ran out of steps" in (res.error or "")

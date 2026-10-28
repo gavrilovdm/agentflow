@@ -19,6 +19,7 @@ from langchain.agents.middleware import (
     ModelRetryMiddleware,
 )
 from langchain_core.tools import BaseTool, tool
+from langgraph.errors import GraphRecursionError
 
 from agentflow.agents.repo_tools import make_repo_tools
 from agentflow.config import get_settings
@@ -29,6 +30,10 @@ from agentflow.schemas import CoderResult, Spec, Task
 from agentflow.skills import role_section
 
 MAX_MODEL_CALLS = 25
+# Each model call costs ~2 graph steps (model + tools) plus middleware hook nodes, so the old
+# MAX_MODEL_CALLS * 3 = 75 tripped GraphRecursionError on a multi-file config task before the
+# model-call ceiling (the intended stop) was reached, crashing the attempt opaquely.
+CODER_RECURSION_LIMIT = MAX_MODEL_CALLS * 6
 
 # Scratch scripts the coder writes to poke at the project. Everything written is
 # committed, so these reached PRs and the reviewer burned cycles rejecting them.
@@ -167,7 +172,19 @@ async def run_coder(ctx: CoderContext, feedback: str | None = None) -> CoderResu
     try:
         await agent.ainvoke(
             {"messages": [{"role": "user", "content": user}]},
-            config={"tags": ["coder", f"task:{ctx.task.id}"], "recursion_limit": MAX_MODEL_CALLS * 3},
+            config={"tags": ["coder", f"task:{ctx.task.id}"], "recursion_limit": CODER_RECURSION_LIMIT},
+        )
+    except GraphRecursionError:
+        # The error text ("Recursion limit of N reached") says nothing about what to do next, and
+        # the next attempt's prompt is built from this message.
+        return CoderResult(
+            task_id=ctx.task.id,
+            success=False,
+            written_files=written,
+            error=(
+                "Ran out of steps before finishing: too many read/search calls. Read only the files you "
+                "must change, write the required files early, and do not re-explore."
+            ),
         )
     except Exception as exc:  # noqa: BLE001 — an agent crash is a failed attempt, not a dead run
         return CoderResult(task_id=ctx.task.id, success=False, written_files=written, error=str(exc)[:2000])
