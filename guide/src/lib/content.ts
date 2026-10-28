@@ -120,6 +120,14 @@ export const BUGS: Bug[] = [
 
 BUGS.push(
   {
+    id: 'gate-env-leak', title: 'The worker’s environment leaked into the target’s tests',
+    symptom: 'Every pytest in a Django target errored with a template1 collation-version mismatch; the card burned 10 attempts on a failure no source edit could clear.',
+    cause: 'The gate spawned commands with the full os.environ, so agentflow’s own DATABASE_URL reached pytest-django, which connected to agentflow’s Postgres. The same leak exposed GitHub tokens and LLM keys to agent-written code.',
+    fix: 'Gate commands get an allowlisted environment (PATH, HOME, locale, UV_*/PIP_*, toolchain caches) plus the gate’s explicit vars.',
+    lesson: 'A subprocess that runs untrusted or foreign code starts from an empty environment, not a copy of yours.',
+    commit: 'fix/gate-env-allowlist',
+  },
+  {
     id: 'one-criterion', title: 'A spec with a single acceptance criterion',
     symptom: 'The real run’s spec had 1 acceptance criterion where earlier runs had 12–14. No error anywhere — the replay above shows it.',
     cause: 'The model returned the list field as one sentence. A validator meant to rescue “- a\n- b” strings turned it into a one-item list and accepted it.',

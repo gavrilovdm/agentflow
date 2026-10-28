@@ -26,6 +26,27 @@ def lintable(workspace: Path, paths: list[str], suffixes: tuple[str, ...]) -> li
     ]
 
 
+# The gate runs code the agent just wrote, in the target repo. Inheriting the worker's
+# environment leaked agentflow's own DATABASE_URL into a Django project's pytest (every
+# test errored against agentflow's Postgres; card #2 burned 10 attempts) and handed
+# GitHub tokens and LLM/LangSmith keys to that code. Only what toolchains need to
+# find themselves and their caches passes through; anything else the gate sets explicitly.
+GATE_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "LANG", "LANGUAGE", "TZ"}
+    | {"VIRTUAL_ENV", "CI", "NO_COLOR", "FORCE_COLOR", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE"}
+    | {"NODE_EXTRA_CA_CERTS", "NODE_PATH", "NODE_OPTIONS", "COREPACK_HOME", "NVM_DIR", "VOLTA_HOME", "PNPM_HOME"}
+    | {"GOPATH", "GOROOT", "GOCACHE", "GOMODCACHE", "GOFLAGS", "GOPROXY", "CARGO_HOME", "RUSTUP_HOME"}
+    | {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
+)
+GATE_ENV_PREFIXES: tuple[str, ...] = ("LC_", "UV_", "PIP_", "PYTHON", "NPM_CONFIG_", "XDG_")
+
+
+def gate_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment for a command run in the target repo: allowlisted parent vars plus `extra`."""
+    base = {k: v for k, v in os.environ.items() if k in GATE_ENV_ALLOWLIST or k.startswith(GATE_ENV_PREFIXES)}
+    return {**base, **(extra or {})}
+
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -48,7 +69,7 @@ async def run_command(
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            env={**os.environ, **env} if env else None,
+            env=gate_env(env),
         )
     except FileNotFoundError as exc:
         return CommandResult(False, 127, f"{args[0]}: command not found ({exc})")
