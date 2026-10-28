@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     board_project: int = 0
     # Whitelist of repos the MCP tools may list, inspect and start runs in (see repos.example.toml).
     repos_file: str = "repos.toml"
+    # Where research cards put their findings (inbox/, by the library's own contract).
+    library_repo: str = "gavrilovdm/library"
     # Where the TypeScript gate keeps its own vitest (target repos need not have one).
     js_runner_dir: str = "~/.cache/agentflow/js-runner"
 
@@ -105,6 +107,17 @@ class Settings(BaseSettings):
     # refuses requests unless this is set, which only docker-compose (bound to 127.0.0.1) does.
     insecure_dev: bool = Field(default=False, description="Accept unauthenticated requests when secrets are empty")
     recursion_limit: int = 500
+
+
+def token_for(full_name: str | None) -> str:
+    """The token for a repo: the board's own for repos of the board's organization, which
+    GITHUB_TOKEN may not reach (a live run's clone of the org's sandbox failed with 401),
+    GITHUB_TOKEN for everything else."""
+    s = get_settings()
+    owner = (full_name or "").partition("/")[0]
+    if s.github_board_token and s.board_org and owner.lower() == s.board_org.lower():
+        return s.github_board_token
+    return s.github_token
 
 
 @lru_cache

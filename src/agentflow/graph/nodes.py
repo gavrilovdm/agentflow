@@ -60,7 +60,7 @@ async def prepare_workspace(state: WorkflowState, runtime: Runtime[Deps]) -> dic
     cfg = runtime.context.config
     # A card's developer run names its branch after the card; a standalone run gets a fresh one.
     branch = state.get("branch") or f"agentflow/{int(time.time())}"
-    identity = await github.commit_identity() if cfg.target_repo else None
+    identity = await github.commit_identity(cfg.target_repo.full_name) if cfg.target_repo else None
     path = await asyncio.to_thread(ws.prepare_workspace, cfg.target_repo, branch, cfg.local_path, identity)
     repo_id = ws.repo_id(cfg.target_repo, path)
     progress(runtime, "workspace ready", repo=repo_id)
@@ -156,6 +156,25 @@ async def run_coder(state: WorkflowState, runtime: Runtime[Deps]) -> dict:
         feedback = "\n".join([last.comments, *last.change_requests]) or "The previous attempt was rejected."
 
     result = await coder.run_coder(ctx, feedback)
+    if not result.success and not result.written_files:
+        # A worker killed mid-node leaves the coder's edits on disk; the resumed node runs the
+        # coder again, which finds nothing left to change. Counting that as a failed attempt
+        # cost a live run one of its two: the edits already there are this attempt's work.
+        on_disk = await asyncio.to_thread(ws.uncommitted, root, task.target_files)
+        if on_disk:
+            result = CoderResult(task_id=task_id, success=True, written_files=on_disk)
+            progress(runtime, f"kept edits already on disk: {list(on_disk)}", task=task_id)
+    # A live run's first task also rewrote AGENTS.md, the second task's file: the second task's
+    # test then passed before its code existed and checked nothing. Files planned for a task
+    # still to come are put back, so each change lands in the task that owns it.
+    others = {f for t in state["tasks"] if t.id != task_id and t.status == "pending" for f in t.target_files}
+    foreign = sorted(f for f in result.written_files if f in others and f not in task.target_files)
+    if foreign:
+        await asyncio.to_thread(ws.restore, root, foreign)
+        result = result.model_copy(
+            update={"written_files": {f: c for f, c in result.written_files.items() if f not in foreign}}
+        )
+        progress(runtime, f"put back files planned for later tasks: {foreign}", task=task_id)
     # Carry forward everything written for this task: a fix attempt rewrites one or two
     # files, and replacing the set shrank the review diff until the reviewer rejected
     # the task for "missing" files that were on disk all along.

@@ -73,6 +73,8 @@ def allowed(src: str, dst: str) -> bool:
     from any working column, and out of it only to a working column."""
     if src == BLOCKED:
         return dst in WORKING
+    if src == TESTING and dst == MERGED:
+        return True  # research and text have no PR: tested is done
     return dst == FORWARD.get(src) or dst == BACK.get(src) or (dst == BLOCKED and src in WORKING)
 
 
@@ -92,6 +94,8 @@ class Report(BaseModel):
     summary: str
     next_step: str = ""
     artifacts: list[str] = Field(default_factory=list)
+    # The card's working branch, once there is one: the next stage clones it from here.
+    branch: str = ""
 
 
 class Card(BaseModel):
@@ -109,6 +113,11 @@ class Card(BaseModel):
     attempts: int = 0
     blocked_reason: str | None = None
     run: str | None = None
+    # A closed issue left in a working column: stages skip it (a live board had two).
+    closed: bool = False
+    # Changes when someone comments; a board field write does not. The orchestrator skips a
+    # card that is waiting for a person until this moves.
+    updated_at: str = ""
 
 
 class SubIssue(BaseModel):
@@ -120,6 +129,18 @@ class SubIssue(BaseModel):
     title: str
     body: str = ""
     closed: bool = False
+
+
+class PullRequest(BaseModel):
+    """The card's PR as the releaser sees it: CI is the rollup of the head commit's checks."""
+
+    id: str
+    number: int
+    url: str
+    state: str  # OPEN, MERGED, CLOSED
+    mergeable: str = "UNKNOWN"  # MERGEABLE, CONFLICTING, UNKNOWN
+    checks: str | None = None  # SUCCESS, FAILURE, ERROR, PENDING, EXPECTED; None = the repo runs no checks
+    failing: list[str] = Field(default_factory=list)
 
 
 class Comment(BaseModel):
@@ -155,8 +176,45 @@ def render_report(report: Report, src: str, dst: str, attempts: int) -> str:
     if report.artifacts:
         lines.append("**Артефакты:** " + ", ".join(report.artifacts))
     # Machine-readable line: the orchestrator counts time in columns and returns from it.
-    lines.append(f"<!-- agentflow:report agent={report.agent} from={src} to={dst} attempts={attempts} -->")
+    branch = f" branch={report.branch}" if report.branch else ""
+    lines.append(f"<!-- agentflow:report agent={report.agent} from={src} to={dst} attempts={attempts}{branch} -->")
     return "\n\n".join(lines)
+
+
+REPORT_LINE = re.compile(r"<!-- agentflow:report agent=(\S+) from=(.+?) to=(.+?) attempts=(\d+)(?: branch=(\S+))? -->")
+
+
+class ReportLine(BaseModel):
+    agent: str
+    src: str
+    dst: str
+    attempts: int
+    branch: str = ""
+    index: int  # position of the comment in the thread
+
+
+def reports(thread: Thread) -> list[ReportLine]:
+    """The card's stage reports, oldest first, from their machine-readable lines."""
+    out = []
+    for i, c in enumerate(thread.comments):
+        if m := REPORT_LINE.search(c.body):
+            out.append(ReportLine(agent=m[1], src=m[2], dst=m[3], attempts=int(m[4]), branch=m[5] or "", index=i))
+    return out
+
+
+TREE_LINK = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/tree/(\S+?)(?=[\s,)]|$)")
+
+
+def branch_of(thread: Thread) -> str:
+    """The card's branch, as the newest report that named one left it. Reports written before
+    the branch had its own field only linked it; the tester then found no branch and sent a
+    finished card back."""
+    for r in reversed(reports(thread)):
+        if r.branch:
+            return r.branch
+        if m := TREE_LINK.search(thread.comments[r.index].body):
+            return m.group(1)
+    return ""
 
 
 _FIELD_VALUES = """
@@ -165,7 +223,7 @@ fieldValues(first: 20) { nodes {
   ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
   ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } }
 } }
-content { ... on Issue { id number title url repository { nameWithOwner } } }
+content { ... on Issue { id number title url closed updatedAt repository { nameWithOwner } } }
 """
 
 
@@ -193,6 +251,8 @@ def _card(item: dict[str, Any]) -> Card | None:
         attempts=int(values.get("Attempts") or 0),
         blocked_reason=values.get("Blocked reason") or None,
         run=values.get("Run") or None,
+        closed=bool(content.get("closed")),
+        updated_at=content.get("updatedAt") or "",
     )
 
 
@@ -361,8 +421,28 @@ class Board:
             priority=priority,
         )
 
-    async def cards(self, status: str | None = None) -> list[Card]:
-        """Cards on the board (issues only), optionally one column."""
+    async def add_issue(self, issue_id: str) -> str:
+        """Put an existing issue on the board in Бэклог (the `agentflow` label's way in).
+        Adding an issue that is already a card returns that card and leaves its column alone."""
+        p = await self.project()
+        item_id: str = (
+            await self._gql(
+                """mutation($p: ID!, $c: ID!) { addProjectV2ItemById(input: {projectId: $p, contentId: $c}) {
+                  item { id fieldValueByName(name: "Status") {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name } } } } }""",
+                p=p["id"],
+                c=issue_id,
+            )
+        )["addProjectV2ItemById"]["item"]["id"]
+        cards = {c.item_id: c for c in await self.cards(include_closed=True)}
+        if (card := cards.get(item_id)) is None or card.status is None:
+            await self._set(item_id, "Status", BACKLOG)
+            await self._set(item_id, "Attempts", 0)
+        return item_id
+
+    async def cards(self, status: str | None = None, include_closed: bool = False) -> list[Card]:
+        """Cards on the board (issues only), optionally one column. Closed issues are left
+        out unless asked for: a stage must not pick up work someone already closed."""
         out: list[Card] = []
         cursor = None
         while True:
@@ -377,7 +457,11 @@ class Board:
                 after=cursor,
             )
             items = data["organization"]["projectV2"]["items"]
-            out += [c for c in map(_card, items["nodes"]) if c and (status is None or c.status == status)]
+            out += [
+                c
+                for c in map(_card, items["nodes"])
+                if c and (status is None or c.status == status) and (include_closed or not c.closed)
+            ]
             if not items["pageInfo"]["hasNextPage"]:
                 return out
             cursor = items["pageInfo"]["endCursor"]
@@ -455,6 +539,65 @@ class Board:
         await self._gql(
             "mutation($i: ID!) { closeIssue(input: {issueId: $i}) { clientMutationId } }",
             i=issue_id,
+        )
+
+    async def pull_request(self, card: Card, branch: str) -> PullRequest | None:
+        """The newest PR from `branch` in the card's repo, merged ones included."""
+        owner, _, name = card.repo.partition("/")
+        data = await self._gql(
+            """query($o: String!, $n: String!, $b: String!) { repository(owner: $o, name: $n) {
+              pullRequests(headRefName: $b, first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes {
+                id number url state mergeable
+                commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 50) { nodes {
+                  ... on CheckRun { name conclusion detailsUrl }
+                  ... on StatusContext { context state targetUrl } } } } } } } } } } }""",
+            o=owner,
+            n=name,
+            b=branch,
+        )
+        nodes = data["repository"]["pullRequests"]["nodes"]
+        if not nodes:
+            return None
+        pr = nodes[0]
+        commits = pr["commits"]["nodes"]
+        rollup = commits[0]["commit"]["statusCheckRollup"] if commits else None
+        failing = []
+        for c in (rollup or {}).get("contexts", {}).get("nodes", []):
+            if c.get("conclusion") in ("FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE"):
+                failing.append(f"{c['name']} {c.get('detailsUrl') or ''}".strip())
+            elif c.get("state") in ("FAILURE", "ERROR"):
+                failing.append(f"{c['context']} {c.get('targetUrl') or ''}".strip())
+        return PullRequest(
+            id=pr["id"], number=pr["number"], url=pr["url"], state=pr["state"], mergeable=pr["mergeable"],
+            checks=rollup["state"] if rollup else None, failing=failing,
+        )  # fmt: skip
+
+    async def open_pull_request(self, card: Card, branch: str, base: str, title: str, body: str) -> PullRequest:
+        owner, _, name = card.repo.partition("/")
+        repo = (
+            await self._gql(
+                "query($o: String!, $n: String!) { repository(owner: $o, name: $n) { id } }", o=owner, n=name
+            )
+        )["repository"]["id"]
+        pr = (
+            await self._gql(
+                """mutation($r: ID!, $b: String!, $h: String!, $t: String!, $d: String!) {
+                  createPullRequest(input: {repositoryId: $r, baseRefName: $b, headRefName: $h, title: $t, body: $d}) {
+                    pullRequest { id number url state mergeable } } }""",
+                r=repo,
+                b=base,
+                h=branch,
+                t=title,
+                d=body,
+            )
+        )["createPullRequest"]["pullRequest"]
+        return PullRequest(**pr)
+
+    async def merge_pull_request(self, pr: PullRequest) -> None:
+        await self._gql(
+            """mutation($p: ID!) { mergePullRequest(input: {pullRequestId: $p, mergeMethod: SQUASH}) {
+              clientMutationId } }""",
+            p=pr.id,
         )
 
     async def set_field(self, card: Card, field: str, value: str | float | None) -> None:

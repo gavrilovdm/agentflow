@@ -79,7 +79,7 @@ what they return, so look before you write:
 Keep it focused: a handful of targeted calls, then return the answer."""
 
 
-async def _explore[T](system: str, messages: list[BaseMessage], workspace: Path, schema: type[T], tag: str) -> T | None:
+async def explore[T](system: str, messages: list[BaseMessage], workspace: Path, schema: type[T], tag: str) -> T | None:
     """Run the orchestrator model as a read-only agent over the workspace, ending in `schema`.
     None when it stops without an answer (call limit) or errors: exploration is an aid,
     so callers fall back to a one-shot structured call rather than fail the run."""
@@ -115,7 +115,7 @@ async def _explore[T](system: str, messages: list[BaseMessage], workspace: Path,
 
 
 async def _plan(system: str, messages: list[BaseMessage], workspace: Path | None, tag: str) -> TaskPlan:
-    plan = await _explore(system, messages, workspace, TaskPlan, tag) if workspace is not None else None
+    plan = await explore(system, messages, workspace, TaskPlan, tag) if workspace is not None else None
     if plan is not None:
         return plan
     return await structured(get_settings().orchestrator_model, TaskPlan).ainvoke(
@@ -137,7 +137,7 @@ async def generate_spec(
     messages: list[BaseMessage] = [HumanMessage(f"## User request\n\n{prompt}")]
     if previous and feedback:
         messages.append(_revision_message("spec", previous.model_dump(), feedback))
-    draft = await _explore(SPEC_SYSTEM, messages, workspace, SpecDraft, "spec") if workspace is not None else None
+    draft = await explore(SPEC_SYSTEM, messages, workspace, SpecDraft, "spec") if workspace is not None else None
     if draft is None:
         draft = await _spec_one_shot(messages)
     return Spec(

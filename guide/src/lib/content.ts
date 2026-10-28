@@ -255,6 +255,7 @@ export const USE_CASES: UseCase[] = [
     steps: [
       'Someone writes an issue and adds the label agentflow.',
       'GitHub sends a webhook; the API verifies its HMAC signature and only enqueues a job.',
+      'With a task board configured, the label files the issue as a card in Бэклог and the stage agents take it column by column; the steps below are the standalone run without a board.',
       'The worker runs the graph; at the spec and plan it pauses and posts Approve / Reject buttons to Telegram.',
       'After approval it codes, tests, reviews and opens a PR that says “Closes #N”, then comments on the issue.',
     ],
@@ -292,8 +293,8 @@ Events:       Issues`,
     steps: [
       'Write to the second bot (chat/): “find a Python repo with fastapi, green CI and MIT, and add endpoint X”.',
       'It calls list_repos and find_repos: hard criteria are checked from GitHub, and topic fit is judged from the README.',
-      'Before start_run it asks “Run in X?” with buttons, unless you named the repo or only one is whitelisted.',
-      'Spec and plan still arrive from agentflow’s own bot. Reply to one in words and the layer calls review_checkpoint.',
+      'It files a card with create_task instead of starting a run: before that it asks “Завести карточку в X?” with buttons, unless you named the repo or only one is whitelisted.',
+      'The card goes through the board: intake, planner (the plan waits for your «ок» on the issue), developer, tester, releaser; “what is on the board?” → list_board.',
     ],
     code: `cd chat && CHAT_TELEGRAM_BOT_TOKEN=… CHAT_ALLOWED_CHAT_IDS=… uv run agentflow-chat`,
   },

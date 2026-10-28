@@ -11,11 +11,16 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
+from arq import cron
 from arq.connections import RedisSettings
 
+from agentflow import orchestrator_pm
+from agentflow.board import Board, BoardError
 from agentflow.config import WorkflowConfig, get_settings
+from agentflow.graph.build import build_developer_graph
 from agentflow.graph.escalation import dossier_text
 from agentflow.integrations import telegram
 from agentflow.observability import setup_logging
@@ -126,21 +131,67 @@ async def resume_run_job(ctx: dict, thread_id: str, decision: dict | bool, feedb
     return await _after(snap, card)
 
 
+async def stage_job(ctx: dict, agent: str, item_id: str) -> str:
+    """One stage agent on the card the orchestrator handed it (see orchestrator_pm)."""
+    return await orchestrator_pm.work(ctx["board"], ctx["redis"], agent, item_id, ctx["developer_persistence"])
+
+
+async def add_to_board_job(ctx: dict, issue_id: str) -> str:
+    if ctx.get("board") is None:
+        return "no board"
+    return await ctx["board"].add_issue(issue_id)
+
+
+async def orchestrate(ctx: dict) -> int:
+    if ctx.get("board") is None:
+        return 0
+
+    async def enqueue(agent: str, item_id: str) -> None:
+        # job id per card: a tick that runs while the last one's job is still queued adds nothing
+        await ctx["redis"].enqueue_job("stage_job", agent, item_id, _job_id=f"stage-{item_id}-{agent}")
+
+    d = await orchestrator_pm.tick(ctx["board"], ctx["redis"], enqueue)
+    return len(d.launch)
+
+
+async def daily_summary(ctx: dict) -> None:
+    if ctx.get("board") is None:
+        return
+    key = orchestrator_pm.SUMMARY_KEY + datetime.now(UTC).strftime("%Y-%m-%d")
+    if await ctx["redis"].set(key, "1", ex=2 * 86400, nx=True):
+        await telegram.send_message(orchestrator_pm.summary(await ctx["board"].cards(include_closed=False)))
+
+
 async def startup(ctx: dict) -> None:
     setup_logging()
     ctx["_persistence_cm"] = open_persistence()
     ctx["persistence"] = await ctx["_persistence_cm"].__aenter__()
+    ctx["_developer_cm"] = open_persistence(builder=build_developer_graph)
+    ctx["developer_persistence"] = await ctx["_developer_cm"].__aenter__()
+    try:
+        ctx["board"] = Board.from_settings()
+    except BoardError:
+        ctx["board"] = None  # no board configured: runs still work, the orchestrator sits idle
+        log.info("no task board configured; the orchestrator is off")
 
 
 async def shutdown(ctx: dict) -> None:
+    if ctx.get("board") is not None:
+        await ctx["board"].aclose()
+    await ctx["_developer_cm"].__aexit__(None, None, None)
     await ctx["_persistence_cm"].__aexit__(None, None, None)
 
 
 class WorkerSettings:
-    functions = [start_run_job, resume_run_job]
+    functions = [start_run_job, resume_run_job, stage_job, add_to_board_job]
+    cron_jobs = [
+        cron(orchestrate, second=0, run_at_startup=True, unique=True),
+        cron(daily_summary, hour=6, minute=0),  # 09:00 Moscow
+    ]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     job_timeout = 4 * 3600  # a full run can legitimately take hours
-    max_jobs = 4
+    # Stage agents come on top of standalone runs: 4 in Делается, plus planner, tester, releaser.
+    max_jobs = 12
     keep_result = 24 * 3600

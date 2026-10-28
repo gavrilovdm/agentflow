@@ -216,3 +216,11 @@ def test_approval_field_is_read_into_the_card():
         "content": {"id": "I1", "number": 1, "title": "t", "url": "u", "repository": {"nameWithOwner": "o/r"}}}  # fmt: skip
     card = b._card(item)
     assert card is not None and card.approval == "plan_only"
+
+
+def test_closed_issue_on_the_board_is_not_a_card_to_work_on():
+    item = {"id": "IT1", "fieldValues": {"nodes": [{"name": b.PLANNING, "field": {"name": "Status"}}]},
+            "content": {"id": "I1", "number": 5, "title": "t", "url": "u", "closed": True,
+                        "repository": {"nameWithOwner": "o/r"}}}  # fmt: skip
+    card = b._card(item)
+    assert card is not None and card.closed

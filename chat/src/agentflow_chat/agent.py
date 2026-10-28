@@ -21,13 +21,13 @@ from claude_agent_sdk import (
 )
 
 from agentflow_chat.config import Settings, get_settings
-from agentflow_chat.policy import MCP_PREFIX, START_RUN, ChatState, needs_confirmation
+from agentflow_chat.policy import CREATE_TASK, MCP_PREFIX, ChatState, needs_confirmation
 from agentflow_chat.prompt import SYSTEM_PROMPT
 
 log = logging.getLogger(__name__)
 
 # Reads run without asking. Everything else that changes state goes through can_use_tool.
-READ_ONLY = [MCP_PREFIX + t for t in ("list_repos", "inspect_repo", "find_repos", "list_runs", "get_run")]
+READ_ONLY = [MCP_PREFIX + t for t in ("list_repos", "inspect_repo", "find_repos", "list_runs", "get_run", "list_board")]
 # Driven by the user's own words about a run agentflow already showed them, so no extra tap.
 USER_DRIVEN = {MCP_PREFIX + "review_checkpoint", MCP_PREFIX + "resolve_failed_task"}
 
@@ -110,18 +110,18 @@ class ChatSession:
     ) -> PermissionResultAllow | PermissionResultDeny:
         if tool in READ_ONLY or tool in USER_DRIVEN:
             return PermissionResultAllow()
-        if tool != START_RUN:
+        if tool != CREATE_TASK:
             return PermissionResultDeny(message=f"{tool} is not available here")
         repo = tool_input.get("repo")
         if not repo:
-            # In-place mode edits the worker's own checkout; a chat request should never do that.
-            return PermissionResultDeny(message="start_run needs a repo from list_repos")
+            return PermissionResultDeny(message="create_task needs a repo from list_repos")
         if not needs_confirmation(repo, self.state):
             return PermissionResultAllow()
-        ok, said = await self.confirmer.confirm(self.chat_id, f"Запустить в {repo}?\n\n{tool_input.get('prompt', '')}")
+        card = f"{tool_input.get('title', '')}\n{tool_input.get('goal', '')}"
+        ok, said = await self.confirmer.confirm(self.chat_id, f"Завести карточку в {repo}?\n\n{card}")
         if ok:
             return PermissionResultAllow()
-        reason = f"The user declined running in {repo}" + (f" and said: {said}" if said else "")
+        reason = f"The user declined filing the card in {repo}" + (f" and said: {said}" if said else "")
         return PermissionResultDeny(message=reason + ". Ask what to change; don't retry the same call.")
 
     async def _on_list_repos(self, data: Any, _tool_use_id: str | None, _ctx: Any) -> dict[str, Any]:

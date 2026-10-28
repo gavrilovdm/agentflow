@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 
 from git import Repo
 
-from agentflow.config import TargetRepo, get_settings
+from agentflow.config import TargetRepo, token_for
 
 WORKSPACE_ROOT = Path(tempfile.gettempdir()) / "agentflow"
 
@@ -55,7 +55,7 @@ def repo_id(target: TargetRepo | None, workspace: Path) -> str:
     return target.full_name if target else f"local:{workspace.resolve()}"
 
 
-def git_auth_env() -> dict[str, str]:
+def git_auth_env(full_name: str | None = None) -> dict[str, str]:
     """GitHub credentials for one git command, never written to disk.
 
     A token in the clone URL was saved to the workspace's .git/config, where the coder's
@@ -65,7 +65,7 @@ def git_auth_env() -> dict[str, str]:
     (a keychain) that would otherwise answer first. Entries are appended after any
     GIT_CONFIG_* the environment already has, so those keep working.
     """
-    token = get_settings().github_token
+    token = token_for(full_name)
     if not token:
         return {}
     n = int(os.environ.get("GIT_CONFIG_COUNT") or 0)
@@ -91,12 +91,14 @@ def prepare_workspace(
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     dest = Path(tempfile.mkdtemp(prefix="run-", dir=WORKSPACE_ROOT))
     url = f"https://github.com/{target.full_name}.git"
-    repo = Repo.clone_from(url, dest, env=git_auth_env(), branch=target.base_branch, depth=1, single_branch=True)
+    env = git_auth_env(target.full_name)
+    repo = Repo.clone_from(url, dest, env=env, branch=target.base_branch, depth=1, single_branch=True)
     if identity:
         with repo.config_writer() as cfg:
             cfg.set_value("user", "name", identity[0])
             cfg.set_value("user", "email", identity[1])
-    repo.git.checkout("-b", branch)
+    if branch != target.base_branch:  # a fix run clones the card's own branch and keeps working on it
+        repo.git.checkout("-b", branch)
     return dest
 
 
@@ -131,5 +133,27 @@ def commit(workspace: Path, paths: list[str], message: str) -> bool:
     return True
 
 
+def uncommitted(workspace: Path, paths: list[str]) -> dict[str, str]:
+    """Of `paths`, the files that differ from HEAD (or are new), with their contents."""
+    repo = Repo(workspace)
+    changed = {d.a_path for d in repo.index.diff(None)} | set(repo.untracked_files)
+    if repo.head.is_valid():
+        changed |= {d.a_path for d in repo.index.diff("HEAD")}
+    return {p: (workspace / p).read_text() for p in paths if p in changed and (workspace / p).is_file()}
+
+
+def restore(workspace: Path, paths: list[str]) -> None:
+    """Put files back as they are in HEAD; a file HEAD does not have is removed."""
+    repo = Repo(workspace)
+    for p in paths:
+        try:
+            repo.git.checkout("HEAD", "--", p)
+        except Exception:  # not in HEAD: the coder created it
+            (workspace / p).unlink(missing_ok=True)
+
+
 def push(workspace: Path, branch: str) -> None:
-    Repo(workspace).git.push("-u", "origin", branch, env=git_auth_env())
+    repo = Repo(workspace)
+    url = repo.remotes.origin.url
+    full_name = url.removeprefix("https://github.com/").removesuffix(".git")
+    repo.git.push("-u", "origin", branch, env=git_auth_env(full_name))

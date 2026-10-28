@@ -23,7 +23,19 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from agentflow.board import BLOCKED, DOING, TESTING, Board, Card, Report, Thread
+from agentflow.board import (
+    BLOCKED,
+    DOING,
+    READY,
+    REPORT_LINE,
+    TESTING,
+    Board,
+    Card,
+    Report,
+    Thread,
+    branch_of,
+    reports,
+)
 from agentflow.config import WorkflowConfig
 from agentflow.graph.build import build_developer_graph
 from agentflow.graph.escalation import dossier_text
@@ -37,7 +49,9 @@ from agentflow.runner import (
     snapshot,
     start_from_plan,
 )
-from agentflow.stages.planner import _ours, latest_plan, subtask_id, target_of
+from agentflow.schemas import Task
+from agentflow.stages import research
+from agentflow.stages.planner import Plan, is_agent_comment, latest_plan, subtask_id, target_of
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +79,7 @@ def decision_from(thread: Thread, options: list[str]) -> dict[str, Any]:
         ),
         default=-1,
     )
-    human = [c.body.strip() for c in thread.comments[start + 1 :] if not _ours(c)]
+    human = [c.body.strip() for c in thread.comments[start + 1 :] if not is_agent_comment(c)]
     hint = "\n\n".join(human) or None
     if human:
         for action, pattern in ACTIONS.items():
@@ -105,6 +119,7 @@ def outcome(card: Card, snap: RunSnapshot) -> tuple[str, Report]:
         summary=f"сделано задач: {len(tasks)}, полный прогон зелёный",
         next_step=f"проверить каждый пункт Definition of Done на ветке {branch}",
         artifacts=[f"https://github.com/{card.repo}/tree/{branch}"],
+        branch=branch,
     )
 
 
@@ -113,6 +128,36 @@ async def _close_done(board: Board, card: Card, snap: RunSnapshot) -> None:
     for s in await board.sub_issues(card):
         if not s.closed and subtask_id(s) in done:
             await board.close_issue(s.issue_id)
+
+
+def sent_back(thread: Thread) -> tuple[str, str] | None:
+    """(branch, what the later stage found) when the newest report sent the card back here."""
+    last = next(iter(reversed(reports(thread))), None)
+    if last is None or last.dst != DOING or last.src not in (TESTING, READY):
+        return None
+    body = REPORT_LINE.sub("", thread.comments[last.index].body).strip()
+    return branch_of(thread), body
+
+
+async def _fix_run(
+    board: Board, card: Card, p: Persistence, cfg: WorkflowConfig, plan: Plan, branch: str, findings: str
+) -> RunSnapshot:
+    """A card the tester or the PR's CI sent back: one task, «fix what they found», on the
+    card's own branch. Re-running the whole plan from main would redo finished work and
+    lose the commits the tester saw."""
+    files = sorted({f for t in plan.tasks for f in t.target_files})
+    fix = Task(
+        id=f"task-fix-{card.attempts}",
+        title="Исправить то, что нашла проверка",
+        description=f"A later stage checked the branch and sent it back. Its report:\n\n{findings}",
+        target_files=files,
+        definition_of_done="Every item the report marks as failed holds; nothing that passed breaks.",
+    )
+    if cfg.target_repo is not None:
+        cfg = cfg.model_copy(update={"target_repo": cfg.target_repo.model_copy(update={"base_branch": branch})})
+    thread_id = f"card-{card.number}-fix{card.attempts}-{uuid.uuid4().hex[:8]}"
+    await board.set_field(card, "Run", thread_id)
+    return await start_from_plan(p, plan.spec, [fix], cfg, thread_id, branch=branch, issue_number=card.number)
 
 
 async def process(
@@ -125,11 +170,24 @@ async def process(
         await board.move(card, BLOCKED, Report(agent=AGENT, summary="на карточке нет плана: её не прошёл planner"))
         return BLOCKED
 
+    if card.type == "research":
+        returned_report = (sent_back(thread) or ("", None))[1]
+        to, report = await research.research(board, card, thread, found[0], returned_report)
+        if to != BLOCKED:
+            for s in await board.sub_issues(card):
+                if not s.closed:
+                    await board.close_issue(s.issue_id)
+        await board.move(card, to, report)
+        return to
+
     snap = await snapshot(p.graph, card.run) if card.run else None
+    returned = sent_back(thread)
     if snap and snap.values and snap.interrupt:
         snap = await resume_run(p, snap.thread_id, decision_from(thread, snap.interrupt.get("options", [])))
     elif snap and snap.values and snap.status not in FINISHED:
         snap = await continue_run(p, snap.thread_id)  # the worker that drove it died
+    elif returned and f"-fix{card.attempts}-" not in (card.run or ""):
+        snap = await _fix_run(board, card, p, config(card), found[0], *returned)
     elif snap and snap.values and outcome(card, snap)[0] == TESTING:
         pass  # finished, but the move after it never happened
     else:

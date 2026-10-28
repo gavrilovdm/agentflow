@@ -33,21 +33,26 @@ async def test_reads_and_user_driven_actions_need_no_confirmation():
 async def test_other_tools_and_repo_less_runs_are_denied():
     s, _ = _session()
     assert isinstance(await s.can_use_tool("Bash", {"command": "ls"}, CTX), PermissionResultDeny)
-    assert isinstance(await s.can_use_tool("mcp__agentflow__start_run", {"prompt": "x"}, CTX), PermissionResultDeny)
+    assert isinstance(await s.can_use_tool("mcp__agentflow__create_task", {"title": "x"}, CTX), PermissionResultDeny)
+    # runs are no longer started from chat: cards go to the board instead
+    assert isinstance(
+        await s.can_use_tool("mcp__agentflow__start_run", {"prompt": "x", "repo": "octo/api"}, CTX),
+        PermissionResultDeny,
+    )
 
 
-async def test_start_run_asks_and_passes_the_users_objection_back():
+async def test_create_task_asks_and_passes_the_users_objection_back():
     s, c = _session(answer=(False, "нет, в octo/web"))
     s.state.last_user_text = "почини логин в мобильном бэкенде"
-    r = await s.can_use_tool("mcp__agentflow__start_run", {"prompt": "fix login", "repo": "octo/api"}, CTX)
+    r = await s.can_use_tool("mcp__agentflow__create_task", {"title": "fix login", "repo": "octo/api"}, CTX)
     assert isinstance(r, PermissionResultDeny) and "нет, в octo/web" in r.message
     assert c.asked and "octo/api" in c.asked[0]
 
 
-async def test_start_run_skips_question_when_user_named_repo():
+async def test_create_task_skips_question_when_user_named_repo():
     s, c = _session()
     s.state.last_user_text = "в octo/api почини логин"
-    r = await s.can_use_tool("mcp__agentflow__start_run", {"prompt": "fix login", "repo": "octo/api"}, CTX)
+    r = await s.can_use_tool("mcp__agentflow__create_task", {"title": "fix login", "repo": "octo/api"}, CTX)
     assert isinstance(r, PermissionResultAllow) and not c.asked
 
 
@@ -102,7 +107,7 @@ async def test_sole_repo_waiver_only_counts_for_the_current_turn():
         pass
 
     await s.send("почини логин", reply)
-    r = await s.can_use_tool("mcp__agentflow__start_run", {"prompt": "fix", "repo": "octo/api"}, CTX)
+    r = await s.can_use_tool("mcp__agentflow__create_task", {"title": "fix", "repo": "octo/api"}, CTX)
     assert isinstance(r, PermissionResultAllow) and c.asked  # asked, because no list_repos ran this turn
 
 

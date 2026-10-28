@@ -36,6 +36,7 @@ from agentflow.config import TargetRepo
 from agentflow.integrations import telegram
 from agentflow.integrations import workspace as ws
 from agentflow.schemas import Spec, Task
+from agentflow.stages import research
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ def latest_plan(thread: Thread) -> tuple[Plan, int, list[Comment]] | None:
     return None
 
 
-def _ours(c: Comment) -> bool:
+def is_agent_comment(c: Comment) -> bool:
     return "agentflow:" in c.body
 
 
@@ -144,6 +145,11 @@ async def checkout(card: Card) -> AsyncIterator[Path]:
         ws.cleanup_workspace(path, target)
 
 
+@contextlib.asynccontextmanager
+async def _nowhere(card: Card) -> AsyncIterator[Path]:
+    yield Path(".")
+
+
 async def _approve(board: Board, card: Card, plan: Plan, version: int) -> Outcome:
     """Tasks → sub-issues, then the move. Sub-issues already there (a pass that died before
     the move) are kept, so a retry never files a task twice."""
@@ -166,12 +172,15 @@ async def _approve(board: Board, card: Card, plan: Plan, version: int) -> Outcom
 
 
 async def process(board: Board, card: Card, planner: Planner = make_plan, checkout: Checkout = checkout) -> Outcome:
+    if card.type == "research" and planner is make_plan:
+        # A search plan from the card; there is no repo to explore.
+        planner, checkout = research.make_research_plan, _nowhere
     thread = await board.thread(card)
     found = latest_plan(thread)
     previous, version, feedback = None, 0, None
     if found:
         previous, version, after = found
-        human = [c for c in after if not _ours(c)]
+        human = [c for c in after if not is_agent_comment(c)]
         if not human:
             if needs_approval(card):
                 return Outcome("wait")
