@@ -128,6 +128,14 @@ BUGS.push(
     commit: 'fix/gate-env-allowlist',
   },
   {
+    id: 'workflow-scope-push', title: 'A 19-minute run lost to one CI file',
+    symptom: 'A Django skeleton card blocked three times; the last run did all five tasks, then died at push_branch with “Run crashed: GitCommandError” and nothing survived.',
+    cause: 'A task wrote .github/workflows/ci.yml. The push token has no workflow scope, so GitHub rejected the whole branch. The branch is pushed only at the end, so every finished task was lost.',
+    fix: 'The coder’s write_file refuses .github/workflows/ and tells the agent to document the check commands in the README instead.',
+    lesson: 'Read the stderr, not the exception class: the cause was a token scope, not git. And pushing only at the end loses everything on a late failure.',
+    commit: 'fix/push-workflow-scope',
+  },
+  {
     id: 'one-criterion', title: 'A spec with a single acceptance criterion',
     symptom: 'The real run’s spec had 1 acceptance criterion where earlier runs had 12–14. No error anywhere — the replay above shows it.',
     cause: 'The model returned the list field as one sentence. A validator meant to rescue “- a\n- b” strings turned it into a one-item list and accepted it.',

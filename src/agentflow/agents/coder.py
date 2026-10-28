@@ -74,6 +74,13 @@ def build_file_tools(workspace: Path, written: dict[str, str]) -> list[BaseTool]
                 f'Refusing to write "{rel}": {ACCEPTANCE_TEST_DIR} holds the acceptance tests this task is '
                 "graded against. Put unit tests elsewhere under tests/."
             )
+        # The push token has no `workflow` scope, so GitHub rejects the whole branch if it contains
+        # a workflow file: a 19-minute run once died at push_branch because of one ci.yml.
+        if rel.startswith(".github/workflows/"):
+            return (
+                f'Refusing to write "{rel}": the push token cannot publish GitHub Actions workflows, so the '
+                "whole branch would be rejected. Skip CI config; list the check commands in the README instead."
+            )
         if is_scratch_file(rel):
             return (
                 f'Refusing to write "{rel}": helper/debug scripts get committed with everything else. '
