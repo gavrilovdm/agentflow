@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SKILLS_DIR = Path(__file__).parent
-ROLES = ("orchestrator", "test_generator", "coder", "reviewer")
+ROLES = ("intake", "orchestrator", "test_generator", "coder", "reviewer")
 
 
 @dataclass(frozen=True)

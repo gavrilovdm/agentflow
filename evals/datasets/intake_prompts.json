@@ -1,0 +1,12 @@
+[
+  {"prompt": "Add shop.users.change_email(db, user_id, new_email) that updates a user's email and raises DuplicateEmail if another user already has it", "type": "coding", "expect": ["ready"]},
+  {"prompt": "Добавить иконку-ссылку LinkedIn в блок контактов, рядом с остальными иконками; ссылка открывается в новой вкладке", "type": "coding", "expect": ["ready", "ask"]},
+  {"prompt": "Add password reset via emailed one-time token that expires after 30 minutes", "type": "coding", "expect": ["ready"]},
+  {"prompt": "Expose order history for a user, newest first, paginated", "type": "coding", "expect": ["ready", "ask"]},
+  {"prompt": "Rate-limit login attempts to 5 per minute per email", "type": "coding", "expect": ["ready"]},
+  {"prompt": "Make it faster", "type": "coding", "expect": ["ask"]},
+  {"prompt": "почини баг", "type": "coding", "expect": ["ask"]},
+  {"prompt": "Найди 5 свежих статей про оркестрацию LLM-агентов и сравни подходы в таблице: кто координирует агентов и где хранится состояние", "type": "research", "expect": ["ready", "ask"]},
+  {"prompt": "Напиши пост в LinkedIn о том, как мы перенесли задачи агентов на доску GitHub Projects, до 1500 знаков, без эмодзи", "type": "text", "expect": ["ready"]},
+  {"prompt": "Закажи пиццу на вечер", "type": "out_of_scope", "expect": ["reject"]}
+]
