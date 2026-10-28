@@ -18,6 +18,8 @@ def _isolated_settings(monkeypatch):
         "API_TOKEN",
         "GITHUB_WEBHOOK_SECRET",
         "TELEGRAM_WEBHOOK_SECRET",
+        "GITHUB_BOARD_TOKEN",
+        "BOARD_ORG",
     ):
         monkeypatch.setenv(var, "")
     # Most tests exercise the flow, not auth; test_api.py turns this off to check fail-closed.

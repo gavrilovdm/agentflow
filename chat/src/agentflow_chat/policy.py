@@ -1,7 +1,7 @@
 """Rules the chat layer enforces in code rather than trusting the prompt with.
 
 A wrong repo costs a whole run (and a PR in the wrong place), while asking costs one tap,
-so start_run is confirmed unless the choice could not have been a guess.
+so create_task is confirmed unless the choice could not have been a guess.
 """
 
 from __future__ import annotations
@@ -10,7 +10,8 @@ import re
 from dataclasses import dataclass
 
 MCP_PREFIX = "mcp__agentflow__"
-START_RUN = MCP_PREFIX + "start_run"
+# The bot files cards on the board; stage agents take them from there. It no longer starts runs.
+CREATE_TASK = MCP_PREFIX + "create_task"
 # agentflow's own Telegram bot ends every notification with this line.
 THREAD_RE = re.compile(r"thread:\s*`?([\w.:-]+)`?")
 YES = {"да", "ок", "ok", "okay", "yes", "y", "го", "давай", "запускай", "подтверждаю", "+", "👍"}
