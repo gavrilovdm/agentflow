@@ -50,6 +50,9 @@ services:
       REDIS_URL: redis://redis:6379
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}  # shell env wins over .env (e.g. GITHUB_TOKEN=$(gh auth token))
       CLAUDE_PROXY_URL: http://host.docker.internal:8787/v1
+      # Stage spans and token metrics (agentflow.telemetry); unset turns the exporters off.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel:4318
+      OTEL_SERVICE_NAME: agentflow-worker
     volumes:
       - workspaces:/tmp/agentflow
       # The same whitelist as the api (see there): intake and the developer check it here.
@@ -58,6 +61,16 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
 
+  # OpenTelemetry collector + Tempo (traces) + Prometheus (metrics) + Loki + Grafana in one
+  # container. Grafana on :3300 (3000 is usually a dev server). 4318 is open to the host so
+  # projects the board builds can send their own telemetry here while developed locally.
+  # It keeps days of data, not months: the durable record for analysis is Postgres stage_runs.
+  otel:
+    image: grafana/otel-lgtm:0.11.10
+    ports: ["127.0.0.1:3300:3000", "127.0.0.1:4318:4318"]
+    volumes: [lgtm:/data]
+
 volumes:
   pgdata:
   workspaces:
+  lgtm:

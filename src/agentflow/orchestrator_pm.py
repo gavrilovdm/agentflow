@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from agentflow import repos
+from agentflow import repos, telemetry
 from agentflow.board import (
     BACKLOG,
     BLOCKED,
@@ -43,6 +43,7 @@ from agentflow.board import (
     Thread,
     reports,
 )
+from agentflow.config import get_settings
 from agentflow.integrations import telegram
 from agentflow.stages import developer, intake, planner, releaser, tester
 from agentflow.stages.tester import dod_items
@@ -243,13 +244,17 @@ async def open_breaker(redis: Redis, reason: str) -> None:
             )
 
 
-async def work(board: Board, redis: Redis, agent: str, item_id: str, persistence: Any = None) -> str:
-    """A stage job: run one agent on the card the orchestrator handed it."""
+async def work(
+    board: Board, redis: Redis, agent: str, item_id: str, persistence: Any = None, stage_runs: str | None = None
+) -> str:
+    """A stage job: run one agent on the card the orchestrator handed it. `stage_runs` is the
+    database that keeps the job's telemetry row; the worker passes its own, tests none."""
     card = next((c for c in await board.cards() if c.item_id == item_id), None)
     if card is None or card.owner != agent:
         return "gone"  # moved, closed or reassigned while queued
     outcome = "?"
-    async with heartbeat(redis, item_id):
+    run = telemetry.StageRun(agent, card.repo, card.number, card.type or "?", card.status or "?", card.attempts)
+    async with heartbeat(redis, item_id), telemetry.stage(run, stage_runs):
         try:
             if agent == intake.AGENT:
                 wl = {e.full_name for e in repos.load_whitelist()}
@@ -267,6 +272,7 @@ async def work(board: Board, redis: Redis, agent: str, item_id: str, persistence
                 await open_breaker(redis, f"{type(exc).__name__}: {exc}")
             raise
         finally:
+            run.outcome = str(outcome)
             # A move already cleared Owner; a pass that ended in waiting or crashed has not.
             with contextlib.suppress(Exception):
                 await board.set_field(card, "Owner", None)
@@ -290,8 +296,6 @@ def summary(cards: list[Card], now: datetime | None = None) -> str:
 
 async def main() -> None:
     from redis.asyncio import Redis as AsyncRedis
-
-    from agentflow.config import get_settings
 
     board, redis = Board.from_settings(), AsyncRedis.from_url(get_settings().redis_url)
 
