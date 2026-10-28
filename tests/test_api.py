@@ -74,6 +74,27 @@ async def test_github_issue_label_triggers_run(client, monkeypatch):
     assert (await client.post("/webhooks/github", content=other, headers=headers)).json()["status"] == "ignored"
 
 
+async def test_with_a_board_the_label_files_a_card_instead_of_starting_a_run(client, monkeypatch):
+    for k, v in {
+        "GITHUB_WEBHOOK_SECRET": "hook",
+        "GITHUB_BOARD_TOKEN": "b",
+        "BOARD_ORG": "o",
+        "BOARD_PROJECT": "1",
+    }.items():
+        monkeypatch.setenv(k, v)
+    get_settings.cache_clear()
+    payload = {
+        "action": "labeled",
+        "label": {"name": "agentflow"},
+        "issue": {"number": 7, "node_id": "I_7", "title": "Add search", "body": ""},
+        "repository": {"full_name": "octo/shop", "name": "shop", "default_branch": "main"},
+    }
+    body, headers = _signed("hook", payload)
+    r = await client.post("/webhooks/github", content=body, headers=headers)
+    assert r.json() == {"status": "queued", "board": "Бэклог"}
+    assert app.state.queue.jobs[-1][:2] == ("add_to_board_job", ("I_7",))
+
+
 async def test_approval_flow_and_telegram_button(client, tmp_path, monkeypatch):
     async def fake_spec(prompt, previous=None, feedback=None, *, workspace=None):
         return Spec(

@@ -11,13 +11,16 @@ yourself from each candidate's description and README excerpt. `unknown` criteri
 be checked: mention them rather than treating them as failures. Use inspect_repo for details.
 - If several repos fit, list the best two or three with one line each on why, and ask.
 - If none fits, say which criterion ruled each one out.
-- A task that spans several repos becomes one start_run per repo.
+- A task that spans several repos becomes one card per repo.
 
-Starting a run: pass the user's request as `prompt`, rewritten into a self-contained task \
-statement (what to change, acceptance criteria they gave), plus `repo`. The app may ask the \
-user to confirm the repo before the run starts; if they decline, ask what to change.
+Filing a task: call create_task with `repo`, a short imperative `title`, the `goal` (what should \
+change, 1-3 sentences), `definition_of_done` (checkable conditions the user gave or clearly implied, \
+one per item) and `context` (their own words, links, constraints). The app may ask the user to \
+confirm the repo first; if they decline, ask what to change. The card lands in Бэклог and stage \
+agents take it from there (intake may ask the author questions on the issue); list_board shows \
+where every card is.
 
-After a run starts, agentflow itself messages the user for spec/plan approval and when a task \
+Runs started earlier: agentflow itself messages the user for spec/plan approval and when a task \
 runs out of budget. When the user answers one of those in words, a bracketed note tells you \
 which run it refers to: use review_checkpoint (approve, or reject with their feedback) or \
 resolve_failed_task (retry/replan with their hint, skip, abort). Use get_run when they ask \

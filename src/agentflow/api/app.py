@@ -183,6 +183,11 @@ async def github_webhook(
     if payload.get("label", {}).get("name") != s.github_trigger_label:
         return {"status": "ignored"}
     issue, repo = payload["issue"], payload["repository"]
+    if s.github_board_token and s.board_org and s.board_project and issue.get("node_id"):
+        # With a task board the label files the issue as a card; stage agents take it from
+        # Бэклог like any other. Without one it still starts a run, as it always did.
+        await request.app.state.queue.enqueue_job("add_to_board_job", issue["node_id"])
+        return {"status": "queued", "board": "Бэклог"}
     cfg = WorkflowConfig(
         target_repo=TargetRepo.parse(repo["full_name"], repo.get("default_branch", "main")),
     )

@@ -150,8 +150,10 @@ async def process(board: Board, card: Card, checker: Checker = make_checks, chec
     async with checkout(card, branch) as root:
         gate = detect_gate(root, [])
         goal = thread.body.split("## Definition of Done", 1)[0].strip()
-        checked = await verify(items, await checker(goal, items, gate, root), gate, root)
+        # The suite first, on the branch as pushed: run after the tester's own tests were written,
+        # its lint failed a live card on the tester's own file while every DoD item had passed.
         suite = await gate.run(root, None, enable_lint=True)
+        checked = await verify(items, await checker(goal, items, gate, root), gate, root)
 
     ok = all(c.passed for c in checked)
     lines = render(checked)
