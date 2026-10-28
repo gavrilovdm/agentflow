@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     board_project: int = 0
     # Whitelist of repos the MCP tools may list, inspect and start runs in (see repos.example.toml).
     repos_file: str = "repos.toml"
+    # Where research cards put their findings (inbox/, by the library's own contract).
+    library_repo: str = "gavrilovdm/library"
     # Where the TypeScript gate keeps its own vitest (target repos need not have one).
     js_runner_dir: str = "~/.cache/agentflow/js-runner"
 
