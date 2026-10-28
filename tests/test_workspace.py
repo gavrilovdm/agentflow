@@ -71,11 +71,11 @@ async def test_commit_identity_is_the_token_owner(monkeypatch, token):
         SimpleNamespace(name="Octo Cat", login="octo", id=7),
         SimpleNamespace(name=None, login="octo", id=7),
     ])  # fmt: skip
-    monkeypatch.setattr(github, "_client", lambda: SimpleNamespace(get_user=lambda: next(users)))
+    monkeypatch.setattr(github, "_client", lambda full_name=None: SimpleNamespace(get_user=lambda: next(users)))
     assert await github.commit_identity() == OWNER
     assert await github.commit_identity() == ("octo", "7+octo@users.noreply.github.com")
 
-    def broken():
+    def broken(full_name=None):
         raise RuntimeError("401")
 
     monkeypatch.setattr(github, "_client", broken)
@@ -111,3 +111,16 @@ def test_agents_cannot_open_git_internals(tmp_path):
             ws.resolve_in_workspace(tmp_path, path)
     for path in (".gitignore", ".github/workflows/ci.yml"):
         assert ws.resolve_in_workspace(tmp_path, path)[1] == path
+
+
+def test_board_repos_use_the_board_token(monkeypatch):
+    # A live run's clone of the org's sandbox failed with 401: GITHUB_TOKEN did not reach the org.
+    from agentflow.config import get_settings, token_for
+
+    monkeypatch.setenv("GITHUB_TOKEN", "personal")
+    monkeypatch.setenv("GITHUB_BOARD_TOKEN", "board")
+    monkeypatch.setenv("BOARD_ORG", "Acme-Dev")
+    get_settings.cache_clear()
+    assert token_for("acme-dev/sandbox") == "board"
+    assert token_for("someone/else") == "personal" and token_for(None) == "personal"
+    assert ws.git_auth_env("acme-dev/sandbox")["AGENTFLOW_GIT_TOKEN"] == "board"

@@ -127,3 +127,57 @@ async def test_card_without_a_plan_is_blocked(repo: Path):
     async with open_persistence(in_memory=True, builder=build_developer_graph) as p:
         assert await developer.process(fb, _card(), p) == b.BLOCKED
     assert "нет плана" in fb.calls[-1][2].summary
+
+
+async def test_files_planned_for_a_later_task_are_put_back(repo: Path, fakes, monkeypatch):
+    # Live run: the first task also rewrote the second task's file, whose test then passed before its code.
+    from git import Repo
+
+    original = coder.run_coder
+
+    async def eager(ctx, feedback=None):
+        result = await original(ctx, feedback)
+        if ctx.task.id == "task-add":
+            (ctx.workspace / "calc/mul.py").write_text("def mul(a, b):\n    return 0\n")
+            result.written_files["calc/mul.py"] = "x"
+        return result
+
+    monkeypatch.setattr(coder, "run_coder", eager)
+    fb = FakeBoard(_plan())
+    async with open_persistence(in_memory=True, builder=build_developer_graph) as p:
+        assert await developer.process(fb, _card(), p, lambda c: WorkflowConfig(local_path=str(repo))) == b.TESTING
+    add_commit = next(c for c in Repo(repo).iter_commits() if "task-add" in c.message)
+    assert "calc/mul.py" not in add_commit.stats.files
+
+
+async def test_card_sent_back_by_the_tester_gets_one_fix_task_on_its_branch(repo: Path, fakes, monkeypatch):
+    original = coder.run_coder
+
+    async def fixing(ctx, feedback=None):
+        if ctx.task.id != "task-fix-1":
+            return await original(ctx, feedback)
+        fakes["coder"].append((ctx.task.id, feedback))
+        assert "mul(2, 3) == 6" in ctx.task.description  # the tester's findings reach the coder
+        body = '"""Multiplication."""\n\n\ndef mul(a: int, b: int) -> int:\n    return a * b\n'
+        (ctx.workspace / "calc/mul.py").write_text(body)
+        return CoderResult(task_id=ctx.task.id, success=True, written_files={"calc/mul.py": body})
+
+    monkeypatch.setattr(coder, "run_coder", fixing)
+    fb = FakeBoard(_plan())
+    cfg = WorkflowConfig(local_path=str(repo))
+    async with open_persistence(in_memory=True, builder=build_developer_graph) as p:
+        assert await developer.process(fb, _card(), p, lambda c: cfg) == b.TESTING
+        branch = b.branch_of(fb.thread_)
+        assert branch.startswith("agentflow/issue-7-")
+        back = b.Report(agent="tester", summary="не подтверждено: mul(2, 3) == 6", branch=branch)
+        fb.thread_.comments.append(
+            Comment(author="bot", body=b.render_report(back, b.TESTING, b.DOING, 1), created_at="z")
+        )
+        run = next(v for k, f, v in reversed([c for c in fb.calls if c[0] == "set_field"]) if f == "Run")
+        card = _card(run=run).model_copy(update={"attempts": 1})
+        coder_calls = len(fakes["coder"])
+        assert await developer.process(fb, card, p, lambda c: cfg) == b.TESTING
+    fix_run = next(v for k, f, v in reversed([c for c in fb.calls if c[0] == "set_field"]) if f == "Run")
+    assert "-fix1-" in fix_run
+    assert [t for t, _ in fakes["coder"][coder_calls:]] == ["task-fix-1"]  # only the fix, not the whole plan
+    assert b.branch_of(fb.thread_) == branch

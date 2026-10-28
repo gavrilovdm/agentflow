@@ -86,7 +86,7 @@ def latest_plan(thread: Thread) -> tuple[Plan, int, list[Comment]] | None:
     return None
 
 
-def _ours(c: Comment) -> bool:
+def is_agent_comment(c: Comment) -> bool:
     return "agentflow:" in c.body
 
 
@@ -171,7 +171,7 @@ async def process(board: Board, card: Card, planner: Planner = make_plan, checko
     previous, version, feedback = None, 0, None
     if found:
         previous, version, after = found
-        human = [c for c in after if not _ours(c)]
+        human = [c for c in after if not is_agent_comment(c)]
         if not human:
             if needs_approval(card):
                 return Outcome("wait")

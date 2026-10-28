@@ -7,3 +7,4 @@ description = "Multi-agent coding workflow on LangGraph: spec, plan, TDD code, g
 owner = "Daniil"
 tags = ["python", "langgraph", "agents", "fastapi"]
 # base_branch = "main"   # omit to use the repo's default branch
+# auto_merge = true      # the releaser merges a tested, green PR without waiting for «мержи»
