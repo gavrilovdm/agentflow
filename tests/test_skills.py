@@ -97,3 +97,19 @@ def test_english_rule_is_in_every_agent_role_prompt():
     ):
         assert ENGLISH_RULE in prompt
     assert ENGLISH_RULE in test_generator.SYSTEM + role_section("test_generator")
+
+
+async def test_coder_out_of_steps_is_a_clear_failure(monkeypatch, tmp_path):
+    from langgraph.errors import GraphRecursionError
+
+    from agentflow.agents import coder
+
+    class Boom:
+        async def ainvoke(self, *a, **k):
+            assert k["config"]["recursion_limit"] >= 150
+            raise GraphRecursionError("Recursion limit of 75 reached")
+
+    monkeypatch.setattr(coder, "create_agent", lambda *a, **k: Boom())
+    monkeypatch.setattr(coder, "chat_model", lambda *a, **k: None)
+    res = await coder.run_coder(coder.CoderContext(task=TASK, spec=SPEC, workspace=tmp_path, language="python"))
+    assert not res.success and "Ran out of steps" in (res.error or "")

@@ -272,6 +272,14 @@ BUGS.push(
     commit: 'gate-uv-project PR',
   },
   {
+    id: 'budget-and-plugin-crash', title: 'Two failures that hid their own cause',
+    symptom: 'Card #2 of mentor-platform used all five attempts. mypy reported only "Error constructing plugin instance of NewSemanalDjangoPlugin ... INTERNAL ERROR", and twice the coder died with "Recursion limit of 75 reached".',
+    cause: 'The gate kept only mypy lines containing ": error:", so the traceback naming the real cause (Django settings raising on a missing env var) was dropped. The coder\'s graph recursion limit was 75, below what 25 model calls with tools and middleware need, so a multi-file task crashed before the model-call ceiling.',
+    fix: 'A plugin crash now reports the exception lines of its traceback (bounded). The recursion limit is 150, and hitting it ends the attempt with "Ran out of steps" feedback for the next attempt.',
+    lesson: 'A failure report is the next attempt\'s only input. Strip noise, never the cause.',
+    commit: 'coder-budget-mypy-plugin PR',
+  },
+  {
     id: 'test-pins-absence', title: 'A test that forbade the next task',
     symptom: 'Card #2 of mentor-platform: the /healthz task used all five attempts. The coder disabled the database guard globally in conftest.py and wrote a list subclass with __eq__ overrides in urls.py; the reviewer rejected it and the card went to Блокировка.',
     cause: 'The skeleton task\'s generated acceptance test asserted that urlpatterns is an empty list. It pinned the absence of what the next task adds, so adding /healthz broke it, and the coder bent the code to satisfy the old assertion instead of the requirement.',
