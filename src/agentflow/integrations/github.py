@@ -9,17 +9,17 @@ import logging
 
 from github import Auth, Github
 
-from agentflow.config import TargetRepo, get_settings
+from agentflow.config import TargetRepo, token_for
 from agentflow.schemas import PullRequest
 
 log = logging.getLogger(__name__)
 
 
-def _client() -> Github:
-    return Github(auth=Auth.Token(get_settings().github_token))
+def _client(full_name: str | None = None) -> Github:
+    return Github(auth=Auth.Token(token_for(full_name)))
 
 
-async def commit_identity() -> tuple[str, str] | None:
+async def commit_identity(full_name: str | None = None) -> tuple[str, str] | None:
     """The token's owner as a git author: (name, GitHub noreply address).
 
     Without one the worker committed as `agentflow@<container id>`. Vercel could not tie
@@ -27,11 +27,11 @@ async def commit_identity() -> tuple[str, str] | None:
     in the environment still win. None (with a warning) when the token has no user, e.g.
     an app installation token.
     """
-    if not get_settings().github_token:
+    if not token_for(full_name):
         return None
 
     def _me() -> tuple[str, str]:
-        user = _client().get_user()
+        user = _client(full_name).get_user()
         return user.name or user.login, f"{user.id}+{user.login}@users.noreply.github.com"
 
     try:
@@ -44,7 +44,9 @@ async def commit_identity() -> tuple[str, str] | None:
 async def open_pull_request(target: TargetRepo, head: str, title: str, body: str) -> PullRequest:
     def _create() -> PullRequest:
         pr = (
-            _client().get_repo(target.full_name).create_pull(title=title, body=body, head=head, base=target.base_branch)
+            _client(target.full_name)
+            .get_repo(target.full_name)
+            .create_pull(title=title, body=body, head=head, base=target.base_branch)
         )
         return PullRequest(number=pr.number, url=pr.html_url, title=pr.title, branch=head)
 
@@ -53,7 +55,7 @@ async def open_pull_request(target: TargetRepo, head: str, title: str, body: str
 
 async def comment_on_issue(target: TargetRepo, issue_number: int, body: str) -> None:
     def _comment() -> None:
-        _client().get_repo(target.full_name).get_issue(issue_number).create_comment(body)
+        _client(target.full_name).get_repo(target.full_name).get_issue(issue_number).create_comment(body)
 
     await asyncio.to_thread(_comment)
 
