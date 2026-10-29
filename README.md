@@ -1,3 +1,5 @@
+> **Status: paused for product development — see [docs/retrospective.md](docs/retrospective.md).**
+
 # agentflow
 
 A multi-agent coding workflow built on **LangGraph**. You give it a feature request (CLI, REST, MCP, or a labelled GitHub issue). It writes a spec and a task plan and waits for a human to approve both. Then it implements each task against a target test: an acceptance test is written from the task's interface and Definition of Done and must fail first, a coder agent makes it pass, a deterministic gate runs, and a reviewer agent checks the result. A repository without a test suite of its own gets no target test; its own checks (types, build, lint) are the gate. Finally it opens a pull request. Agents read the target repository the way a developer does, with read-only **glob, grep and read tools**; there is no index and no embeddings.
