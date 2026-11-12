@@ -23,7 +23,7 @@ def _run(**kw):
 
 def test_usage_comes_from_the_message_or_from_llm_output():
     assert telemetry._usage_of(_result(10, 3)) == (10, 3, "claude-x")
-    # OpenAI-compatible clients without usage_metadata (older cursor-proxy) report it in llm_output
+    # OpenAI-compatible clients without usage_metadata (older llm-proxy) report it in llm_output
     old = LLMResult(generations=[[]], llm_output={"token_usage": {"prompt_tokens": 5, "completion_tokens": 2}})
     assert telemetry._usage_of(old) == (5, 2, "?")
 

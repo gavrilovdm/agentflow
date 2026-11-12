@@ -40,7 +40,7 @@ def chat_model(
             kwargs["temperature"] = temperature
         return ChatAnthropic(**kwargs)
     if name.startswith("cpx"):
-        # Claude through cursor-proxy (cpxopus / cpxsonnet / cpxhaiku). From 0.2.0 the
+        # Claude through llm-proxy (cpxopus / cpxsonnet / cpxhaiku). From 0.2.0 the
         # proxy itself absorbs the OAuth upstream's quirks (lost system prompt, 400 on
         # Opus temperature and on empty text), so this is a plain OpenAI client.
         return ChatOpenAI(
