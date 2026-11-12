@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # agentflow's MCP over HTTP requires MCP_TOKEN; the shared .env supplies it.
     mcp_token: str = Field(default="", validation_alias=AliasChoices("CHAT_MCP_TOKEN", "MCP_TOKEN"))
 
-    # Same cursor-proxy as agentflow's orchestrator by default (CLAUDE_PROXY_URL / CLAUDE_PROXY_KEY).
+    # Same llm-proxy as agentflow's orchestrator by default (CLAUDE_PROXY_URL / CLAUDE_PROXY_KEY).
     # It passes Anthropic-format /v1/messages through on the Claude Code OAuth session. Set
     # CHAT_ANTHROPIC_BASE_URL="" to use ANTHROPIC_API_KEY (or Bedrock / Vertex) instead.
     anthropic_base_url: str = Field(

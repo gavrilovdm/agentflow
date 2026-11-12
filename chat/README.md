@@ -8,7 +8,7 @@ Claude Code / Desktop ───────────────────�
 agentflow's own bot ◀── spec/plan approvals, failed-task dossiers, PR links (unchanged)
 ```
 
-Notifications still come from agentflow's own bot, not from this layer. They arrive even when the layer is down, and the layer never polls in the background: it only answers your messages. To act on a notification in words ("в спеке убери пункт 3"), reply to it. The bridge passes the notification text and its `thread` id to the model, which then calls `review_checkpoint` or `resolve_failed_task`. Without a reply, «что сейчас идёт?» or «одобри план в cursor-proxy» works too: the model calls `list_runs` (all in-flight runs, waiting ones first) to find the thread.
+Notifications still come from agentflow's own bot, not from this layer. They arrive even when the layer is down, and the layer never polls in the background: it only answers your messages. To act on a notification in words ("в спеке убери пункт 3"), reply to it. The bridge passes the notification text and its `thread` id to the model, which then calls `review_checkpoint` or `resolve_failed_task`. Without a reply, «что сейчас идёт?» or «одобри план в llm-proxy» works too: the model calls `list_runs` (all in-flight runs, waiting ones first) to find the thread.
 
 ## Picking a repository
 
@@ -28,7 +28,7 @@ Example: «найди репозиторий на Python с fastapi, актив�
 
 ## Run
 
-The SDK runs the Claude Code CLI bundled with it. By default it reaches Claude the same way agentflow's orchestrator does: through the local [cursor-proxy](https://github.com/gavrilovdm/cursor-proxy), using `CLAUDE_PROXY_URL` and `CLAUDE_PROXY_KEY` from agentflow's `.env` (read from `../.env`). The proxy passes Anthropic-format `/v1/messages` through, so the model is the real id `claude-opus-5`, which is what the orchestrator's `cpxopus` alias resolves to. To use an API key instead, set `CHAT_ANTHROPIC_BASE_URL=""` and `ANTHROPIC_API_KEY` (or Bedrock / Vertex via `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX`). Anthropic's Agent SDK docs ask products built on the SDK to use API keys rather than claude.ai login, so the proxy route fits a personal bot, not one offered to others.
+The SDK runs the Claude Code CLI bundled with it. By default it reaches Claude the same way agentflow's orchestrator does: through the local [llm-proxy](https://github.com/gavrilovdm/llm-proxy), using `CLAUDE_PROXY_URL` and `CLAUDE_PROXY_KEY` from agentflow's `.env` (read from `../.env`). The proxy passes Anthropic-format `/v1/messages` through, so the model is the real id `claude-opus-5`, which is what the orchestrator's `cpxopus` alias resolves to. To use an API key instead, set `CHAT_ANTHROPIC_BASE_URL=""` and `ANTHROPIC_API_KEY` (or Bedrock / Vertex via `CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX`). Anthropic's Agent SDK docs ask products built on the SDK to use API keys rather than claude.ai login, so the proxy route fits a personal bot, not one offered to others.
 
 This bot needs its own token from @BotFather: agentflow's bot uses a webhook, and a token can't have a webhook and long polling at the same time. Put both bots in one group if you want a single chat.
 

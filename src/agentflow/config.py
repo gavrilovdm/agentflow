@@ -58,12 +58,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    # cursor-proxy: OpenAI-compatible, translates to Anthropic using the Claude Code OAuth
+    # llm-proxy: OpenAI-compatible, translates to Anthropic using the Claude Code OAuth
     # session, so no Anthropic key is needed. Models named cpx* go through it.
     claude_proxy_url: str = "http://127.0.0.1:8787/v1"
     claude_proxy_key: str = ""
 
-    # Opus via cursor-proxy for every Claude role; the coder stays on DeepSeek.
+    # Opus via llm-proxy for every Claude role; the coder stays on DeepSeek.
     orchestrator_model: str = "cpxopus"
     reviewer_model: str = "cpxopus"
     test_generator_model: str = "cpxopus"

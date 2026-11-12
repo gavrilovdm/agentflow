@@ -1,4 +1,4 @@
-"""cpx* models go through cursor-proxy (>= 0.2.0), which absorbs the upstream quirks itself."""
+"""cpx* models go through llm-proxy (>= 0.2.0), which absorbs the upstream quirks itself."""
 
 from langchain_openai import ChatOpenAI
 
@@ -6,7 +6,7 @@ from agentflow.config import Settings
 from agentflow.models import chat_model
 
 
-def test_claude_roles_default_to_cursor_proxy():
+def test_claude_roles_default_to_llm_proxy():
     s = Settings(_env_file=None)
     assert (s.orchestrator_model, s.test_generator_model, s.reviewer_model) == ("cpxopus",) * 3
 

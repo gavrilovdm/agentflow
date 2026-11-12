@@ -109,7 +109,7 @@ A card's `Blocked reason` field keeps the first line of the report (up to 300 ch
 
 **Stage telemetry** (`telemetry.py`). Every stage job is an OpenTelemetry span `stage <agent>` (card, repo, column, attempts, outcome, LLM calls and tokens) and a row in Postgres `stage_runs`; every model call adds its tokens to the running stage through a LangChain callback and to the `agentflow.llm.tokens` counter. Compose runs `grafana/otel-lgtm` as `otel`: Grafana on http://localhost:3300 (Explore → Tempo, `{name=~"stage.*"}`), OTLP on `localhost:4318` for the projects the board builds. LGTM keeps days, so the measure → spec loop reads `stage_runs`, which keeps everything: `uv run python scripts/telemetry_report.py --repo <owner/name> --days 7` prints per-stage p50/p90, errors and tokens, and per-card lead time and returns. A failed telemetry write is logged and never fails the stage. The exporters are off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set; tests pass no database, so they leave no rows.
 
-**Research cards** (`stages/research.py`, skill `skills/researcher/research.md`, after the hub's research playbook) go through the same columns with each stage's craft swapped: the planner writes a search plan (queries, what counts as worth keeping, how many) instead of a spec, and research needs no approval; the developer column runs a researcher, an agent with `web_search` and `fetch_url` (DuckDuckGo's HTML endpoint: the model's own server-side search answers "credit balance is too low" through cursor-proxy), and code writes one file per finding into `LIBRARY_REPO`'s `inbox/` by the library's contract, drops URLs the library already has (no `utm_*`, no anchor), and commits `research: <topic> (+N)`; the tester checks each file's contract fields and name, that its link opens, that its URL is in the library once, and each DoD item against the files. Passed → Merged directly (research has no PR; the board allows Testing → Merged) and the issue is closed; anything else goes back to the researcher with the report. A batch with nothing new goes to Blocked rather than to a tester with nothing to check.
+**Research cards** (`stages/research.py`, skill `skills/researcher/research.md`, after the hub's research playbook) go through the same columns with each stage's craft swapped: the planner writes a search plan (queries, what counts as worth keeping, how many) instead of a spec, and research needs no approval; the developer column runs a researcher, an agent with `web_search` and `fetch_url` (DuckDuckGo's HTML endpoint: the model's own server-side search answers "credit balance is too low" through llm-proxy), and code writes one file per finding into `LIBRARY_REPO`'s `inbox/` by the library's contract, drops URLs the library already has (no `utm_*`, no anchor), and commits `research: <topic> (+N)`; the tester checks each file's contract fields and name, that its link opens, that its URL is in the library once, and each DoD item against the files. Passed → Merged directly (research has no PR; the board allows Testing → Merged) and the issue is closed; anything else goes back to the researcher with the report. A batch with nothing new goes to Blocked rather than to a tester with nothing to check.
 
 **GitHub token.** `GITHUB_TOKEN` needs Contents and Pull requests read/write on the whitelisted repos
 (Issues too for the label trigger); a fine-grained token limited to those repos is the safe choice. Git
@@ -203,17 +203,17 @@ hides a broken fallback until the day the primary goes down.
 Claude can be reached directly (`claude-*` model names, `ANTHROPIC_API_KEY`) or through an OpenAI-compatible proxy
 (`cpx*` names, `CLAUDE_PROXY_URL` / `CLAUDE_PROXY_KEY`).
 
-### Claude through cursor-proxy
+### Claude through llm-proxy
 
 The orchestrator (spec, plan, replan, PR description), the test generator and the reviewer (including the referee)
 default to `cpxopus`: Opus through the local
-[cursor-proxy](https://github.com/gavrilovdm/cursor-proxy), the same setup vacancy-parser uses. The proxy takes
+[llm-proxy](https://github.com/gavrilovdm/llm-proxy), the same setup vacancy-parser uses. The proxy takes
 OpenAI-format requests and forwards them to Anthropic with the Claude Code OAuth session, so no Anthropic key is needed.
 
 One proxy per machine serves every project; this repo carries no proxy code.
 
 ```bash
-cd ~/cursor-proxy
+cd ~/llm-proxy
 node dist/cli.js status               # version must be ≥ 0.2.0, loggedIn true
 node dist/cli.js import-claude-code   # if loggedIn is false
 node dist/cli.js install-service      # macOS launch agent on 127.0.0.1:8787

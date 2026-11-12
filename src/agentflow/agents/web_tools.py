@@ -1,6 +1,6 @@
 """Web tools for the research agent: a search and a page reader.
 
-The model's own server-side web search is not reachable here (through cursor-proxy it
+The model's own server-side web search is not reachable here (through llm-proxy it
 answers "credit balance is too low"), so the search is DuckDuckGo's HTML endpoint, which
 needs no key. A page comes back as plain text, cut to a size a prompt can hold.
 """
